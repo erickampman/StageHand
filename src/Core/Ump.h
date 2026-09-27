@@ -7,9 +7,10 @@
 
 // UMP helpers shared by the MIDI seam and the engine's router/translator:
 //   - field accessors (inline, header-only)
-//   - MIDI 1.0 <-> 2.0 protocol translation (declared; implemented with unit
-//     tests against the MIDI 2.0 spec's translation rules)
-//   - a MIDI 1.0 byte-stream parser for non-UMP sources (declared)
+//   - value scaling, velocity16, transposeNote, toMidi1Bytes (Core/Ump.cpp)
+//   - MIDI 1.0 <-> 2.0 protocol translation and the MIDI 1.0 byte-stream parser
+//     (declared; implemented in M5 with tests against the MIDI 2.0 spec's
+//     translation rules)
 // See docs/domain-model.md, "MIDI protocol handling & per-plugin routing".
 namespace stagehand::ump {
 
@@ -169,7 +170,10 @@ struct UpconvertState {
 
 // MIDI 1.0 (MT 0x2) -> MIDI 2.0 (MT 0x4). Stateful: CC 101/100/99/98/6/38 and
 // bank select are absorbed into `state` and emitted as single MIDI 2.0 messages,
-// so a call may write 0 messages. Non-MT-0x2 input passes through unchanged.
+// so a call may write 0 messages. Data Entry MSB (CC 6) emits immediately with
+// LSB 0, and a following CC 38 re-emits: unlike the ALSA kernel's upconverter,
+// which drops MSB-only data entry (measured in M2). Non-MT-0x2 input passes
+// through unchanged.
 // Writes at most `capacity` messages to `out`; returns the count written.
 std::size_t upconvert(const MidiMessage& in, UpconvertState& state,
                       MidiMessage* out, std::size_t capacity) noexcept;

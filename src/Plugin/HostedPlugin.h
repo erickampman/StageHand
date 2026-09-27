@@ -7,6 +7,7 @@
 #include "Core/AudioBuffer.h"
 #include "Core/Event.h"
 #include "Core/TimeInfo.h"
+#include "Plugin/Editor.h"
 #include "Plugin/Parameter.h"
 #include "Plugin/PluginDescriptor.h"
 #include "Plugin/PortLayout.h"
@@ -32,7 +33,8 @@ struct ProcessContext {
 // exposes.
 //
 // Lifecycle: create (via PluginFactory) -> loadState (optional, BEFORE activate)
-// -> activate -> [process on the audio thread] -> deactivate -> destroy.
+// -> activate -> [process on the audio thread] -> stopProcessing (audio thread)
+// -> deactivate -> destroy. Destroying an active plugin deactivates it first.
 class HostedPlugin {
 public:
     virtual ~HostedPlugin() = default;
@@ -50,8 +52,15 @@ public:
 
     // --- real-time processing (audio thread) ---
     // Consume ctx.eventsIn, render ctx.audioOut, emit feedback via ctx.eventsOut.
-    // No locks, allocation, syscalls, or blocking.
+    // The first call after activate() (or after stopProcessing()) starts
+    // processing implicitly (CLAP start_processing); if that fails, the plugin
+    // outputs silence. No locks, allocation, syscalls, or blocking.
     virtual void process(const ProcessContext& ctx) noexcept = 0;
+
+    // End processing (CLAP stop_processing): the engine calls this on the audio
+    // thread when the plugin leaves the running graph, before the main thread
+    // may deactivate it. No-op if not processing.
+    virtual void stopProcessing() noexcept = 0;
 
     // --- parameters ---
     // Current plain value of a parameter (main thread, for UI). NOTE: to change a
@@ -70,6 +79,38 @@ public:
     // Restore from a blob previously produced by saveState(). Call BEFORE the
     // plugin joins the live graph (docs/domain-model.md, save/restore).
     virtual bool loadState(const std::byte* data, std::size_t size) = 0;
+
+    // --- main-thread servicing ---
+    // Called regularly from the main loop: runs work the plugin asked to have
+    // done on the main thread (CLAP request_callback -> on_main_thread, and a
+    // requested params flush while inactive).
+    virtual void idle() = 0;
+
+    // --- editor (main thread; optional) ---
+    // An editor that embeds in a host window. Floating editors aren't supported.
+    // The defaults mean "no editor". Close the editor before the plugin is
+    // destroyed.
+
+    // True if the plugin has an editor this platform's window system can embed.
+    virtual bool hasEditor() const { return false; }
+
+    // Create the editor inside `parent` and show it; `size` receives its initial
+    // size. `host` receives the plugin's requests until closeEditor(). Returns
+    // false, with nothing left open, on failure.
+    virtual bool openEditor(NativeWindow /*parent*/, EditorHost& /*host*/, EditorSize& /*size*/) {
+        return false;
+    }
+
+    // Hide and destroy the editor. No-op if none is open.
+    virtual void closeEditor() {}
+
+    // Whether the user may resize the editor.
+    virtual bool editorResizable() const { return false; }
+
+    // The host window changed size. The plugin may adjust `size` to one it
+    // supports; the host then fits its window to that. Returns false if the
+    // editor can't be resized.
+    virtual bool setEditorSize(EditorSize& /*size*/) { return false; }
 };
 
 } // namespace stagehand

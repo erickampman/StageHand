@@ -45,4 +45,13 @@ struct PortLayout {
     std::vector<NotePortInfo>  noteOutputs;
 };
 
+// Index of the main audio output (the first port flagged isMain, else port 0),
+// or -1 if there are no outputs. The engine sums this port into the backend
+// outputs; the plugin seam routes the engine's buffer to this same port.
+inline int mainAudioOutput(const PortLayout& layout) noexcept {
+    for (std::size_t i = 0; i < layout.audioOutputs.size(); ++i)
+        if (layout.audioOutputs[i].isMain) return static_cast<int>(i);
+    return layout.audioOutputs.empty() ? -1 : 0;
+}
+
 } // namespace stagehand

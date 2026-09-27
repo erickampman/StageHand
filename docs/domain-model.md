@@ -73,26 +73,50 @@ AlsaSeqInput, ClapPlugin) are the only things touching a dependency.
   Owns a non-RT MIDI thread; the engine's sink pushes to a lock-free queue.
 - **HostedPlugin** — load/instantiate; report PortLayout & Parameters;
   `activate(sampleRate, maxBlock)`; `process(AudioBuffers, EventBlock, TimeInfo)`;
-  produce output events; `saveState() → opaque bytes` / `loadState(bytes)` (see
-  Save / restore); (later) GUI.
+  produce output events; `stopProcessing()` (audio thread, when it leaves the
+  graph); `idle()` (main thread, services plugin requests such as CLAP
+  `request_callback`); `saveState() → opaque bytes` / `loadState(bytes)` (see
+  Save / restore); optional embedded editor (`openEditor` into a native parent
+  window with an `EditorHost` for its requests, `closeEditor`, resizing;
+  architecture.md §4).
   Lifecycle: `load → activate → [process…] → deactivate → unload`. Called on the
   RT thread, configured from the main thread.
 
 ## Engine model — the graph
 
-v1 is a straight line (MIDI → one plugin → audio out), but modeled as a graph so
-the sequencer and routing drop in without a rewrite.
+(Interfaces: `src/Engine/Engine.h`, `src/Engine/EngineGraph.h`.)
 
-- **Node** — a processing unit with typed audio/event inputs and outputs:
-  - **SourceNode** — emits events/time (wraps MidiInput + transport). The future
-    sequencer is also a SourceNode.
-  - **PluginNode** — wraps a HostedPlugin.
-  - **OutputNode** — writes to the AudioBackend output buffers.
-- **Connection** — a typed edge (audio channel or event stream) between node
-  ports.
-- **Graph.process(frames, time)** — backend-driven entry: build EventBlock, walk
-  nodes in dependency order, move buffers along connections, fill OutputNode. v1
-  is three nodes in a line; the contract is already the general one.
+**v1 topology is MainStage-style, not a chain.** Incoming MIDI fans out to every
+plugin slot whose MidiFilter accepts it, and each slot's main output is summed
+into the backend outputs. That's exactly what layers and splits need (M5), and a
+single plugin is just the one-slot case. Insert effects, general routing, and the
+sequencer (a MIDI source like any other) extend the graph type later. The
+long-term vocabulary still applies: sources, plugin nodes, outputs, and typed
+connections between them.
+
+**EngineGraph** is immutable once built. It holds the slots (plugin plus
+host-owned settings) and the scratch memory the audio thread needs: per-slot
+event buffers and audio buffers, all allocated on the main thread.
+
+**Commit / adopt / retire.** The main thread builds a graph and `commit()`s it
+(an atomic pointer). At the start of its next block, the audio thread *adopts*
+it and pushes the old graph onto a retire queue. The main thread's `collect()`
+destroys retired graphs. Graphs are never destroyed on the audio thread, and
+adoption waits if the retire queue is full.
+
+**Plugin lifetime and CLAP's thread rules.** Slots hold plugins by `shared_ptr`.
+The main thread creates, loads state, and activates. The audio thread starts
+processing implicitly on the first `process()`, and calls `stopProcessing()` when
+an adopted graph no longer contains the plugin. Because the last reference can
+only drop when the main thread destroys a retired graph, a removed plugin is
+always stopped (audio thread) before it's deactivated and destroyed (main
+thread).
+
+**Shutdown:** commit an empty graph, wait until it's adopted, then stop the
+backend.
+
+**Block size:** plugins are activated with a maximum of 8192 frames (PipeWire's
+quantum-limit), and larger backend blocks are split into chunks.
 
 ## Sample-accurate MIDI ↔ audio alignment
 
@@ -158,7 +182,7 @@ if several).**
 
 | Message | Plugin port accepts | Delivered as | Fidelity |
 |---|---|---|---|
-| MIDI 1.0 (MT `0x2`) | MIDI (or MPE) | `clap_event_midi`, original bytes | exact |
+| MIDI 1.0 (MT `0x2`) | MIDI (or MPE) | `clap_event_midi`, original bytes | exact (ALSA delivers note-on vel 0 as note-off) |
 | MIDI 1.0 (MT `0x2`) | MIDI2 only | upconverted → `clap_event_midi2` | exact per spec; stateful |
 | MIDI 2.0 (MT `0x4`) | MIDI2 | `clap_event_midi2`, untouched | exact |
 | MIDI 2.0 (MT `0x4`) | MIDI only | downconverted → `clap_event_midi` | lossy: 2.0-only data dropped |
@@ -173,6 +197,10 @@ if several).**
   stream*, so it's kept **per source** (by group/channel), not per plugin. Two
   sources on one channel can't corrupt each other's RPN sequences, and each
   upconverted message is computed once and shared by every MIDI2-only plugin.
+- **MSB-only Data Entry must not be lost.** Measured in M2: the kernel's own
+  upconverter emits an RPN/NRPN only when CC 38 (LSB) arrives, so CC 6 alone (the
+  common case on MIDI 1.0 gear) vanishes. Ours emits on CC 6 with LSB 0, then
+  re-emits if a CC 38 follows.
 - Downconversion is stateless, but one MT `0x4` message can expand into several
   MIDI 1.0 messages (a registered controller → CC 101/100/6/38). They share the
   original sample offset, in order.
@@ -370,16 +398,16 @@ take the non-RT `params.flush` path instead.
 
 ## Open questions (to resolve before turning these into interfaces)
 
-- Graph generality in v1: ship the real graph, or a fixed 3-node chain behind the
-  graph contract? (Leaning: fixed chain, general contract.)
+- ~~Graph generality in v1~~ Resolved: fan-out / sum topology (MainStage-style)
+  behind the commit/adopt/retire contract; see "Engine model".
 - Multi-plugin routing model detail (serial chain vs arbitrary graph) — deferred
   with the sequencer, but the Connection model should not preclude it.
 - ~~Parameter automation source (host UI vs sequencer) and how changes cross to
   RT.~~ Resolved: unified as ParamEvents in the EventBlock; see "Parameter changes
   & automation timing".
-- Container format: `.rack` directory bundle (no dep) vs zipped single file (one
-  dep) vs single JSON with base64 blobs (bloat). Leaning directory bundle, with
-  an optional zip wrapper for sharing.
+- ~~Container format~~ Resolved: a `.rack` directory bundle (`rack.json` plus
+  `state/*.bin`) with a safe swap-in save; a zip form for sharing can come later.
+  Specified in `docs/rack-format.md`, including the room reserved for sequences.
 - Whether to adopt CLAP `state-context` (distinguishing save-for-preset vs
   duplicate vs project) or ignore it for v1. Leaning ignore until presets land.
 - Plugin state blob is opaque/plugin-versioned; only the manifest schema needs

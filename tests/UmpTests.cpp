@@ -1,26 +1,14 @@
-// UMP helper tests. A minimal self-contained runner (no third-party framework,
-// per the minimize-dependencies principle): exits non-zero if any check fails.
-// The translators and byte parser join these tests when Core/Ump.cpp lands (M5).
+// UMP helper tests. The translators and byte parser join these when
+// Core/Ump.cpp lands (M5).
 
 #include <cstdint>
-#include <cstdio>
 
+#include "Check.h"
 #include "Core/Ump.h"
 
 using namespace stagehand;
 
 namespace {
-
-int failures = 0;
-
-#define CHECK(expr)                                                              \
-    do {                                                                         \
-        if (!(expr)) {                                                           \
-            std::fprintf(stderr, "%s:%d: CHECK failed: %s\n", __FILE__, __LINE__, \
-                         #expr);                                                 \
-            ++failures;                                                          \
-        }                                                                        \
-    } while (0)
 
 MidiMessage packet(std::uint32_t w0, std::uint32_t w1 = 0) {
     MidiMessage m;
@@ -68,6 +56,50 @@ void testProtocolClassification() {
     CHECK(!ump::isChannelVoice(packet(0x10F80000)));
 }
 
+void testScaling() {
+    // Expected values are what the ALSA kernel produced in M2.
+    CHECK(ump::scaleUp(100, 7, 16) == 0xC924);
+    CHECK(ump::scaleUp(100, 7, 32) == 0xC9249249);
+    CHECK(ump::scaleUp(12288, 14, 32) == 0xC0020010);
+    CHECK(ump::scaleUp(0, 7, 16) == 0);
+    CHECK(ump::scaleUp(64, 7, 16) == 0x8000);     // center maps to center
+    CHECK(ump::scaleUp(127, 7, 16) == 0xFFFF);    // max maps to max
+    for (std::uint32_t v = 0; v < 128; ++v)       // round trip for 7-bit values
+        CHECK(ump::scaleDown(ump::scaleUp(v, 7, 16), 16, 7) == v);
+    CHECK(ump::velocity16(packet(0x20903C64)) == 0xC924);
+    CHECK(ump::velocity16(packet(0x40903C00, 0x1234'0000)) == 0x1234);
+}
+
+void testToMidi1Bytes() {
+    std::uint8_t bytes[3] = {};
+    CHECK(ump::toMidi1Bytes(packet(0x20913C64), bytes) == 3);
+    CHECK(bytes[0] == 0x91 && bytes[1] == 0x3C && bytes[2] == 0x64);
+    CHECK(ump::toMidi1Bytes(packet(0x20C00500), bytes) == 2);          // program change
+    CHECK(bytes[0] == 0xC0 && bytes[1] == 0x05);
+    CHECK(ump::toMidi1Bytes(packet(0x10F80000), bytes) == 1);          // clock
+    CHECK(bytes[0] == 0xF8);
+    CHECK(ump::toMidi1Bytes(packet(0x10F20304), bytes) == 3);          // song position
+    CHECK(bytes[0] == 0xF2 && bytes[1] == 0x03 && bytes[2] == 0x04);
+    CHECK(ump::toMidi1Bytes(packet(0x40903C00, 0x8000'0000), bytes) == 0);   // MIDI 2.0: no
+}
+
+void testTranspose() {
+    MidiMessage m1 = packet(0x20903C64);
+    CHECK(ump::transposeNote(m1, 2) && ump::noteNumber(m1) == 62);
+    CHECK((m1.words[0] & 0x7F) == 0x64);                               // velocity kept
+
+    MidiMessage m2 = packet(0x40903D03, 0x8000'7B00);                   // 61 + pitch 61.5
+    CHECK(ump::transposeNote(m2, -1) && ump::noteNumber(m2) == 60);
+    CHECK((m2.words[1] & 0xFFFF) == ((60u << 9) | 256u));              // pitch moved too: 60.5
+    CHECK((m2.words[1] >> 16) == 0x8000);                              // velocity kept
+
+    MidiMessage top = packet(0x20907F64);
+    CHECK(!ump::transposeNote(top, 1));                                // out of range...
+    CHECK(ump::noteNumber(top) == 127);                                // ...and unchanged
+    MidiMessage cc = packet(0x20B00764);
+    CHECK(ump::transposeNote(cc, 5) && cc.words[0] == 0x20B00764);     // no note: untouched
+}
+
 void testWordCounts() {
     // UMP spec packet sizes by message type 0x0..0xF.
     const std::uint8_t expected[16] = {1, 1, 1, 2, 2, 4, 1, 1, 2, 2, 2, 3, 3, 4, 4, 4};
@@ -82,11 +114,8 @@ int main() {
     testNoteOnOffSemantics();
     testProtocolClassification();
     testWordCounts();
-
-    if (failures != 0) {
-        std::fprintf(stderr, "%d check(s) failed\n", failures);
-        return 1;
-    }
-    std::puts("UMP tests passed");
-    return 0;
+    testScaling();
+    testToMidi1Bytes();
+    testTranspose();
+    return test::finish("UMP");
 }

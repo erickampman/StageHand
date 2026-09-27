@@ -75,8 +75,30 @@ protocol.
 - **Non-UMP byte streams** (JACK MIDI, legacy rawmidi, files, network) go
   through a small MIDI 1.0 byte parser (running status, real-time interleave,
   SysEx chunking) that also wraps to MT `0x2`/`0x3`, never upconverts.
-- Exact kernel conversion behavior per client mode needs verifying during
-  implementation, not assuming.
+- **Verified in M2** (kernel 7.0, alsa-lib 1.2.15; `stagehand --monitor` with
+  `aseqsend` as legacy, UMP 1.0 and UMP 2.0 sender):
+  - Legacy or UMP 1.0 → MIDI 1.0 client: MT `0x2`, values untouched. One
+    normalization: **a note-on with velocity 0 arrives as a note-off** (same
+    meaning, different bytes).
+  - UMP 2.0 → MIDI 2.0 client: MT `0x4` untouched, pitch 7.9 attribute intact
+    (the PMU test path).
+  - UMP 2.0 → MIDI 1.0 client: downconverted, attributes dropped (as expected;
+    this is what the global preference *off* does on purpose).
+  - Legacy → MIDI 2.0 client: upconverted with spec min-center-max scaling
+    (velocity 100 → `0xC924`). **The kernel's stateful RPN/NRPN translation emits
+    only when Data Entry LSB (CC 38) arrives. MSB-only data entry (CC 6 alone,
+    common on MIDI 1.0 gear, e.g. pitch-bend range) is silently dropped**, even
+    when later messages follow. This is the concrete reason legacy sources must
+    land on the MIDI 1.0 client, and a requirement for our own upconverter (M5).
+  - A **virtual input** can't know the connecting app's protocol, so a MIDI 1.0
+    app connected to "MIDI 2.0 In" gets the kernel upconversion above. Apps
+    should connect to the virtual input matching their protocol.
+  - The global preference works: with it *off*, "MIDI 2.0 In" is created on the
+    MIDI 1.0 client and UMP 2.0 input arrives downconverted.
+- Not yet verified: `open()` of a *MIDI 2.0 source* (no UMP-native source with a
+  subscribable port was available; needs USB MIDI 2.0 hardware or the KeyEDO
+  port). The per-port `snd_seq_port_info_set_ump_is_midi1` flag might allow one
+  client instead of two; untested.
 
 **Global MIDI 2.0 protocol preference** (Logic-style, app-wide, default **on**):
 - **On:** UMP-native sources are received in MIDI 2.0 (MIDI 2.0 client); legacy
@@ -86,6 +108,13 @@ protocol.
   safety valve for a misbehaving device or plugin.
 - It's a policy switch, not a correctness requirement: because each message
   keeps its protocol, mixed 1.0/2.0 works without it.
+
+**Default inputs: every hardware MIDI source** (ALSA ports flagged
+`SND_SEQ_PORT_TYPE_HARDWARE`; software ports like `Midi Through` are left out),
+as a live host should. MainStage listens to all inputs unless told otherwise,
+and a keyboard that silently isn't listened to is a gig-killer. `--midi`
+narrows the set, and each slot's MidiFilter chooses among what's open. Not yet
+handled: a device plugged in after startup (needs ALSA's announce port).
 
 All MIDI I/O sits behind the `MidiInput` seam, so libremidi/CoreMIDI can slot in
 for Mac without touching routing or translation (both live in the engine).
@@ -141,7 +170,7 @@ and later *requests* lose (observed: a 128 request forced up to 1024).
 | Mechanism | Scope | Lifetime |
 |---|---|---|
 | `clock.force-quantum` (`pw-metadata -n settings 0 …`) | every graph: all apps, all devices | until reset to 0 or PipeWire restarts |
-| `node.force-quantum` (node property) | the graph that node is in | only while that node is active |
+| `node.force-quantum` (node property) | at least the graph that node is in; possibly every driver (see caveats) | only while that node is active |
 | `default.clock.*` in `pipewire.conf.d` | defaults and limits | permanent |
 
 **Decision.** StageHand **never sets `clock.force-quantum`**: it's global, and a
@@ -152,7 +181,16 @@ crash would leave the whole system forced until someone resets it. Instead,
 because the latter forces the sample rate too. A `PIPEWIRE_PROPS` the user set
 themselves wins, with a warning. A real jackd ignores the variable.
 
-**Verified behavior** (on the Dummy-Driver, so the real audio path was untouched):
+**Verified behavior** (first on the Dummy-Driver with the card suspended, then
+on the card itself):
+- A client with no connections joins whichever driver is **already running**
+  (the card, if anything is playing) and falls back to the Dummy-Driver only when
+  nothing runs. So `--no-connect` does *not* isolate StageHand: with silence
+  playing on the card, an unconnected `--quantum 256` StageHand pulled the card
+  from 2048 to 256.
+- On real hardware (user test), the force applied while StageHand ran and was
+  released on exit. A driver keeps showing its last quantum in `pw-top` for a
+  few seconds, until WirePlumber suspends it as idle.
 - A per-node force overrides another client's lock (a locked client at 1024 was
   pulled to 256).
 - It lasts only while StageHand's node is active: that client returned to 1024
@@ -164,10 +202,15 @@ themselves wins, with a warning. A real jackd ignores the variable.
   `config()` and the buffer-size callback report the change. Nothing downstream
   may treat `open()`'s buffer size as final.
 
-**Caveats.** The whole graph (every app on that device) runs at the forced size.
-Very small quanta on real hardware risk xruns, since the tests ran on a timer
-driver. Untested: how a per-node force interacts with a global
-`clock.force-quantum`.
+**Caveats.** At minimum every app on the same device runs at the forced size.
+**Possibly all audio on the system:** during a user test with StageHand connected
+to the card, the Dummy-Driver was also seen at 256, and PipeWire's wording
+("force a quantum in the graph… the last node to be activated wins") reads as
+system-wide. Not isolated yet (it needs StageHand in a separate graph while the
+card runs), so **treat `--quantum` as system-wide**. The per-node lifetime
+(automatic release) holds either way, and that's the property that makes it
+safe. Very small quanta on real hardware risk xruns. Untested: how a per-node
+force interacts with a global `clock.force-quantum`.
 
 **Engine consequence (M3).** The buffer size can change in both directions while
 running. Plugins can be activated with a maximum of 8192 (PipeWire's documented
@@ -336,6 +379,36 @@ door is open.
   the code must stay that way.
 
 ---
+
+## 4. Plugin editors (M4, not StageHand's own UI)
+
+StageHand's own UI is still deferred. Hosting a *plugin's* editor is a separate,
+smaller job, and it's needed now: without it a plugin plays only its default
+state.
+
+- **Embedding, X11 only.** CLAP embeds editors on Linux only through X11
+  (`CLAP_WINDOW_API_X11`); its Wayland API is floating-only. So StageHand opens a
+  plain top-level X11 window (Xlib; `libX11` is a system library and already a
+  PMU build dependency) and passes it as the editor's parent. On a Wayland
+  session both windows run through XWayland, as REAPER's do. Floating editors
+  aren't supported.
+- **The host owns the event loop.** Plugin editors on Linux have no event loop
+  of their own. They ask the host for periodic timers (`timer-support`; PMU
+  registers a ~60 fps timer to drive pugl/NanoVG) and file-descriptor watches
+  (`posix-fd-support`; common in other frameworks). So the app's main thread
+  becomes a `poll()` loop (`App/MainLoop`) that runs timers, watched fds (the
+  plugins' and the editor window's X11 connection), and StageHand's
+  housekeeping. `HostServices` exposes timers and fd watches to the plugin seam
+  in format-neutral terms.
+- **Per-editor requests** (resize, show/hide, closed, resize hints) go to an
+  `EditorHost` the host passes to `HostedPlugin::openEditor()`, not to the shared
+  `HostServices`, because they concern one window.
+- **Closing an editor window closes that editor only**; audio keeps running.
+  Ctrl-C quits.
+- **Lifetime:** the editor closes before its plugin is destroyed, and a plugin's
+  timers and fd watches are removed with it even if the plugin forgot to.
+- **Scale:** StageHand doesn't call CLAP `set_scale` on X11, so plugins pick
+  their own DPI. Revisit if editors come up the wrong size on a HiDPI screen.
 
 ## Dependency summary
 

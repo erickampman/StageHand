@@ -11,8 +11,9 @@ namespace stagehand {
 struct MidiSourceInfo {
     std::string  id;                            // stable identifier used to open it
     std::string  name;                          // human-readable, for UI
-    bool         isVirtual = false;
-    MidiProtocol protocol  = MidiProtocol::Midi1;   // the source's native protocol
+    bool         isVirtual  = false;            // provided by an app, not the kernel
+    bool         isHardware = false;            // a physical device (not e.g. Midi Through)
+    MidiProtocol protocol   = MidiProtocol::Midi1;   // the source's native protocol
 };
 
 // Implemented by the engine. Called from the MIDI thread when a message
@@ -60,7 +61,11 @@ public:
 
     // Create a named input port that other apps can connect to (e.g. a KeyEDO
     // port or a MIDI 2.0 test tool), receiving in `protocol`. Returns
-    // kInvalidMidiSource on failure.
+    // kInvalidMidiSource on failure. Unlike open(), the connecting app's protocol
+    // isn't known here: an app of the other protocol is converted by the
+    // platform (on ALSA, a MIDI 1.0 app on a MIDI 2.0 port loses MSB-only
+    // RPN/NRPN data entry — docs/architecture.md section 1). Apps should connect
+    // to the port matching their own protocol.
     virtual MidiSourceHandle openVirtual(const std::string& name,
                                          MidiProtocol protocol) = 0;
 

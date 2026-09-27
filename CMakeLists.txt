@@ -13,36 +13,64 @@ endif()
 
 # --- System dependencies (docs/architecture.md, dependency summary) -----------
 # JACK API headers from libjack-jackd2-dev; at runtime the calls are served by
-# PipeWire (pipewire-jack) — run under `pw-jack`. ALSA joins in M2 (MIDI input).
+# PipeWire (pipewire-jack) — run under `pw-jack`. ALSA's sequencer (UMP mode,
+# alsa-lib 1.2.10+) provides MIDI input.
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(JACK REQUIRED IMPORTED_TARGET jack)
+pkg_check_modules(ALSA REQUIRED IMPORTED_TARGET alsa>=1.2.10)
+pkg_check_modules(X11 REQUIRED IMPORTED_TARGET x11)   # plugin editor windows (M4)
+find_package(Threads REQUIRED)
 
 # --- CLAP SDK: header-only, vendored submodule pinned to PMU's tag (1.2.10) ----
 add_library(clap-sdk INTERFACE)
-target_include_directories(clap-sdk INTERFACE external/clap/include)
+target_include_directories(clap-sdk SYSTEM INTERFACE external/clap/include)
 
 # --- Warnings for our own code (not vendored/system headers) -------------------
 add_library(stagehand-warnings INTERFACE)
 target_compile_options(stagehand-warnings INTERFACE -Wall -Wextra -Wpedantic)
 
 # --- stagehand-core: value models, UMP helpers, seam interfaces ----------------
-# Header-only for now; becomes a static library when Core/Ump.cpp lands (M5).
-add_library(stagehand-core INTERFACE)
-target_include_directories(stagehand-core INTERFACE src)
+add_library(stagehand-core STATIC
+    src/Core/Ump.cpp)
+target_include_directories(stagehand-core PUBLIC src)
+target_link_libraries(stagehand-core PRIVATE stagehand-warnings)
+
+# --- stagehand-engine: the graph runner (no platform or format dependencies) ---
+add_library(stagehand-engine STATIC
+    src/Engine/Engine.cpp
+    src/Engine/EngineGraph.cpp)
+target_link_libraries(stagehand-engine
+    PUBLIC  stagehand-core
+    PRIVATE stagehand-warnings)
 
 # --- stagehand-lib: seam implementations (everything except main) --------------
 add_library(stagehand-lib STATIC
-    src/Audio/JackBackend.cpp)
+    src/Audio/JackBackend.cpp
+    src/Midi/AlsaSeqInput.cpp
+    src/Plugin/Clap/ClapModule.cpp
+    src/Plugin/Clap/ClapPlugin.cpp
+    src/Plugin/Clap/ClapPluginFactory.cpp)
 target_link_libraries(stagehand-lib
-    PUBLIC  stagehand-core PkgConfig::JACK
-    PRIVATE stagehand-warnings)
+    PUBLIC  stagehand-engine PkgConfig::JACK PkgConfig::ALSA Threads::Threads ${CMAKE_DL_LIBS}
+    PRIVATE clap-sdk stagehand-warnings)
 
 # --- The app --------------------------------------------------------------------
-add_executable(stagehand src/App/main.cpp)
-target_link_libraries(stagehand PRIVATE stagehand-lib stagehand-warnings)
+add_executable(stagehand
+    src/App/main.cpp
+    src/App/AppHost.cpp
+    src/App/EditorWindow.cpp
+    src/App/MainLoop.cpp
+    src/App/MidiMonitor.cpp)
+target_link_libraries(stagehand PRIVATE stagehand-lib PkgConfig::X11 stagehand-warnings)
 
-# --- Tests (self-contained runner; no third-party framework) --------------------
+# --- Tests (tests/Check.h; one executable per suite, no third-party framework) ---
 enable_testing()
-add_executable(stagehand-tests tests/UmpTests.cpp)
-target_link_libraries(stagehand-tests PRIVATE stagehand-core stagehand-warnings)
-add_test(NAME ump COMMAND stagehand-tests)
+function(stagehand_add_test NAME SOURCE LIBRARY)
+    add_executable(${NAME} ${SOURCE})
+    target_include_directories(${NAME} PRIVATE tests)
+    target_link_libraries(${NAME} PRIVATE ${LIBRARY} stagehand-warnings Threads::Threads)
+    add_test(NAME ${NAME} COMMAND ${NAME})
+endfunction()
+stagehand_add_test(test-ump    tests/UmpTests.cpp       stagehand-core)
+stagehand_add_test(test-spsc   tests/SpscQueueTests.cpp stagehand-core)
+stagehand_add_test(test-engine tests/EngineTests.cpp    stagehand-engine)
