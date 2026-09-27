@@ -1,0 +1,264 @@
+#include "Audio/JackBackend.h"
+
+#include <jack/jack.h>
+
+#include <algorithm>
+#include <cstdio>
+#include <cstdlib>
+#include <ctime>
+#include <string>
+#include <utility>
+
+namespace stagehand {
+
+namespace {
+
+Nanoseconds monotonicNow() noexcept {
+    timespec ts{};
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return static_cast<Nanoseconds>(ts.tv_sec) * 1'000'000'000 + ts.tv_nsec;
+}
+
+// The PIPEWIRE_PROPS value this process set to force a quantum, if any. It stays
+// set after jack_client_open: clearing it while PipeWire's threads are running
+// could race with their getenv(). The next open() — when no client is running —
+// replaces or clears it.
+std::string& ownPipewireProps() {
+    static std::string value;
+    return value;
+}
+
+// Force (quantum > 0) or stop forcing (quantum == 0) the PipeWire quantum for
+// the client about to be opened. Sets only node.force-quantum; PIPEWIRE_QUANTUM
+// would force the sample rate as well. A PIPEWIRE_PROPS the user set in the
+// environment wins. Returns false if a requested force could not be applied.
+bool prepareQuantumForce(std::uint32_t quantum) {
+    const char* existing = std::getenv("PIPEWIRE_PROPS");
+    const bool  ours     = existing != nullptr && ownPipewireProps() == existing;
+    if (existing != nullptr && !ours) return quantum == 0;
+
+    if (quantum == 0) {
+        if (ours) unsetenv("PIPEWIRE_PROPS");
+        ownPipewireProps().clear();
+        return true;
+    }
+    ownPipewireProps() = "{ node.force-quantum = " + std::to_string(quantum) + " }";
+    setenv("PIPEWIRE_PROPS", ownPipewireProps().c_str(), 1);
+    return true;
+}
+
+} // namespace
+
+JackBackend::JackBackend(std::string jackClientName, bool connectToSystem)
+    : clientName(std::move(jackClientName)), autoConnect(connectToSystem) {}
+
+JackBackend::~JackBackend() {
+    close();
+}
+
+bool JackBackend::open(const AudioConfig& requested, AudioConfig& negotiated) {
+    if (client != nullptr) return false;   // already open
+
+    // A requested buffer size is forced on our graph for as long as our client
+    // is active (PipeWire node.force-quantum; docs/architecture.md section 2).
+    // PipeWire releases it when the client goes away, crash included. It takes
+    // effect at activation, so the size reported below is still the old one;
+    // the buffer-size callback reports the change. A real jackd ignores it.
+    if (prepareQuantumForce(requested.bufferSize)) {
+        appliedQuantum = requested.bufferSize;
+    } else {
+        appliedQuantum = 0;
+        std::fprintf(stderr,
+                     "JackBackend: PIPEWIRE_PROPS is already set in the environment; "
+                     "not forcing a %u-frame quantum\n",
+                     requested.bufferSize);
+    }
+
+    jack_status_t status{};
+    client = jack_client_open(clientName.c_str(), JackNoStartServer, &status);
+    if (client == nullptr) {
+        std::fprintf(stderr,
+                     "JackBackend: jack_client_open failed (status 0x%x). "
+                     "Is it running under PipeWire's JACK layer (pw-jack)?\n",
+                     static_cast<unsigned>(status));
+        return false;
+    }
+
+    jack_set_process_callback(client, &JackBackend::processCallback, this);
+    jack_set_buffer_size_callback(client, &JackBackend::bufferSizeCallback, this);
+    jack_set_xrun_callback(client, &JackBackend::xrunCallback, this);
+    jack_on_shutdown(client, &JackBackend::shutdownCallback, this);
+
+    auto registerPorts = [this](std::uint32_t count, const char* prefix,
+                                unsigned long flags, std::vector<jack_port_t*>& ports) {
+        for (std::uint32_t i = 0; i < count; ++i) {
+            const std::string portName = prefix + std::to_string(i + 1);
+            jack_port_t* port = jack_port_register(client, portName.c_str(),
+                                                   JACK_DEFAULT_AUDIO_TYPE, flags, 0);
+            if (port == nullptr) return false;
+            ports.push_back(port);
+        }
+        return true;
+    };
+    if (!registerPorts(requested.inputChannels, "in_", JackPortIsInput, inputPorts) ||
+        !registerPorts(requested.outputChannels, "out_", JackPortIsOutput, outputPorts)) {
+        std::fprintf(stderr, "JackBackend: port registration failed\n");
+        close();
+        return false;
+    }
+    inputPointers.assign(inputPorts.size(), nullptr);
+    outputPointers.assign(outputPorts.size(), nullptr);
+
+    // The server owns rate and buffer size: report what it runs, not the request.
+    negotiatedConfig.sampleRate     = jack_get_sample_rate(client);
+    negotiatedConfig.bufferSize     = jack_get_buffer_size(client);
+    negotiatedConfig.inputChannels  = static_cast<std::uint32_t>(inputPorts.size());
+    negotiatedConfig.outputChannels = static_cast<std::uint32_t>(outputPorts.size());
+    currentBufferSize.store(negotiatedConfig.bufferSize, std::memory_order_relaxed);
+
+    if (requested.sampleRate != 0.0 && requested.sampleRate != negotiatedConfig.sampleRate)
+        std::fprintf(stderr, "JackBackend: requested %.0f Hz, server runs %.0f Hz\n",
+                     requested.sampleRate, negotiatedConfig.sampleRate);
+
+    // Measure JACK's clock against CLOCK_MONOTONIC, bracketing the read.
+    const Nanoseconds before    = monotonicNow();
+    const jack_time_t jackUsecs = jack_get_time();
+    const Nanoseconds after     = monotonicNow();
+    jackClockOffset = static_cast<Nanoseconds>(jackUsecs) * 1000 - (before + after) / 2;
+
+    negotiated = negotiatedConfig;
+    return true;
+}
+
+void JackBackend::setProcessor(AudioProcessor* audioProcessor) {
+    if (running) {
+        std::fprintf(stderr, "JackBackend: setProcessor() ignored while running\n");
+        return;
+    }
+    processor = audioProcessor;
+}
+
+bool JackBackend::start() {
+    if (client == nullptr || running) return false;
+    if (jack_activate(client) != 0) {
+        std::fprintf(stderr, "JackBackend: jack_activate failed\n");
+        return false;
+    }
+    running = true;
+    if (autoConnect) connectToSystemPorts();
+    return true;
+}
+
+void JackBackend::stop() {
+    if (!running) return;
+    jack_deactivate(client);
+    running = false;
+}
+
+void JackBackend::close() {
+    stop();
+    if (client != nullptr) {
+        jack_client_close(client);   // also unregisters our ports
+        client = nullptr;
+    }
+    inputPorts.clear();
+    outputPorts.clear();
+    inputPointers.clear();
+    outputPointers.clear();
+}
+
+AudioConfig JackBackend::config() const {
+    AudioConfig current = negotiatedConfig;
+    current.bufferSize  = currentBufferSize.load(std::memory_order_relaxed);
+    return current;
+}
+
+void JackBackend::connectToSystemPorts() {
+    // Our out_N -> the Nth physical playback port.
+    if (const char** playback = jack_get_ports(client, nullptr, JACK_DEFAULT_AUDIO_TYPE,
+                                               JackPortIsPhysical | JackPortIsInput)) {
+        for (std::size_t i = 0; i < outputPorts.size() && playback[i] != nullptr; ++i) {
+            const char* ours = jack_port_name(outputPorts[i]);
+            if (jack_connect(client, ours, playback[i]) == 0)
+                std::printf("  %s -> %s\n", ours, playback[i]);
+            else
+                std::fprintf(stderr, "JackBackend: could not connect %s -> %s\n", ours, playback[i]);
+        }
+        jack_free(playback);
+    }
+    // The Nth physical capture port -> our in_N.
+    if (const char** capture = jack_get_ports(client, nullptr, JACK_DEFAULT_AUDIO_TYPE,
+                                              JackPortIsPhysical | JackPortIsOutput)) {
+        for (std::size_t i = 0; i < inputPorts.size() && capture[i] != nullptr; ++i) {
+            const char* ours = jack_port_name(inputPorts[i]);
+            if (jack_connect(client, capture[i], ours) == 0)
+                std::printf("  %s -> %s\n", capture[i], ours);
+            else
+                std::fprintf(stderr, "JackBackend: could not connect %s -> %s\n", capture[i], ours);
+        }
+        jack_free(capture);
+    }
+}
+
+// --- JACK callbacks ------------------------------------------------------------
+
+// RT thread. No allocation, locks, or syscalls beyond JACK's own RT-safe calls.
+int JackBackend::processCallback(std::uint32_t nframes, void* arg) {
+    auto* self = static_cast<JackBackend*>(arg);
+
+    for (std::size_t i = 0; i < self->inputPorts.size(); ++i)
+        self->inputPointers[i] =
+            static_cast<const float*>(jack_port_get_buffer(self->inputPorts[i], nframes));
+    for (std::size_t i = 0; i < self->outputPorts.size(); ++i)
+        self->outputPointers[i] =
+            static_cast<float*>(jack_port_get_buffer(self->outputPorts[i], nframes));
+
+    const std::int64_t position = self->frameCounter.load(std::memory_order_relaxed);
+
+    AudioCallbackContext ctx;
+    ctx.frameCount = nframes;
+
+    jack_nframes_t cycleFrames = 0;
+    jack_time_t    cycleUsecs  = 0;
+    jack_time_t    nextUsecs   = 0;
+    float          periodUsecs = 0.0f;
+    if (jack_get_cycle_times(self->client, &cycleFrames, &cycleUsecs, &nextUsecs,
+                             &periodUsecs) == 0)
+        ctx.blockStartTime = static_cast<Nanoseconds>(cycleUsecs) * 1000 - self->jackClockOffset;
+    else
+        ctx.blockStartTime = monotonicNow();   // vDSO clock read: no syscall, RT-safe
+
+    ctx.time.sampleRate     = self->negotiatedConfig.sampleRate;
+    ctx.time.samplePosition = position;
+
+    ctx.input  = ConstAudioBuffer{self->inputPointers.data(),
+                                  static_cast<std::uint32_t>(self->inputPointers.size()), nframes};
+    ctx.output = AudioBuffer{self->outputPointers.data(),
+                             static_cast<std::uint32_t>(self->outputPointers.size()), nframes};
+
+    if (self->processor != nullptr) {
+        self->processor->process(ctx);
+    } else {
+        for (float* channel : self->outputPointers)
+            std::fill_n(channel, nframes, 0.0f);
+    }
+
+    self->frameCounter.store(position + nframes, std::memory_order_relaxed);
+    return 0;
+}
+
+int JackBackend::bufferSizeCallback(std::uint32_t nframes, void* arg) {
+    static_cast<JackBackend*>(arg)->currentBufferSize.store(nframes, std::memory_order_relaxed);
+    return 0;
+}
+
+int JackBackend::xrunCallback(void* arg) {
+    static_cast<JackBackend*>(arg)->xruns.fetch_add(1, std::memory_order_relaxed);
+    return 0;
+}
+
+void JackBackend::shutdownCallback(void* arg) {
+    static_cast<JackBackend*>(arg)->shutDown.store(true, std::memory_order_relaxed);
+}
+
+} // namespace stagehand

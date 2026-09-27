@@ -1,0 +1,92 @@
+#pragma once
+
+#include <atomic>
+#include <cstdint>
+#include <string>
+#include <vector>
+
+#include "Audio/AudioBackend.h"
+
+typedef struct _jack_client jack_client_t;
+typedef struct _jack_port   jack_port_t;
+
+namespace stagehand {
+
+// AudioBackend over the JACK API. On this system the JACK API is served by
+// PipeWire (pipewire-jack): run as `pw-jack stagehand` so calls reach PipeWire
+// instead of looking for a jackd server.
+//
+// The server owns the sample rate: open() reports it rather than imposing the
+// request. A requested buffer size (AudioConfig::bufferSize != 0) is FORCED on
+// our graph while our client is active, via PipeWire's node.force-quantum, and
+// released when the client goes away (docs/architecture.md section 2). The
+// buffer size can change while running, in both directions (a forced quantum
+// applies at activation; other clients can change the graph); config() always
+// reports the current value, and the engine never assumes a fixed block size.
+class JackBackend final : public AudioBackend {
+public:
+    // `connectToSystem`: on start(), connect our ports to the system's physical
+    // playback/capture ports. JACK-specific, so it lives here rather than in
+    // AudioConfig (other backends output to their device directly).
+    explicit JackBackend(std::string jackClientName = "StageHand",
+                         bool connectToSystem = true);
+    ~JackBackend() override;
+
+    JackBackend(const JackBackend&)            = delete;
+    JackBackend& operator=(const JackBackend&) = delete;
+
+    bool        open(const AudioConfig& requested, AudioConfig& negotiated) override;
+    void        setProcessor(AudioProcessor* audioProcessor) override;
+    bool        start() override;
+    void        stop() override;
+    void        close() override;
+    AudioConfig config() const override;
+    const char* name() const override { return "JACK"; }
+
+    // --- diagnostics (any thread) ---
+    std::uint64_t xrunCount() const noexcept { return xruns.load(std::memory_order_relaxed); }
+    bool          serverShutDown() const noexcept { return shutDown.load(std::memory_order_relaxed); }
+    std::int64_t  framesProcessed() const noexcept { return frameCounter.load(std::memory_order_relaxed); }
+
+    // The quantum being forced while our client is active, or 0 if none (not
+    // requested, or a user-set PIPEWIRE_PROPS took precedence).
+    std::uint32_t forcedQuantum() const noexcept { return appliedQuantum; }
+
+    // JACK clock (jack_get_time) minus CLOCK_MONOTONIC, measured at open(). ~0
+    // means JACK cycle times and our MIDI capture timestamps share a clock,
+    // which sample-accurate MIDI depends on. blockStartTime is corrected by
+    // this offset either way.
+    Nanoseconds clockOffset() const noexcept { return jackClockOffset; }
+
+private:
+    static int  processCallback(std::uint32_t nframes, void* arg);
+    static int  bufferSizeCallback(std::uint32_t nframes, void* arg);
+    static int  xrunCallback(void* arg);
+    static void shutdownCallback(void* arg);
+
+    void connectToSystemPorts();
+
+    std::string clientName;
+    bool        autoConnect;
+
+    jack_client_t*            client = nullptr;
+    std::vector<jack_port_t*> inputPorts;
+    std::vector<jack_port_t*> outputPorts;
+
+    // Sized at open() so the RT callback never allocates.
+    std::vector<const float*> inputPointers;
+    std::vector<float*>       outputPointers;
+
+    AudioProcessor* processor = nullptr;
+    AudioConfig     negotiatedConfig;
+    Nanoseconds     jackClockOffset = 0;
+    std::uint32_t   appliedQuantum  = 0;
+    bool            running         = false;
+
+    std::atomic<std::uint32_t> currentBufferSize{0};
+    std::atomic<std::int64_t>  frameCounter{0};     // written only by the RT thread
+    std::atomic<std::uint64_t> xruns{0};
+    std::atomic<bool>          shutDown{false};
+};
+
+} // namespace stagehand

@@ -123,11 +123,63 @@ provides.** Low-latency, coexists with the desktop, minimal API, routable.
 Abstract behind an audio-backend seam so CoreAudio/PortAudio can be added for
 Mac.
 
+### Latency / buffer size (resolved; verified in M1 against PipeWire 1.6.2)
+
+**How PipeWire decides.** A *driver* node (the sound card, or the internal
+Dummy-Driver when nothing is connected) runs the cycle; each cycle every node
+linked to it processes one **quantum** — the buffer size a JACK client sees.
+There is one quantum per driver's graph, so once connected to a card StageHand
+shares it with every app on that card. Nodes *request* a latency (`node.latency`,
+or `PIPEWIRE_LATENCY` — "only a suggestion"); the graph runs at the smallest
+request, clamped to `clock.min-quantum`..`clock.max-quantum` (32..2048 here),
+defaulting to `clock.quantum` (1024). JACK clients default to
+`node.lock-quantum = true`, so the first JACK client running holds the quantum
+and later *requests* lose (observed: a 128 request forced up to 1024).
+
+**Forcing mechanisms:**
+
+| Mechanism | Scope | Lifetime |
+|---|---|---|
+| `clock.force-quantum` (`pw-metadata -n settings 0 …`) | every graph: all apps, all devices | until reset to 0 or PipeWire restarts |
+| `node.force-quantum` (node property) | the graph that node is in | only while that node is active |
+| `default.clock.*` in `pipewire.conf.d` | defaults and limits | permanent |
+
+**Decision.** StageHand **never sets `clock.force-quantum`**: it's global, and a
+crash would leave the whole system forced until someone resets it. Instead,
+`--quantum N` (`AudioConfig::bufferSize`) makes JackBackend set
+**`node.force-quantum` on its own JACK client**, through `PIPEWIRE_PROPS` at
+`jack_client_open`. It uses `PIPEWIRE_PROPS` rather than `PIPEWIRE_QUANTUM`
+because the latter forces the sample rate too. A `PIPEWIRE_PROPS` the user set
+themselves wins, with a warning. A real jackd ignores the variable.
+
+**Verified behavior** (on the Dummy-Driver, so the real audio path was untouched):
+- A per-node force overrides another client's lock (a locked client at 1024 was
+  pulled to 256).
+- It lasts only while StageHand's node is active: that client returned to 1024
+  when the forcing client exited. By the same mechanism a crash releases it.
+- Forcing bypasses `clock.min-quantum` (a forced 16 took effect under a minimum
+  of 32). The hard bounds are the documented `quantum-floor` (4) and
+  `quantum-limit` (8192), which `--quantum` enforces.
+- The force applies at **activation**, so `open()` still reports the old size;
+  `config()` and the buffer-size callback report the change. Nothing downstream
+  may treat `open()`'s buffer size as final.
+
+**Caveats.** The whole graph (every app on that device) runs at the forced size.
+Very small quanta on real hardware risk xruns, since the tests ran on a timer
+driver. Untested: how a per-node force interacts with a global
+`clock.force-quantum`.
+
+**Engine consequence (M3).** The buffer size can change in both directions while
+running. Plugins can be activated with a maximum of 8192 (PipeWire's documented
+largest graph buffer), with block splitting kept as a safety net for other
+backends and configurations.
+
 **Open questions**
 - Client model (join the PipeWire/JACK graph) vs owning a device — client model
   chosen for flexibility; revisit if a dedicated-interface live rig wants
   exclusive access.
-- Buffer size / latency defaults and how the user picks the device.
+- How the user picks the device (today: auto-connect to the system playback
+  ports).
 
 ---
 

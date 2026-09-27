@@ -13,15 +13,16 @@ namespace stagehand {
 // actually granted through AudioBackend::open()'s `negotiated` out-parameter.
 struct AudioConfig {
     double        sampleRate     = 0.0;
-    std::uint32_t bufferSize     = 0;   // max frames per process block
+    std::uint32_t bufferSize     = 0;   // frames per block; may change while running (see config())
     std::uint32_t inputChannels  = 0;
     std::uint32_t outputChannels = 2;
 };
 
 // Everything handed to the real-time callback for one block. `blockStartTime`
-// is the monotonic-clock time of frame 0; the engine uses it to map captured
-// MIDI timestamps to sample offsets within this block (see domain-model.md,
-// sample-accurate alignment).
+// is the CLOCK_MONOTONIC time at which this processing cycle began. The engine
+// maps MIDI captured during the previous cycle onto this block, one period
+// behind, so relative timing stays sample-exact (domain-model.md, sample-accurate
+// alignment).
 struct AudioCallbackContext {
     std::uint32_t    frameCount     = 0;
     Nanoseconds      blockStartTime = 0;

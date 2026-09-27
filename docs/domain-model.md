@@ -107,11 +107,15 @@ How the models deliver it:
    timestamp on its own thread (ALSA can return a hardware/queue timestamp;
    otherwise `clock_gettime` at read). The lock-free queue carries
    `(timestamp, UMP words)`, never bare bytes with no time.
-2. **Map to a frame offset at block start.** The RT callback knows the block's
-   start time and frame count, so for each drained event:
-   `offset = round((event_ts − block_start_ts) × sampleRate)`, clamped to
-   `[0, frames)`. Events already late collapse to offset 0; events timestamped
-   beyond this block stay queued for the next one.
+2. **Map to a frame offset, one period behind.** MIDI drained at the top of cycle
+   *k* was captured during cycle *k−1*, so it is always "late" relative to this
+   block's start. Mapping it against the block start would collapse every event
+   to offset 0. Instead, map the **previous cycle's window** onto this block:
+   `offset = round((event_ts − (block_start_ts − frames/sampleRate)) × sampleRate)`,
+   clamped to `[0, frames)`. That costs a constant one-period latency and keeps
+   relative timing sample-exact (the technique JACK MIDI bridges use). Events
+   older than the window (after a stalled cycle) clamp to 0; events stamped at or
+   after `block_start_ts` belong to the next block and stay queued.
 3. **Deliver a time-sorted EventBlock.** Events are sorted ascending by offset
    (CLAP requires monotonically non-decreasing event times). The plugin receives
    the whole list with offsets and does its **own** sample-accurate splitting
