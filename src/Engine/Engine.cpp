@@ -45,7 +45,7 @@ bool accepts(const MidiFilter& filter, MidiSourceHandle source, const MidiMessag
     return true;
 }
 
-// Can a note port with `dialects` take `m` unchanged? (M3 doesn't translate.)
+// Can a note port with `dialects` take `m` unchanged?
 bool dialectAccepts(NoteDialectMask dialects, const MidiMessage& m) noexcept {
     switch (ump::messageType(m)) {
         case ump::MessageType::Midi1ChannelVoice:
@@ -61,6 +61,14 @@ bool dialectAccepts(NoteDialectMask dialects, const MidiMessage& m) noexcept {
 
 void addScaled(float* destination, const float* source, std::uint32_t frames, float gain) noexcept {
     for (std::uint32_t f = 0; f < frames; ++f) destination[f] += source[f] * gain;
+}
+
+void setNoteNumber(MidiMessage& m, std::uint8_t note) noexcept {
+    m.words[0] = (m.words[0] & ~0x7F00u) | (std::uint32_t{note & 0x7Fu} << 8);
+}
+
+bool acceptsMidi1(NoteDialectMask dialects) noexcept {
+    return (dialects & (NoteDialect::Midi | NoteDialect::MidiMpe)) != 0;
 }
 
 } // namespace
@@ -175,31 +183,142 @@ void Engine::gatherMidi(const AudioCallbackContext& ctx) noexcept {
 }
 
 void Engine::route(const QueuedMidi& item, std::uint32_t offset) noexcept {
-    const MidiMessage& message = item.message.message;
-    for (std::size_t i = 0; i < currentGraph->configs.size(); ++i) {
-        const SlotConfig&       config = currentGraph->configs[i];
-        EngineGraph::SlotState& state  = currentGraph->states[i];
-        if (state.dialects == 0 || !accepts(config.midiFilter, item.source, message)) continue;
+    const MidiMessage& original = item.message.message;
 
-        MidiMessage delivered = message;
-        if (config.midiFilter.transpose != 0 &&
-            !ump::transposeNote(delivered, config.midiFilter.transpose))
-            continue;   // transposed out of range
-        if (!dialectAccepts(state.dialects, delivered)) {
-            unsupportedDialect.fetch_add(1, std::memory_order_relaxed);
-            continue;
+    // Upconvert every MIDI 1.0 message once, whether or not a slot needs it: the
+    // state (RPN selection, bank) belongs to the stream and must see it all.
+    MidiMessage upconverted[ump::kMaxTranslatedMessages];
+    std::size_t upconvertedCount = 0;
+    if (ump::messageType(original) == ump::MessageType::Midi1ChannelVoice)
+        if (ump::UpconvertState* state = upconvertStateFor(item.source))
+            upconvertedCount = ump::upconvert(original, *state, upconverted, ump::kMaxTranslatedMessages);
+
+    // A note-off follows its note-on, whatever the filters say now.
+    if (ump::isNoteOff(original)) {
+        if (HeldNote* held = findHeld(item.source, original)) {
+            for (std::size_t i = 0; i < currentGraph->configs.size(); ++i)
+                for (std::uint8_t k = 0; k < held->count; ++k)
+                    if (currentGraph->configs[i].plugin.get() == held->plugins[k])
+                        deliver(i, original, upconverted, upconvertedCount, offset,
+                                held->deliveredNotes[k], nullptr);
+            held->used = false;
+            return;
         }
-        if (state.eventCount == state.events.size()) {
-            slotEventsFull.fetch_add(1, std::memory_order_relaxed);
-            continue;
-        }
-        Event& event       = state.events[state.eventCount++];
-        event              = Event{};
-        event.sampleOffset = offset;
-        event.type         = EventType::Midi;
-        event.midi         = delivered;
-        event.portIndex    = config.notePort;
     }
+
+    HeldNote* const noteOn = ump::isNoteOn(original) ? claimHeld(item.source, original) : nullptr;
+    for (std::size_t i = 0; i < currentGraph->configs.size(); ++i) {
+        const SlotConfig& config = currentGraph->configs[i];
+        if (currentGraph->states[i].dialects == 0 || !accepts(config.midiFilter, item.source, original))
+            continue;
+        std::uint8_t deliveredNote = 0;
+        if (deliver(i, original, upconverted, upconvertedCount, offset, -1, &deliveredNote) &&
+            noteOn != nullptr && noteOn->count < kMaxLayers) {
+            noteOn->plugins[noteOn->count]        = config.plugin.get();
+            noteOn->deliveredNotes[noteOn->count] = deliveredNote;
+            ++noteOn->count;
+        }
+    }
+}
+
+// Deliver one incoming message to one slot, in a form its note port takes.
+// noteOverride >= 0 places it at that note (a held note's note-off); otherwise
+// the slot's transpose applies. Returns true if anything was queued.
+bool Engine::deliver(std::size_t slot, const MidiMessage& original, const MidiMessage* upconverted,
+                     std::size_t upconvertedCount, std::uint32_t offset, int noteOverride,
+                     std::uint8_t* deliveredNote) noexcept {
+    const SlotConfig&     config   = currentGraph->configs[slot];
+    const NoteDialectMask dialects = currentGraph->states[slot].dialects;
+    auto place = [&](MidiMessage& m) {
+        if (noteOverride >= 0) {
+            setNoteNumber(m, static_cast<std::uint8_t>(noteOverride));
+            return true;
+        }
+        return config.midiFilter.transpose == 0 || ump::transposeNote(m, config.midiFilter.transpose);
+    };
+    const ump::MessageType type = ump::messageType(original);
+
+    if (dialectAccepts(dialects, original)) {   // its own protocol: unchanged
+        MidiMessage m = original;
+        return place(m) && append(slot, m, offset, deliveredNote);
+    }
+    if (type == ump::MessageType::Midi2ChannelVoice && acceptsMidi1(dialects)) {
+        MidiMessage m = original;   // transpose first, so a pitch attribute stays consistent
+        if (!place(m)) return false;
+        MidiMessage down[ump::kMaxTranslatedMessages];
+        const std::size_t n = ump::downconvert(m, down, ump::kMaxTranslatedMessages);
+        bool any = false;
+        for (std::size_t j = 0; j < n; ++j) any = append(slot, down[j], offset, deliveredNote) || any;
+        return any;
+    }
+    if (type == ump::MessageType::Midi1ChannelVoice && (dialects & NoteDialect::Midi2) != 0) {
+        bool any = false;   // nothing to send is normal: bank select, RPN selection
+        for (std::size_t j = 0; j < upconvertedCount; ++j) {
+            MidiMessage m = upconverted[j];
+            if (place(m)) any = append(slot, m, offset, deliveredNote) || any;
+        }
+        return any;
+    }
+    unsupportedDialect.fetch_add(1, std::memory_order_relaxed);
+    return false;
+}
+
+bool Engine::append(std::size_t slot, const MidiMessage& message, std::uint32_t offset,
+                    std::uint8_t* deliveredNote) noexcept {
+    EngineGraph::SlotState& state = currentGraph->states[slot];
+    if (state.eventCount == state.events.size()) {
+        slotEventsFull.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    Event& event       = state.events[state.eventCount++];
+    event              = Event{};
+    event.sampleOffset = offset;
+    event.type         = EventType::Midi;
+    event.midi         = message;
+    event.portIndex    = currentGraph->configs[slot].notePort;
+    if (deliveredNote != nullptr) *deliveredNote = ump::noteNumber(message);
+    return true;
+}
+
+// Sources are few; handles aren't reused, so a table of 16 lasts a session. If
+// it's full, MIDI-2.0-only plugins get no MIDI 1.0 from further sources.
+ump::UpconvertState* Engine::upconvertStateFor(MidiSourceHandle source) noexcept {
+    SourceState* unused = nullptr;
+    for (SourceState& s : sourceStates) {
+        if (s.source == source) return &s.upconvert;
+        if (s.source == kInvalidMidiSource && unused == nullptr) unused = &s;
+    }
+    if (unused == nullptr) return nullptr;
+    unused->source    = source;
+    unused->upconvert = ump::UpconvertState{};
+    return &unused->upconvert;
+}
+
+Engine::HeldNote* Engine::findHeld(MidiSourceHandle source, const MidiMessage& m) noexcept {
+    const std::uint8_t g = ump::group(m), ch = ump::channel(m), note = ump::noteNumber(m);
+    for (HeldNote& h : heldNotes)
+        if (h.used && h.source == source && h.group == g && h.channel == ch && h.note == note) return &h;
+    return nullptr;
+}
+
+// Start (or restart, for a repeated note-on) tracking a key. Null if the table
+// is full; that key's note-off then falls back to routing through the filters.
+Engine::HeldNote* Engine::claimHeld(MidiSourceHandle source, const MidiMessage& m) noexcept {
+    HeldNote* entry = findHeld(source, m);
+    if (entry == nullptr)
+        for (HeldNote& h : heldNotes)
+            if (!h.used) {
+                entry = &h;
+                break;
+            }
+    if (entry == nullptr) return nullptr;
+    entry->used    = true;
+    entry->source  = source;
+    entry->group   = ump::group(m);
+    entry->channel = ump::channel(m);
+    entry->note    = ump::noteNumber(m);
+    entry->count   = 0;
+    return entry;
 }
 
 void Engine::runSlots(const AudioCallbackContext& ctx) noexcept {

@@ -7,6 +7,7 @@
 
 #include "Audio/AudioBackend.h"
 #include "Core/SpscQueue.h"
+#include "Core/Ump.h"
 #include "Engine/EngineGraph.h"
 #include "Midi/MidiInput.h"
 
@@ -27,8 +28,13 @@ namespace stagehand {
 //   2. Drain the MIDI captured before this block started, one period behind:
 //      offset = floor((t - (blockStart - frames/rate)) * rate), clamped to
 //      [0, frames). Messages stamped at or after blockStart stay queued. Each
-//      message goes to every slot whose filter accepts it. The queue is in
-//      capture order, so each slot's events come out already sorted.
+//      message goes to every slot whose filter accepts it, in the message's
+//      own protocol if the slot's note port takes it, otherwise translated
+//      (MIDI 2.0 downconverted for MIDI 1.0 ports; MIDI 1.0 upconverted for
+//      MIDI-2.0-only ports, with per-source state). A note-off goes wherever
+//      its note-on went, at the note number each plugin actually got, even if
+//      filters or transposes changed in between (the held-note table). The
+//      queue is in capture order, so each slot's events come out sorted.
 //   3. Split the block into chunks of at most kMaxPluginBlockFrames. For each
 //      chunk, run every slot with its share of the events, then sum the slot
 //      outputs (times gain) into the backend outputs.
@@ -76,7 +82,7 @@ public:
         std::uint64_t midiReceived       = 0;   // messages accepted into the queue
         std::uint64_t midiQueueFull      = 0;   // dropped: MIDI queue full
         std::uint64_t slotEventsFull     = 0;   // dropped: a slot's per-block buffer full
-        std::uint64_t unsupportedDialect = 0;   // dropped: slot can't take the protocol (M3; M5 translates)
+        std::uint64_t unsupportedDialect = 0;   // dropped: no form the slot takes (CLAP-only port, SysEx)
         std::uint64_t lateMidi           = 0;   // older than the window; placed at offset 0
     };
     Stats stats() const noexcept;   // any thread
@@ -97,10 +103,44 @@ private:
         TimedMidiMessage message;
     };
 
+    // Most slots one held note is tracked for (layers per key).
+    static constexpr std::size_t kMaxLayers = 8;
+
+    // A sounding note: which plugins got its note-on, and at which note number
+    // (after transpose). Keyed by plugin, not slot index, so it survives graph
+    // swaps. Audio thread only.
+    struct HeldNote {
+        bool                used    = false;
+        MidiSourceHandle    source  = kInvalidMidiSource;
+        std::uint8_t        group   = 0;
+        std::uint8_t        channel = 0;
+        std::uint8_t        note    = 0;
+        std::uint8_t        count   = 0;
+        const HostedPlugin* plugins[kMaxLayers]        = {};
+        std::uint8_t        deliveredNotes[kMaxLayers] = {};
+    };
+
+    // MIDI 1.0 -> 2.0 translation state belongs to the incoming stream.
+    struct SourceState {
+        MidiSourceHandle    source = kInvalidMidiSource;   // invalid = free
+        ump::UpconvertState upconvert;
+    };
+
     void adoptPendingGraph() noexcept;
     void gatherMidi(const AudioCallbackContext& ctx) noexcept;
     void route(const QueuedMidi& item, std::uint32_t offset) noexcept;
-    void runSlots(const AudioCallbackContext& ctx) noexcept;
+    bool deliver(std::size_t slot, const MidiMessage& original, const MidiMessage* upconverted,
+                 std::size_t upconvertedCount, std::uint32_t offset, int noteOverride,
+                 std::uint8_t* deliveredNote) noexcept;
+    bool append(std::size_t slot, const MidiMessage& message, std::uint32_t offset,
+                std::uint8_t* deliveredNote) noexcept;
+    ump::UpconvertState* upconvertStateFor(MidiSourceHandle source) noexcept;
+    HeldNote*            findHeld(MidiSourceHandle source, const MidiMessage& m) noexcept;
+    HeldNote*            claimHeld(MidiSourceHandle source, const MidiMessage& m) noexcept;
+    void                 runSlots(const AudioCallbackContext& ctx) noexcept;
+
+    HeldNote    heldNotes[256];     // audio thread only
+    SourceState sourceStates[16];   // audio thread only
 
     SpscQueue<QueuedMidi, 4096>   midiQueue;                // MIDI thread -> audio
     std::atomic<EngineGraph*>     pendingGraph{nullptr};    // main -> audio

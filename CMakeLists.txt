@@ -25,6 +25,10 @@ find_package(Threads REQUIRED)
 add_library(clap-sdk INTERFACE)
 target_include_directories(clap-sdk SYSTEM INTERFACE external/clap/include)
 
+# --- nlohmann/json 3.11.3: single header, vendored (same copy as PMU) ----------
+add_library(nlohmann-json INTERFACE)
+target_include_directories(nlohmann-json SYSTEM INTERFACE external)
+
 # --- Warnings for our own code (not vendored/system headers) -------------------
 add_library(stagehand-warnings INTERFACE)
 target_compile_options(stagehand-warnings INTERFACE -Wall -Wextra -Wpedantic)
@@ -42,6 +46,14 @@ add_library(stagehand-engine STATIC
 target_link_libraries(stagehand-engine
     PUBLIC  stagehand-core
     PRIVATE stagehand-warnings)
+
+# --- stagehand-session: racks (files) and running them (no platform deps) -------
+add_library(stagehand-session STATIC
+    src/Session/RackFile.cpp
+    src/Session/Session.cpp)
+target_link_libraries(stagehand-session
+    PUBLIC  stagehand-engine
+    PRIVATE nlohmann-json stagehand-warnings)
 
 # --- stagehand-lib: seam implementations (everything except main) --------------
 add_library(stagehand-lib STATIC
@@ -61,7 +73,7 @@ add_executable(stagehand
     src/App/EditorWindow.cpp
     src/App/MainLoop.cpp
     src/App/MidiMonitor.cpp)
-target_link_libraries(stagehand PRIVATE stagehand-lib PkgConfig::X11 stagehand-warnings)
+target_link_libraries(stagehand PRIVATE stagehand-lib stagehand-session PkgConfig::X11 stagehand-warnings)
 
 # --- Tests (tests/Check.h; one executable per suite, no third-party framework) ---
 enable_testing()
@@ -74,3 +86,5 @@ endfunction()
 stagehand_add_test(test-ump    tests/UmpTests.cpp       stagehand-core)
 stagehand_add_test(test-spsc   tests/SpscQueueTests.cpp stagehand-core)
 stagehand_add_test(test-engine tests/EngineTests.cpp    stagehand-engine)
+stagehand_add_test(test-rackfile tests/RackFileTests.cpp stagehand-session)
+stagehand_add_test(test-session  tests/SessionTests.cpp  stagehand-session)

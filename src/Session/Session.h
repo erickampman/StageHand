@@ -61,7 +61,12 @@ public:
     void unload();
 
 private:
-    MidiSourceHandle resolve(const MidiSourceRef& ref, LoadReport& report);
+    // The saved path first (a hint), then a scan (done at most once per load).
+    std::shared_ptr<HostedPlugin> createPlugin(const RackSlot& saved, std::string& problem,
+                                               std::vector<PluginDescriptor>& scanned, bool& haveScan);
+    // An open input's handle, opening a named device if needed; invalid (with
+    // `problem` set) if it can't be found.
+    MidiSourceHandle resolve(const MidiSourceRef& ref, std::string& problem);
 
     PluginFactory& factory;
     HostServices&  host;

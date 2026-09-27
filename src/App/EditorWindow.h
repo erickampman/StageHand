@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -17,14 +18,19 @@ namespace stagehand {
 //
 // Closing the window (the window manager's close button) closes the editor and
 // the window only: audio keeps running, since a live rig must not stop because
-// an editor was closed. Ctrl-C still quits StageHand.
+// an editor was closed. Ctrl-Q in the window quits StageHand (by asking the
+// MainLoop to stop, the same path as Ctrl-C in the terminal, so --save-rack still
+// saves). Ctrl-Shift-S calls the app's save action, if one was given. Both are
+// grabbed on the host window, so they work while the plugin's editor has focus;
+// every other key (Ctrl-C, Ctrl-S, ...) still goes to the plugin.
 class EditorWindow final : public EditorHost {
 public:
     // Open a window titled `title`, embed the plugin's editor in it, and show it.
-    // Returns null (after printing why) if the plugin has no editor or X11 isn't
-    // available.
+    // `save`, if given, runs on Ctrl-Shift-S. Returns null (after printing why)
+    // if the plugin has no editor or X11 isn't available.
     static std::unique_ptr<EditorWindow> open(HostedPlugin& plugin, MainLoop& loop,
-                                              const std::string& title);
+                                              const std::string& title,
+                                              std::function<void()> save = {});
     ~EditorWindow() override;   // closes the editor, then destroys the window
 
     EditorWindow(const EditorWindow&)            = delete;
@@ -51,6 +57,9 @@ private:
     Display*      display     = nullptr;
     unsigned long window      = 0;      // X11 Window
     unsigned long deleteAtom  = 0;      // WM_DELETE_WINDOW
+    unsigned int  quitKeycode = 0;      // Q, grabbed with Control
+    unsigned int  saveKeycode = 0;      // S, grabbed with Control+Shift (if saveAction)
+    std::function<void()> saveAction;
     EditorSize    size;
     bool          editorOpen  = false;
     bool          confirmSize = false;  // a plugin-requested resize awaits setEditorSize()

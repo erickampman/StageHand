@@ -5,6 +5,34 @@ MIDI reaches each of them. It's the Session model's persistent form
 (domain-model.md, "Session model" and "Save / restore"). Until StageHand has a
 UI, rack files are also meant to be readable and hand-editable.
 
+## Making a rack (until there's a UI)
+
+1. Start from one plugin and save it as a rack. Pick a patch in the plugin's
+   editor, then quit (Ctrl-Q in the editor window, or Ctrl-C in the terminal);
+   the rack is saved with that state:
+   `stagehand --play --plugin <id> --save-rack ~/Racks/Piano.rack`
+2. Edit `rack.json` by hand to add slots, splits, and layers (the example below).
+   A new slot can reuse another's state file, or omit `state` to start from the
+   plugin's defaults.
+3. Play it and adjust the plugins in their editors. The rack is saved back when
+   you quit: `stagehand --play --rack ~/Racks/Piano.rack`
+
+**Saving (default on):**
+- A `--rack` is saved back to itself when StageHand quits, with each plugin's
+  current state. **Ctrl-Shift-S** in any editor window saves right away, without
+  quitting.
+- `--no-save-rack` turns saving off entirely, e.g. for a gig where accidental
+  tweaks shouldn't stick.
+- `--save-rack PATH` saves somewhere else instead ("save as"). It's also the only
+  way to keep a `--plugin` session, which has no rack of its own.
+
+Saving is guarded, and StageHand refuses before any audio starts in two cases:
+- `--save-rack` names an existing rack *other* than the one being played, e.g.
+  `--plugin X --save-rack Piano.rack` when `Piano.rack` already exists. That would
+  replace the saved rack with a fresh one. Add `--overwrite` to do it on purpose.
+- The save path exists but isn't a rack. That's always refused, even with
+  `--overwrite`.
+
 ## Bundle layout
 
 A rack is a directory ending in `.rack`:

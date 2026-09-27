@@ -9,62 +9,12 @@
 #include "Check.h"
 #include "Core/Ump.h"
 #include "Engine/Engine.h"
+#include "FakePlugin.h"
 
 using namespace stagehand;
+using stagehand::test::FakePlugin;
 
 namespace {
-
-class FakePlugin final : public HostedPlugin {
-public:
-    struct Call {
-        std::uint32_t      frames   = 0;
-        std::int64_t       position = 0;
-        std::vector<Event> events;
-    };
-
-    explicit FakePlugin(std::uint32_t channels = 2,
-                        NoteDialectMask dialects = NoteDialect::Midi | NoteDialect::Midi2,
-                        float output = 1.0f)
-        : level(output) {
-        layout.audioOutputs.push_back(AudioPortInfo{"out", channels, true});
-        layout.noteInputs.push_back(NotePortInfo{"in", dialects, NoteDialect::Midi});
-    }
-
-    const PluginDescriptor&    descriptor() const override { return desc; }
-    PortLayout                 portLayout() const override { return layout; }
-    std::vector<ParameterInfo> parameters() const override { return {}; }
-    bool                       activate(double, std::uint32_t) override { return true; }
-    void                       deactivate() override {}
-    double                     paramValue(std::uint32_t) const override { return 0.0; }
-    void                       flushParams(const EventBlock&, EventSink*) override {}
-    bool                       saveState(std::vector<std::byte>&) const override { return false; }
-    bool                       loadState(const std::byte*, std::size_t) override { return false; }
-    void                       idle() override {}
-
-    void process(const ProcessContext& ctx) noexcept override {
-        processing = true;
-        Call call;
-        call.frames   = ctx.frameCount;
-        call.position = ctx.time.samplePosition;
-        call.events.assign(ctx.eventsIn.events, ctx.eventsIn.events + ctx.eventsIn.count);
-        calls.push_back(call);   // allocates: fine in a test
-        for (std::uint32_t c = 0; c < ctx.audioOut.channelCount; ++c)
-            for (std::uint32_t f = 0; f < ctx.frameCount; ++f) ctx.audioOut.channels[c][f] = level;
-    }
-    void stopProcessing() noexcept override {
-        if (processing) ++stops;
-        processing = false;
-    }
-
-    std::vector<Call> calls;
-    int               stops      = 0;
-    bool              processing = false;
-
-private:
-    PluginDescriptor desc;
-    PortLayout       layout;
-    float            level;
-};
 
 // Output buffers plus a context pointing at them.
 struct Block {
@@ -178,15 +128,97 @@ void testRoutingAndDialects() {
     midi2.message.words[0]  = 0x40904800;
     midi2.message.words[1]  = 0x80000000;
     midi2.message.wordCount = 2;
-    engine->onMidi(1, midi2);                     // A yes; B can't take MIDI 2.0
+    engine->onMidi(1, midi2);                     // A as-is; B downconverted (MIDI 1.0 only)
 
     Block block(480, 48000.0, T);
     engine->process(block.ctx);
     CHECK(a->calls.size() == 1 && a->calls[0].events.size() == 2);
-    CHECK(b->calls.size() == 1 && b->calls[0].events.size() == 1);
-    if (b->calls.size() == 1 && b->calls[0].events.size() == 1)
+    CHECK(b->calls.size() == 1 && b->calls[0].events.size() == 2);
+    if (b->calls.size() == 1 && b->calls[0].events.size() == 2) {
         CHECK(ump::noteNumber(b->calls[0].events[0].midi) == 70);
-    CHECK(engine->stats().unsupportedDialect == 1);
+        CHECK(b->calls[0].events[1].midi.words[0] == 0x20904840);   // note 72, vel 0x8000 -> 64
+    }
+    CHECK(engine->stats().unsupportedDialect == 0);
+}
+
+// Each slot gets each message in a form its note port takes.
+void testTranslation() {
+    auto engine = std::make_unique<Engine>();
+    auto midi1  = std::make_shared<FakePlugin>(2, NoteDialect::Midi);
+    auto midi2  = std::make_shared<FakePlugin>(2, NoteDialect::Midi2);
+    engine->commit(graphOf({slotFor(midi1), slotFor(midi2)}));
+
+    engine->onMidi(1, note(T - 9 * ms, 60));      // MIDI 1.0 note-on, vel 100
+    TimedMidiMessage rpn;                          // MIDI 2.0 RPN 0:0 = 2 semitones
+    rpn.captureTime       = T - 8 * ms;
+    rpn.message.words[0]  = 0x40200000;
+    rpn.message.words[1]  = 0x04000000;
+    rpn.message.wordCount = 2;
+    engine->onMidi(1, rpn);
+    TimedMidiMessage cc101 = note(T - 7 * ms, 0);  // MIDI 1.0 CC 101 = 0
+    cc101.message.words[0] = 0x20B06500;
+    engine->onMidi(1, cc101);
+
+    Block block(480, 48000.0, T);
+    engine->process(block.ctx);
+
+    // MIDI 1.0 plugin: note as-is, RPN expanded to CC 101/100/6/38, CC 101 as-is.
+    CHECK(midi1->calls.size() == 1 && midi1->calls[0].events.size() == 6);
+    if (midi1->calls.size() == 1 && midi1->calls[0].events.size() == 6) {
+        const std::vector<Event>& e = midi1->calls[0].events;
+        CHECK(e[0].midi.words[0] == 0x20903C64);
+        CHECK(e[1].midi.words[0] == 0x20B06500 && e[4].midi.words[0] == 0x20B02600);
+        CHECK(e[1].sampleOffset == e[4].sampleOffset);   // an expansion shares its offset
+        CHECK(e[5].midi.words[0] == 0x20B06500);
+    }
+    // MIDI 2.0 plugin: note upconverted, RPN as-is, CC 101 absorbed (nothing).
+    CHECK(midi2->calls.size() == 1 && midi2->calls[0].events.size() == 2);
+    if (midi2->calls.size() == 1 && midi2->calls[0].events.size() == 2) {
+        CHECK(midi2->calls[0].events[0].midi.words[0] == 0x40903C00);
+        CHECK(midi2->calls[0].events[0].midi.words[1] == 0xC9240000);
+        CHECK(midi2->calls[0].events[1].midi.words[0] == 0x40200000);
+    }
+    CHECK(engine->stats().unsupportedDialect == 0);
+}
+
+// A note-off goes wherever its note-on went, at the note each plugin got, even
+// after the graph (filters, transposes) changed in between.
+void testHeldNotes() {
+    auto engine = std::make_unique<Engine>();
+    auto low    = std::make_shared<FakePlugin>();
+    auto high   = std::make_shared<FakePlugin>();
+    SlotConfig lowSlot  = slotFor(low);
+    lowSlot.midiFilter.noteHigh = 59;
+    SlotConfig highSlot = slotFor(high);
+    highSlot.midiFilter.noteLow   = 60;
+    highSlot.midiFilter.transpose = 2;
+    engine->commit(graphOf({lowSlot, highSlot}));
+
+    engine->onMidi(1, note(T - 5 * ms, 60));      // plays `high`, as note 62
+    Block first(480, 48000.0, T);
+    engine->process(first.ctx);
+    CHECK(high->calls.size() == 1 && high->calls[0].events.size() == 1);
+    CHECK(low->calls.size() == 1 && low->calls[0].events.empty());
+
+    // Move the split and change the transpose while the key is down.
+    SlotConfig lowAll  = slotFor(low);             // now takes every note
+    SlotConfig highNow = slotFor(high);
+    highNow.midiFilter.channelMask = 0;            // now hears nothing
+    highNow.midiFilter.transpose   = 5;
+    engine->commit(graphOf({lowAll, highNow}));
+
+    TimedMidiMessage off = note(T + 5 * ms, 60);   // MIDI 1.0 note-off (vel 0)
+    off.message.words[0] = 0x20903C00;
+    engine->onMidi(1, off);
+    Block second(480, 48000.0, T + 10 * ms);
+    engine->process(second.ctx);
+
+    CHECK(high->calls.size() == 2 && high->calls[1].events.size() == 1);   // the note-off still arrives
+    if (high->calls.size() == 2 && high->calls[1].events.size() == 1) {
+        CHECK(ump::isNoteOff(high->calls[1].events[0].midi));
+        CHECK(ump::noteNumber(high->calls[1].events[0].midi) == 62);      // the note it got, not 65
+    }
+    CHECK(low->calls.size() == 2 && low->calls[1].events.empty());         // and nowhere else
 }
 
 void testTransposeKeepsPitchAttribute() {
@@ -282,6 +314,8 @@ int main() {
     testOnePeriodBehind();
     testBlockSplitting();
     testRoutingAndDialects();
+    testTranslation();
+    testHeldNotes();
     testTransposeKeepsPitchAttribute();
     testMixing();
     testGraphLifecycle();

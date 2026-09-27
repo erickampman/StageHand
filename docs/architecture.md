@@ -152,6 +152,14 @@ provides.** Low-latency, coexists with the desktop, minimal API, routable.
 Abstract behind an audio-backend seam so CoreAudio/PortAudio can be added for
 Mac.
 
+**Which JACK server is chosen per invocation, deliberately.** StageHand links
+the ordinary `libjack` (jackd2's). Run under `pw-jack`, it uses PipeWire's;
+without it, it talks to a real jackd server if one is running. PipeWire's
+library path is *not* baked into the binary (no rpath, no system-wide
+`ld.so.conf.d` switch): that would silently rule out real jackd, and other
+backends (exclusive ALSA, CoreAudio) belong behind the `AudioBackend` seam, not
+in link-time choices.
+
 ### Latency / buffer size (resolved; verified in M1 against PipeWire 1.6.2)
 
 **How PipeWire decides.** A *driver* node (the sound card, or the internal
@@ -404,7 +412,13 @@ state.
   `EditorHost` the host passes to `HostedPlugin::openEditor()`, not to the shared
   `HostServices`, because they concern one window.
 - **Closing an editor window closes that editor only**; audio keeps running.
-  Ctrl-C quits.
+  **Ctrl-Q in an editor window quits StageHand** (the same shutdown as Ctrl-C in
+  the terminal, so the rack is saved unless `--no-save-rack`), and
+  **Ctrl-Shift-S saves the rack right away**. Both are passive key grabs on the
+  host window, so they work while the plugin's editor has focus. Everything
+  else, including Ctrl-C and Ctrl-S, still goes to the plugin: inside an editor
+  those belong to the plugin (copy, its own save), and in a window, unlike a
+  terminal, Ctrl-C is no signal.
 - **Lifetime:** the editor closes before its plugin is destroyed, and a plugin's
   timers and fd watches are removed with it even if the plugin forgot to.
 - **Scale:** StageHand doesn't call CLAP `set_scale` on X11, so plugins pick
@@ -417,6 +431,8 @@ state.
 | MIDI   | ALSA sequencer, UMP mode (+ MIDI 1.0 byte parser) | system lib | libremidi / CoreMIDI |
 | Audio  | JACK API (via pipewire-jack)  | system lib/API | PortAudio / CoreAudio|
 | Plugin | CLAP SDK (header-only, vendored) | headers only | + VST3 SDK (vendored)|
+| Editor windows | Xlib (M4) | system lib | Cocoa |
+| Rack files | nlohmann/json 3.11.3 (single header, MIT, vendored; same copy as PMU) | header only | same |
 | Glue   | hand-written (ring buffer, host callbacks, plugin abstraction) | none | — |
 
 Net third-party footprint at the start: **effectively just the CLAP headers**,
@@ -424,8 +440,22 @@ plus two system libraries (ALSA, JACK-API) that are already on the machine.
 
 ## Deferred (not now)
 
-- **UI** — deliberately unexplored for now.
-- **Sequencer UI** — a later goal; the graph/routing model should leave room.
+- **UI** — not built yet. **Leaning: DPF's DGL (pugl + NanoVG over OpenGL)**,
+  the stack PMU already uses. It reuses PMU's widget work (`NodeView`, knobs,
+  param panels); it's vendored and permissively licensed (ISC/zlib), with no
+  install beyond what PMU needs; it's cross-platform the way PMU is (X11 now,
+  Cocoa later, via pugl); and custom drawing suits a stage UI (large,
+  high-contrast). Cost: DGL targets plugin UIs, so desktop pieces are thin
+  (minimal text entry, no native menus, multi-window needs care). DPF's file
+  dialog covers Load/Save. Alternative: Dear ImGui (MIT; fastest for tool-style
+  UI, can run on pugl + OpenGL; developer-tool look unless styled, shares
+  nothing with PMU). **Ruled out:** Qt (user decision), GTK 4 (heavy, weak on
+  macOS, dropped foreign-X11 embedding), JUCE (weight, licensing), wxWidgets
+  (GTK underneath), web UIs (weight). To be decided at the UI milestone.
+- **Sequencer UI** — a later goal. Sequences are sources in the Rack model
+  (docs/rack-format.md, "Reserved: sequences"): created from something like a
+  bottom side-bar, possibly shown as minimized rows. The graph/routing model
+  already leaves room.
 - **VST3 hosting** — after CLAP works end to end.
 - **Cross-platform (macOS)** — design the seams for it, don't build it yet.
 

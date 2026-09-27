@@ -2,6 +2,7 @@
 
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
+#include <X11/keysym.h>
 
 #include <cstdio>
 #include <cstdlib>
@@ -12,13 +13,14 @@ EditorWindow::EditorWindow(HostedPlugin& editorPlugin, MainLoop& mainLoop)
     : plugin(editorPlugin), loop(mainLoop) {}
 
 std::unique_ptr<EditorWindow> EditorWindow::open(HostedPlugin& plugin, MainLoop& loop,
-                                                 const std::string& title) {
+                                                 const std::string& title, std::function<void()> save) {
     if (!plugin.hasEditor()) {
         std::printf("%s has no editor that can be embedded in an X11 window.\n",
                     plugin.descriptor().name.c_str());
         return nullptr;
     }
     std::unique_ptr<EditorWindow> self(new EditorWindow(plugin, loop));
+    self->saveAction = std::move(save);
 
     self->display = XOpenDisplay(nullptr);
     if (self->display == nullptr) {
@@ -36,7 +38,25 @@ std::unique_ptr<EditorWindow> EditorWindow::open(HostedPlugin& plugin, MainLoop&
     self->deleteAtom = XInternAtom(d, "WM_DELETE_WINDOW", False);
     Atom protocols   = self->deleteAtom;
     XSetWMProtocols(d, self->window, &protocols, 1);
-    XSelectInput(d, self->window, StructureNotifyMask);
+    XSelectInput(d, self->window, StructureNotifyMask | KeyPressMask);
+
+    // Ctrl-Q (quit) and Ctrl-Shift-S (save now) work from any editor window. A
+    // passive grab on our window fires even while focus is in the plugin's
+    // embedded child window. Grab under Caps Lock / Num Lock too, which X treats
+    // as modifiers.
+    const unsigned int lockCombinations[] = {0, LockMask, Mod2Mask, LockMask | Mod2Mask};
+    auto grab = [&](unsigned int keycode, unsigned int modifiers) {
+        if (keycode == 0) return;
+        for (const unsigned int locks : lockCombinations)
+            XGrabKey(d, static_cast<int>(keycode), modifiers | locks, self->window, True, GrabModeAsync,
+                     GrabModeAsync);
+    };
+    self->quitKeycode = XKeysymToKeycode(d, XK_q);
+    grab(self->quitKeycode, ControlMask);
+    if (self->saveAction) {
+        self->saveKeycode = XKeysymToKeycode(d, XK_s);
+        grab(self->saveKeycode, ControlMask | ShiftMask);
+    }
 
     // Embed before mapping, so the window appears at the editor's size.
     EditorSize size;
@@ -78,6 +98,17 @@ void EditorWindow::handleEvents() {
         XEvent event;
         XNextEvent(display, &event);
         switch (event.type) {
+            case KeyPress: {
+                const bool control = (event.xkey.state & ControlMask) != 0;
+                const bool shift   = (event.xkey.state & ShiftMask) != 0;
+                if (control && event.xkey.keycode == quitKeycode) {
+                    loop.requestQuit();   // same shutdown as Ctrl-C in the terminal
+                } else if (control && shift && event.xkey.keycode == saveKeycode && saveAction) {
+                    saveAction();
+                    if (display == nullptr) return;   // (defensive: the action closed us)
+                }
+                break;
+            }
             case ClientMessage:
                 if (static_cast<Atom>(event.xclient.data.l[0]) == deleteAtom) {
                     close(true);   // the editor only: audio keeps running

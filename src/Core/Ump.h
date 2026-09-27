@@ -7,10 +7,11 @@
 
 // UMP helpers shared by the MIDI seam and the engine's router/translator:
 //   - field accessors (inline, header-only)
-//   - value scaling, velocity16, transposeNote, toMidi1Bytes (Core/Ump.cpp)
-//   - MIDI 1.0 <-> 2.0 protocol translation and the MIDI 1.0 byte-stream parser
-//     (declared; implemented in M5 with tests against the MIDI 2.0 spec's
-//     translation rules)
+//   - value scaling, velocity16, transposeNote, toMidi1Bytes
+//   - MIDI 1.0 <-> 2.0 protocol translation (MIDI 2.0 spec translation rules;
+//     expected values cross-checked against the ALSA kernel's output in M2)
+//   - the MIDI 1.0 byte-stream parser for non-UMP sources
+// (Core/Ump.cpp; tests in tests/UmpTests.cpp)
 // See docs/domain-model.md, "MIDI protocol handling & per-plugin routing".
 namespace stagehand::ump {
 
@@ -216,7 +217,9 @@ struct Midi1ParserState {
 
 // Feed one byte. Returns true when a complete packet has been written to `out`.
 // Channel voice → MT 0x2, system → MT 0x1, SysEx → MT 0x3: a lossless wrap that
-// never upconverts to MIDI 2.0.
+// never upconverts to MIDI 2.0 (a note-on with velocity 0 stays one). One packet
+// per byte: in the odd case of a Tune Request (F6) ending an unterminated
+// SysEx, the SysEx end is emitted and the Tune Request is lost.
 bool parseMidi1Byte(std::uint8_t byte, Midi1ParserState& state,
                     MidiMessage& out) noexcept;
 

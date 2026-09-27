@@ -1,4 +1,5 @@
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <csignal>
@@ -21,6 +22,8 @@
 #include "Engine/Engine.h"
 #include "Midi/AlsaSeqInput.h"
 #include "Plugin/Clap/ClapPluginFactory.h"
+#include "Session/RackFile.h"
+#include "Session/Session.h"
 
 using namespace stagehand;
 
@@ -39,38 +42,55 @@ void printUsage() {
         "usage: stagehand MODE [options]\n"
         "\n"
         "Modes:\n"
-        "  --play               host a CLAP plugin: MIDI in, audio out (needs --plugin)\n"
+        "  --play               host plugins: MIDI in, audio out (needs --rack or --plugin)\n"
         "  --list-plugins       list installed CLAP plugins\n"
-        "  --list-midi          list MIDI sources (id, protocol, kernel/app)\n"
+        "  --list-midi          list MIDI sources (id, protocol, hardware/software/app)\n"
         "  --monitor            print incoming MIDI exactly as it arrives\n"
-        "  --tone [HZ]          play a test sine (default 440 Hz) to prove the audio path\n"
+        "  --tone [HZ]          play a test sine (default 440 Hz) to check the audio path\n"
+        "  -h, --help           show this help\n"
         "\n"
-        "--play and --monitor always open two virtual MIDI inputs other apps can\n"
-        "connect to: 'MIDI 2.0 In' and 'MIDI 1.0 In'.\n"
-        "\n"
-        "Plugin options (--play):\n"
-        "  --plugin PATH|ID     a .clap file, or an id or name from --list-plugins\n"
+        "What to play (--play):\n"
+        "  --rack PATH          a rack: a .rack bundle (see docs/rack-format.md)\n"
+        "  --plugin PATH|ID     or a single plugin: a .clap file, or an id or name from\n"
+        "                       --list-plugins (starts from the plugin's defaults)\n"
         "  --plugin-id ID       which plugin, when the .clap file holds several\n"
-        "  --no-editor          don't open the plugin's editor window (it opens by\n"
-        "                       default; closing it keeps StageHand playing)\n"
+        "  --no-editor          don't open the plugins' editor windows\n"
         "\n"
-        "Audio options (--play, --tone):\n"
-        "  --channels N         output channels to register (default 2)\n"
+        "Saving (--play). A --rack is saved back to itself when StageHand quits, with\n"
+        "each plugin's current state:\n"
+        "  --no-save-rack       don't save anything\n"
+        "  --save-rack PATH     save to PATH instead (\"save as\"); the way to keep a\n"
+        "                       --plugin session\n"
+        "  --overwrite          let --save-rack replace an existing rack other than the\n"
+        "                       one being played (refused otherwise)\n"
+        "\n"
+        "Audio (--play, --tone):\n"
         "  --quantum N          force a PipeWire buffer size of N frames (4-8192) while\n"
-        "                       StageHand runs; released automatically when it exits.\n"
-        "                       Treat it as affecting all audio on the system.\n"
-        "  --no-connect         don't auto-connect to the system playback ports\n"
+        "                       StageHand runs, released when it exits. Treat it as\n"
+        "                       affecting all audio on the system.\n"
+        "  --channels N         output channels to register (default 2)\n"
+        "  --no-connect         don't connect to the system playback ports\n"
         "\n"
-        "MIDI options (--play, --monitor):\n"
-        "                       By default every hardware MIDI input is opened.\n"
-        "  --midi ID            open only these sources instead; repeatable. ID is from\n"
-        "                       --list-midi, a numeric client:port like 14:0, or 'all'\n"
-        "                       (hardware plus software and app sources)\n"
-        "  --midi-protocol 1|2  global MIDI 2.0 protocol preference (default 2). With 1,\n"
-        "                       every source is received as MIDI 1.0\n"
+        "MIDI (--play, --monitor). Every hardware MIDI input is opened by default, plus\n"
+        "two virtual inputs other apps can connect to: 'MIDI 2.0 In' and 'MIDI 1.0 In'.\n"
+        "  --midi ID            open only this source instead; repeatable. ID is from\n"
+        "                       --list-midi, a client:port like 14:0, or 'all' (hardware\n"
+        "                       plus software and app sources)\n"
+        "  --midi-protocol 1|2  MIDI 2.0 protocol preference (default 2). With 1, every\n"
+        "                       source is received as MIDI 1.0\n"
         "\n"
-        "Audio runs under PipeWire's JACK layer:\n"
-        "  pw-jack stagehand --play --plugin ~/.clap/PolygraphModular.clap --quantum 128");
+        "Keys in a plugin editor window:\n"
+        "  Ctrl-Q               quit StageHand (saving, unless --no-save-rack)\n"
+        "  Ctrl-Shift-S         save the rack now\n"
+        "  close button         close that editor only; StageHand keeps playing\n"
+        "In the terminal, Ctrl-C quits the same way as Ctrl-Q.\n"
+        "\n"
+        "Examples (audio goes through PipeWire's JACK layer, hence pw-jack):\n"
+        "  pw-jack stagehand --play --rack ~/Racks/Piano.rack\n"
+        "  pw-jack stagehand --play --rack ~/Racks/Gig.rack --no-save-rack --quantum 128\n"
+        "  pw-jack stagehand --play --plugin com.unlikelyware.polygraphmodular \\\n"
+        "      --save-rack ~/Racks/New.rack\n"
+        "  stagehand --list-plugins");
 }
 
 enum class Mode { None, Play, ListPlugins, ListMidi, Monitor, Tone };
@@ -79,7 +99,11 @@ struct Options {
     Mode                     mode        = Mode::None;
     std::string              plugin;
     std::string              pluginId;
+    std::string              rack;
+    std::string              saveRack;
     bool                     editor      = true;
+    bool                     overwrite   = false;
+    bool                     noSaveRack  = false;
     double                   toneHz      = 440.0;
     unsigned                 channels    = 2;
     unsigned                 quantum     = 0;   // 0 = leave the buffer size to PipeWire
@@ -112,6 +136,14 @@ int parseArguments(int argc, char** argv, Options& options) {
             options.pluginId = argv[++i];
         } else if (arg == "--no-editor") {
             options.editor = false;
+        } else if (arg == "--rack" && i + 1 < argc) {
+            options.rack = argv[++i];
+        } else if (arg == "--save-rack" && i + 1 < argc) {
+            options.saveRack = argv[++i];
+        } else if (arg == "--overwrite") {
+            options.overwrite = true;
+        } else if (arg == "--no-save-rack") {
+            options.noSaveRack = true;
         } else if (arg == "--channels" && i + 1 < argc) {
             options.channels = static_cast<unsigned>(std::atoi(argv[++i]));
         } else if (arg == "--quantum" && i + 1 < argc) {
@@ -161,8 +193,10 @@ std::string dialectNames(NoteDialectMask mask) {
 }
 
 // Opens the two virtual inputs plus the requested sources and prints where each
-// landed. Returns handle -> label.
-std::map<MidiSourceHandle, std::string> openMidiInputs(AlsaSeqInput& input, const Options& options) {
+// landed. Registers each with `session` (if given) so rack sources resolve to
+// it. Returns handle -> label.
+std::map<MidiSourceHandle, std::string> openMidiInputs(AlsaSeqInput& input, const Options& options,
+                                                       Session* session) {
     std::map<MidiSourceHandle, std::string> names;
     std::printf("MIDI protocol preference: %s\n", protocolName(options.preference));
     std::puts("MIDI inputs:");
@@ -174,6 +208,7 @@ std::map<MidiSourceHandle, std::string> openMidiInputs(AlsaSeqInput& input, cons
         const MidiSourceHandle handle = input.openVirtual(name, protocol);
         if (handle == kInvalidMidiSource) continue;
         names[handle] = name;
+        if (session) session->addOpenSource(MidiSourceRef{MidiSourceRef::Kind::Virtual, name}, handle);
         std::printf("  %-30s virtual, %s\n", name, input.describe(handle).c_str());
     }
 
@@ -193,6 +228,7 @@ std::map<MidiSourceHandle, std::string> openMidiInputs(AlsaSeqInput& input, cons
         const MidiSourceHandle handle = input.open(id);
         if (handle == kInvalidMidiSource) continue;
         names[handle] = id;
+        if (session) session->addOpenSource(MidiSourceRef{MidiSourceRef::Kind::Device, id}, handle);
         std::printf("  %-30s %s\n", id.c_str(), input.describe(handle).c_str());
     }
     std::printf("MIDI thread: %s\n",
@@ -271,7 +307,7 @@ int runMonitor(const Options& options) {
 
     const auto monitor = std::make_unique<MidiMonitor>();
     input->setSink(monitor.get());
-    const std::map<MidiSourceHandle, std::string> names = openMidiInputs(*input, options);
+    const std::map<MidiSourceHandle, std::string> names = openMidiInputs(*input, options, nullptr);
     std::puts("Listening. Ctrl-C to stop.\n");
     std::fflush(stdout);
 
@@ -335,24 +371,6 @@ bool resolvePlugin(ClapPluginFactory& factory, const Options& options, PluginDes
     return true;
 }
 
-void printPlugin(const HostedPlugin& plugin) {
-    const PluginDescriptor& d = plugin.descriptor();
-    std::printf("Plugin: %s (%s %s)\n  id   %s\n", d.name.c_str(), d.vendor.c_str(), d.version.c_str(),
-                d.id.c_str());
-    const PortLayout layout = plugin.portLayout();
-    for (std::size_t i = 0; i < layout.audioOutputs.size(); ++i) {
-        const AudioPortInfo& port = layout.audioOutputs[i];
-        std::printf("  audio out %zu: '%s' %u ch%s\n", i, port.name.c_str(), port.channelCount,
-                    port.isMain ? " (main)" : "");
-    }
-    for (std::size_t i = 0; i < layout.noteInputs.size(); ++i) {
-        const NotePortInfo& port = layout.noteInputs[i];
-        std::printf("  note in %zu:   '%s' %s, prefers %s\n", i, port.name.c_str(),
-                    dialectNames(port.supportedDialects).c_str(),
-                    dialectNames(port.preferredDialect).c_str());
-    }
-}
-
 // Print problem counters as they change.
 void reportStats(const Engine::Stats& now, Engine::Stats& last) {
     auto delta = [](std::uint64_t a, std::uint64_t b) { return static_cast<unsigned long long>(a - b); };
@@ -370,17 +388,147 @@ void reportStats(const Engine::Stats& now, Engine::Stats& last) {
     last = now;
 }
 
+// A slot id from a display name: lowercase letters and digits, '-' between words.
+std::string slotIdFrom(const std::string& name) {
+    std::string id;
+    for (const char c : name) {
+        if (std::isalnum(static_cast<unsigned char>(c)))
+            id += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        else if (!id.empty() && id.back() != '-')
+            id += '-';
+    }
+    while (!id.empty() && id.back() == '-') id.pop_back();
+    return id.empty() ? "slot-1" : id;
+}
+
+// --plugin as a one-slot rack; --save-rack then writes it out as a starting point.
+Rack rackForPlugin(const PluginDescriptor& desc) {
+    Rack rack;
+    rack.name = desc.name;
+    RackSlot slot;
+    slot.id     = slotIdFrom(desc.name);
+    slot.name   = desc.name;
+    slot.plugin = desc;
+    rack.slots.push_back(slot);
+    return rack;
+}
+
+std::string sourceLabel(const MidiSourceRef& ref) {
+    switch (ref.kind) {
+        case MidiSourceRef::Kind::All:     return "all inputs";
+        case MidiSourceRef::Kind::Device:  return ref.name;
+        case MidiSourceRef::Kind::Virtual: return "virtual " + ref.name;
+    }
+    return "?";
+}
+
+void printRack(const Session& session) {
+    std::printf("Rack: %s\n", session.rackName().c_str());
+    for (const Session::Slot& slot : session.slots()) {
+        const RackSlot& s = slot.saved;
+        std::printf("  [%s] %s: %s", s.id.c_str(), s.name.c_str(),
+                    slot.plugin ? slot.plugin->descriptor().name.c_str() : "(placeholder: not loaded)");
+        if (!s.enabled) std::printf(", disabled");
+        std::printf(", from %s", sourceLabel(s.source).c_str());
+        if (s.filter.noteLow != 0 || s.filter.noteHigh != 127)
+            std::printf(", notes %u-%u", s.filter.noteLow, s.filter.noteHigh);
+        if (s.filter.transpose != 0) std::printf(", transpose %+d", s.filter.transpose);
+        if (s.gainDb != 0.0f) std::printf(", %+.1f dB", static_cast<double>(s.gainDb));
+        std::puts("");
+        if (slot.plugin) {
+            const PortLayout layout = slot.plugin->portLayout();
+            if (!layout.noteInputs.empty())
+                std::printf("      takes %s, prefers %s\n",
+                            dialectNames(layout.noteInputs[0].supportedDialects).c_str(),
+                            dialectNames(layout.noteInputs[0].preferredDialect).c_str());
+        }
+    }
+}
+
+// "~/x" -> "$HOME/x", then an absolute, normalized path (the file needn't exist).
+std::filesystem::path resolvePath(const std::string& text) {
+    std::string expanded = text;
+    if (const char* home = std::getenv("HOME"); home != nullptr && (text == "~" || text.rfind("~/", 0) == 0))
+        expanded = home + text.substr(1);
+    std::error_code ec;
+    std::filesystem::path path = std::filesystem::weakly_canonical(expanded, ec);
+    if (ec) path = std::filesystem::absolute(expanded, ec);
+    if (!path.has_filename()) path = path.parent_path();   // "X.rack/" -> "X.rack"
+    return path;
+}
+
+// Where this session saves: the --save-rack path if given, else the --rack being
+// played; nothing with --no-save-rack (or a --plugin session without --save-rack).
+std::string saveTargetOf(const Options& options) {
+    if (options.noSaveRack) return {};
+    return !options.saveRack.empty() ? options.saveRack : options.rack;
+}
+
+// Refuse, before any audio starts, a save that would destroy something by
+// accident: a path that exists but isn't a rack (never replaced), or an existing
+// rack other than the one being played (only with --overwrite). Saving back to
+// the rack being played is always allowed.
+bool saveTargetAllowed(const std::string& saveTarget, const Options& options) {
+    if (saveTarget.empty()) return true;
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path  target = resolvePath(saveTarget);
+    if (!fs::exists(target, ec)) return true;
+
+    if (!fs::is_directory(target, ec) || !fs::exists(target / "rack.json", ec)) {
+        std::fprintf(stderr,
+                     "--save-rack %s: that path exists and isn't a rack, so StageHand won't replace it.\n"
+                     "Choose another path.\n",
+                     saveTarget.c_str());
+        return false;
+    }
+    const bool playingIt = !options.rack.empty() && fs::equivalent(target, resolvePath(options.rack), ec);
+    if (playingIt || options.overwrite) return true;
+    std::fprintf(stderr,
+                 "--save-rack %s would replace an existing rack you aren't playing.\n"
+                 "To edit that rack, play it: --rack %s\n"
+                 "To replace it anyway, add --overwrite.\n",
+                 saveTarget.c_str(), saveTarget.c_str());
+    return false;
+}
+
 int runPlay(const Options& options) {
-    if (options.plugin.empty()) {
-        std::fprintf(stderr, "--play needs --plugin PATH|ID\n");
+    if (!options.plugin.empty() && !options.rack.empty()) {
+        std::fprintf(stderr,
+                     "Use --rack or --plugin, not both: a rack already names its plugins.\n"
+                     "  play the rack:                  --rack %s\n"
+                     "  start fresh from the plugin:    --plugin %s\n",
+                     options.rack.c_str(), options.plugin.c_str());
         return 2;
     }
+    if (options.plugin.empty() && options.rack.empty()) {
+        std::fprintf(stderr, "--play needs a rack (--rack PATH) or a plugin (--plugin PATH|ID)\n");
+        return 2;
+    }
+    if (options.noSaveRack && !options.saveRack.empty()) {
+        std::fprintf(stderr, "--save-rack and --no-save-rack contradict each other; use one.\n");
+        return 2;
+    }
+    const std::string saveTarget = saveTargetOf(options);
+    if (!saveTargetAllowed(saveTarget, options)) return 2;
     ClapPluginFactory factory;
-    PluginDescriptor  desc;
-    if (!resolvePlugin(factory, options, desc)) return 1;
+    Rack              rack;
+    if (!options.rack.empty()) {
+        const RackFileResult result = loadRack(options.rack, rack);
+        if (!result.ok) {
+            std::fprintf(stderr, "Can't load the rack: %s\n", result.error.c_str());
+            return 1;
+        }
+        for (const std::string& warning : result.warnings) std::fprintf(stderr, "warning: %s\n", warning.c_str());
+    } else {
+        PluginDescriptor desc;
+        if (!resolvePlugin(factory, options, desc)) return 1;
+        rack = rackForPlugin(desc);
+    }
 
-    // Declaration order is destruction order in reverse: the plugin must go
-    // before the host services it calls, and everything before the backend.
+    // Declaration order matters: destruction runs in reverse, so plugins (held
+    // by the session) go before the engine, the host services they call, and
+    // the backend.
     JackBackend backend("StageHand", options.autoConnect);
     AudioConfig requested;
     requested.outputChannels = options.channels;
@@ -390,33 +538,70 @@ int runPlay(const Options& options) {
     std::printf("%s: %.0f Hz, %u-frame buffer, %u out\n", backend.name(), negotiated.sampleRate,
                 negotiated.bufferSize, negotiated.outputChannels);
 
-    MainLoop                      loop;
-    AppHost                       host(loop);
-    std::shared_ptr<HostedPlugin> plugin = factory.create(desc, host);
-    if (!plugin) return 1;
-    printPlugin(*plugin);
-    if (!plugin->activate(negotiated.sampleRate, kMaxPluginBlockFrames)) return 1;
-
-    const auto              engine = std::make_unique<Engine>();
-    std::vector<SlotConfig> slots(1);
-    slots[0].plugin = plugin;
-    engine->commit(std::make_unique<EngineGraph>(std::move(slots)));
+    MainLoop   loop;
+    AppHost    host(loop);
+    const auto engine = std::make_unique<Engine>();
     backend.setProcessor(engine.get());
 
     std::unique_ptr<AlsaSeqInput> input = AlsaSeqInput::create();
     if (!input) return 1;
     input->setProtocolPreference(options.preference);
     input->setSink(engine.get());
-    openMidiInputs(*input, options);
+
+    Session session(factory, host, *input, *engine);
+    openMidiInputs(*input, options, &session);
+
+    Session::LoadReport report;
+    const bool          runnable = session.load(rack, negotiated.sampleRate, report);
+    printRack(session);
+    for (const std::string& warning : report.warnings) std::fprintf(stderr, "warning: %s\n", warning.c_str());
+    if (!runnable) {
+        std::fprintf(stderr, "Nothing to play: no slot could be loaded and enabled.\n");
+        return 1;
+    }
 
     if (!backend.start()) return 1;
     if (const std::uint32_t forced = backend.forcedQuantum(); forced != 0)
         std::printf("Forcing a %u-frame quantum while running (applies at activation).\n", forced);
 
-    // The editor opens after audio starts, so it shows the running plugin.
-    std::unique_ptr<EditorWindow> editor;
-    if (options.editor) editor = EditorWindow::open(*plugin, loop, desc.name + " (StageHand)");
-    std::printf("Playing %s. Send MIDI to an input above. Ctrl-C to stop.\n", desc.name.c_str());
+    // One save routine for Ctrl-Shift-S (editor windows) and exit. Main thread;
+    // plugins are running, so their state is current.
+    auto saveNow = [&]() -> bool {
+        if (saveTarget.empty()) {
+            std::puts(options.noSaveRack ? "Not saved: saving is off (--no-save-rack)."
+                                         : "Not saved: this session has no rack; start it with --save-rack PATH.");
+            std::fflush(stdout);
+            return false;
+        }
+        const RackFileResult saved = saveRack(saveTarget, session.capture());
+        if (saved.ok)
+            std::printf("Saved the rack to %s\n", saveTarget.c_str());
+        else
+            std::fprintf(stderr, "Couldn't save the rack: %s\n", saved.error.c_str());
+        std::fflush(stdout);
+        return saved.ok;
+    };
+
+    // Editors open after audio starts, so they show the running plugins.
+    std::vector<std::unique_ptr<EditorWindow>> editors;
+    if (options.editor)
+        for (const Session::Slot& slot : session.slots())
+            if (slot.plugin)
+                if (auto editor = EditorWindow::open(*slot.plugin, loop,
+                                                     slot.saved.name + " - " + slot.plugin->descriptor().name +
+                                                         " (StageHand)",
+                                                     [&saveNow] { saveNow(); }))
+                    editors.push_back(std::move(editor));
+
+    if (!saveTarget.empty())
+        std::printf("Saves to %s on exit; Ctrl-Shift-S in an editor window saves now (--no-save-rack: off).\n",
+                    saveTarget.c_str());
+    else if (options.noSaveRack)
+        std::puts("Not saving (--no-save-rack).");
+    else
+        std::puts("Not saving: this session has no rack. Add --save-rack PATH to keep it.");
+    std::printf("Playing %s. Send MIDI to an input above. Ctrl-Q in an editor window, or Ctrl-C here, stops.\n",
+                session.rackName().c_str());
     std::fflush(stdout);
 
     // Housekeeping on the main loop (engine collect, plugin requests, reporting).
@@ -425,10 +610,11 @@ int runPlay(const Options& options) {
     std::uint64_t lastMidiCount   = 0;
     std::uint32_t lastBuffer      = negotiated.bufferSize;
     bool          restartReported = false;
-    bool          editorReported  = false;
+    std::size_t   openEditors     = editors.size();
     loop.addTimer(5, [&] {
         engine->collect();
-        plugin->idle();
+        for (const Session::Slot& slot : session.slots())
+            if (slot.plugin) slot.plugin->idle();
         reportStats(engine->stats(), lastStats);
         if (const std::uint64_t x = backend.xrunCount(); x != lastXruns) {
             std::printf("xruns: %llu\n", static_cast<unsigned long long>(x));
@@ -442,9 +628,11 @@ int runPlay(const Options& options) {
             std::puts("The plugin asked for a restart; not supported yet (reload StageHand).");
             restartReported = true;
         }
-        if (editor && !editor->isOpen() && !editorReported) {
+        std::size_t stillOpen = 0;
+        for (const auto& editor : editors) stillOpen += editor->isOpen() ? 1 : 0;
+        if (stillOpen < openEditors) {
             std::puts("Editor closed; still playing. Ctrl-C to quit.");
-            editorReported = true;
+            openEditors = stillOpen;
         }
         if (backend.serverShutDown()) loop.requestQuit();
         std::fflush(stdout);
@@ -465,19 +653,21 @@ int runPlay(const Options& options) {
     activeLoop.store(nullptr);
     if (backend.serverShutDown()) std::fprintf(stderr, "JACK server shut down\n");
 
-    // Shutdown (Engine.h): close the editor while the plugin is fully alive, stop
-    // MIDI, then run nothing so the audio thread stops the plugin, then stop
-    // audio. The plugin is deactivated and destroyed on this thread when its last
-    // reference goes.
-    editor.reset();
+    // Shutdown (Engine.h): close editors while the plugins are fully alive; save
+    // (plugins still running, so their state is current) unless saving is off;
+    // stop MIDI; run nothing so the audio thread stops the plugins; stop audio.
+    // The plugins are deactivated and destroyed on this thread when the session
+    // goes.
+    editors.clear();
+    const int exitCode = (!saveTarget.empty() && !saveNow()) ? 1 : 0;
     input.reset();
-    engine->commit(nullptr);
+    session.unload();
     for (int i = 0; i < 2000 && !engine->committedGraphAdopted() && !backend.serverShutDown(); ++i)
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     backend.stop();
     engine->collect();
     std::puts("Stopped.");
-    return 0;
+    return exitCode;
 }
 
 } // namespace
