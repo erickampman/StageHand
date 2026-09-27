@@ -18,8 +18,10 @@ treated as a much lighter cost than a vendored/fetched third-party framework.
 ## Signal flow (the whole app in one line)
 
 ```
-MIDI in (ALSA UMP)  →  UMP/MIDI-2.0 events  →  hosted plugin (CLAP note ports,
-MIDI2 dialect)  →  process()  →  audio out (JACK client, served by PipeWire)
+MIDI in (ALSA seq, UMP mode; MIDI 1.0 + 2.0)  →  UMP events, each keeping its
+own protocol  →  per-plugin routing + dialect translation  →  hosted plugins
+(CLAP note ports: MIDI / MIDI2)  →  process()  →  audio out (JACK client via
+PipeWire)
 ```
 
 Real-time model: the audio backend's process callback is the RT thread. MIDI is
@@ -31,31 +33,71 @@ plugin's event format. No allocation or locking on the RT path.
 
 ## 1. MIDI support
 
-**Requirement:** MIDI input from hardware, MIDI 2.0 as a first-class citizen
-(the project's differentiator — DAWs handle MIDI 2.0 poorly).
+**Requirement:** MIDI input from hardware and other apps, with **MIDI 1.0 and
+MIDI 2.0 both first-class**. MIDI 2.0 is the differentiator (DAWs handle it
+poorly), but most hardware, most plugins, and all non-UMP data sources are MIDI
+1.0 and must work exactly, not via a lossy round trip. Several plugins are active
+at once and each gets the MIDI appropriate to it (see domain-model.md, "MIDI
+protocol handling & per-plugin routing").
+
+**Key distinction: UMP the *format* ≠ MIDI 2.0 the *protocol*.** MIDI 1.0 bytes
+wrap losslessly into UMP message type `0x2` (and SysEx into `0x3`) — a wrap, not
+an upconversion, and reversible byte-for-byte. So the internal canonical event
+is UMP, and **every message keeps its original protocol**: MIDI 1.0 stays MT
+`0x2`, MIDI 2.0 stays MT `0x4`. Translation between protocols happens only at a
+plugin boundary, and only when that plugin can't accept the message's own
+protocol.
 
 **Options considered**
-- **ALSA rawmidi UMP (kernel ≥ 6.5)** — native MIDI 2.0. The kernel exposes UMP
-  endpoints and, crucially, presents *legacy MIDI 1.0 devices as UMP too*, so
-  coding to the UMP API handles both old and new hardware from one path. Zero
-  third-party dependency (libasound is a system lib). Linux-only.
-- **libremidi** — modern C++ MIDI lib (RtMidi successor) with UMP/MIDI-2.0
-  support and multiple backends incl. CoreMIDI. One small, single-purpose dep;
-  buys cross-platform (Mac) later. Third-party.
-- **RtMidi** — rejected: MIDI 1.0 only, so it defeats the whole premise.
-- **JACK MIDI / PipeWire MIDI** — JACK MIDI is a 1.0 byte stream (no UMP).
-  PipeWire's own MIDI API is heavier and less direct for our needs.
+- **ALSA sequencer in UMP mode (kernel ≥ 6.5)** — the sequencer is where legacy
+  and UMP sources meet: a seq client declares its protocol
+  (`snd_seq_set_client_midi_version`) and the kernel converts events from any
+  source to it. Covers hardware, virtual ports, and app-to-app connections (e.g.
+  a KeyEDO port or a test tool) in one API. System lib, no third-party dep.
+- **ALSA rawmidi UMP** — `/dev/snd/umpC*D*` exists **only for UMP-native (USB
+  MIDI 2.0) hardware**; legacy devices remain legacy rawmidi and are *not*
+  presented as UMP. (An earlier revision of this doc claimed otherwise — wrong.)
+  Too narrow to be the primary path.
+- **libremidi** — modern C++ MIDI lib with UMP support and CoreMIDI; one small
+  dep, buys the Mac later. Third-party.
+- **RtMidi** — rejected: MIDI 1.0 only.
+- **JACK MIDI** — a MIDI 1.0 byte stream. Not the primary path, but a legitimate
+  *non-UMP source* the byte-stream parser (below) can accept.
 
-**Decision (initial): ALSA rawmidi UMP directly.** Best MIDI 2.0 fidelity,
-no third-party dep, Linux-first matches where we are. Kernel 7.0 on this box
-already supports it. Put all MIDI I/O behind an internal seam so libremidi (or
-CoreMIDI) can slot in for Mac later without touching the rest of the app.
+**Decision (initial): ALSA sequencer, UMP mode, with two clients.**
+- A **MIDI 1.0 client** (`SND_SEQ_CLIENT_UMP_MIDI_1_0`): legacy sources connect
+  here and arrive as MT `0x2`, exact.
+- A **MIDI 2.0 client** (`SND_SEQ_CLIENT_UMP_MIDI_2_0`): UMP-native sources
+  connect here and arrive as MT `0x4`, untouched.
+- The `MidiInput` impl picks the client per source from the source's own
+  protocol, so the kernel never has to convert anything: no upconversion of
+  1.0 sources, no downconversion of 2.0 sources.
+- **Non-UMP byte streams** (JACK MIDI, legacy rawmidi, files, network) go
+  through a small MIDI 1.0 byte parser (running status, real-time interleave,
+  SysEx chunking) that also wraps to MT `0x2`/`0x3`, never upconverts.
+- Exact kernel conversion behavior per client mode needs verifying during
+  implementation, not assuming.
+
+**Global MIDI 2.0 protocol preference** (Logic-style, app-wide, default **on**):
+- **On:** UMP-native sources are received in MIDI 2.0 (MIDI 2.0 client); legacy
+  sources stay MIDI 1.0 (MIDI 1.0 client). Mixed protocols coexist, per message.
+- **Off:** every source connects to the MIDI 1.0 client (the kernel downconverts
+  UMP-native devices), and plugins only ever receive MIDI 1.0. A compatibility
+  safety valve for a misbehaving device or plugin.
+- It's a policy switch, not a correctness requirement: because each message
+  keeps its protocol, mixed 1.0/2.0 works without it.
+
+All MIDI I/O sits behind the `MidiInput` seam, so libremidi/CoreMIDI can slot in
+for Mac without touching routing or translation (both live in the engine).
 
 **Open questions**
-- Do we also want ALSA *seq* (UMP-capable) for virtual ports / connecting to
-  other apps, vs rawmidi for direct hardware? Likely both eventually.
-- MIDI 2.0 hardware is still rare; validate the legacy-device→UMP conversion
-  path early with an ordinary MIDI 1.0 controller.
+- SysEx transport to plugins: a message spans many UMP packets and must be
+  reassembled into a contiguous buffer (CLAP `clap_event_midi_sysex`). Leaning:
+  reassemble on the MIDI thread into a preallocated pool; the event carries a
+  reference. Not needed for the first PMU test.
+- MIDI 2.0 → MPE downconversion (per-note data → channel rotation) for MPE-only
+  plugins. Deferred.
+- Per-slot protocol override ("force MIDI 1.0 for this plugin"). Deferred.
 
 ---
 
@@ -98,11 +140,13 @@ Mac.
   header-only, MIT, tiny (already vendored in the PMU project). Hosting means
   implementing the host side ourselves: load the `.clap` shared object, get the
   entry point, walk the plugin factory, instantiate, and provide host callbacks
-  (audio-ports, note-ports, params, etc.). No framework weight. **CLAP natively
-  carries MIDI 2.0** via note-ports `CLAP_NOTE_DIALECT_MIDI2` /
-  `clap_event_midi2`, so our ALSA-UMP input can pass straight through to
-  plugins that support it, with a MIDI-1.0 fallback dialect for those that
-  don't. Perfect alignment with the MIDI-2.0 goal.
+  (audio-ports, note-ports, params, etc.). No framework weight. **CLAP carries
+  both protocols natively**: `CLAP_NOTE_DIALECT_MIDI` (`clap_event_midi`, 3
+  bytes) and `CLAP_NOTE_DIALECT_MIDI2` (`clap_event_midi2`, UMP words), declared
+  per note port along with a preferred dialect. MIDI-1.0-only CLAP plugins are
+  fully supported: MT `0x2` events go to them as exact bytes, and MT `0x4`
+  events are downconverted for them. Plugins that accept MIDI2 get MT `0x4`
+  untouched. Per-message rules are in domain-model.md.
 - **clap-helpers** — optional header-only C++ helpers for the host side. May
   adopt to reduce boilerplate; still header-only, MIT.
 - **VST3 SDK** — heavier C++/COM-like framework (MIT since SDK 3.8, 2025).
@@ -223,8 +267,9 @@ This is the additive-backend move the seam exists for; not needed now, but the
 door is open.
 
 **MIDI — where it shines:**
-- Multiple DIN/USB ports appear as ALSA rawmidi devices; `MidiInput` enumerates
-  and opens as many as wanted, assigned per Rack slot.
+- Multiple DIN/USB ports appear as ALSA sequencer ports; `MidiInput` enumerates
+  and opens as many as wanted, and each Rack slot's MIDI filter chooses which it
+  hears.
 - A genuine **USB-MIDI-2.0 interface** exposes real UMP endpoints through ALSA,
   and since our canonical event *is* UMP, that hardware is first-class, not
   adapted.
@@ -244,7 +289,7 @@ door is open.
 
 | Area   | Choice (initial)              | Cost           | Cross-platform later |
 |--------|-------------------------------|----------------|----------------------|
-| MIDI   | ALSA rawmidi UMP              | system lib     | libremidi / CoreMIDI |
+| MIDI   | ALSA sequencer, UMP mode (+ MIDI 1.0 byte parser) | system lib | libremidi / CoreMIDI |
 | Audio  | JACK API (via pipewire-jack)  | system lib/API | PortAudio / CoreAudio|
 | Plugin | CLAP SDK (header-only, vendored) | headers only | + VST3 SDK (vendored)|
 | Glue   | hand-written (ring buffer, host callbacks, plugin abstraction) | none | — |
@@ -263,6 +308,7 @@ plus two system libraries (ALSA, JACK-API) that are already on the machine.
 
 Three internal interfaces isolate the platform/format choices so today's
 minimal picks never block tomorrow's:
-1. **MIDI input seam** — ALSA-UMP today, libremidi/CoreMIDI later.
+1. **MIDI input seam** — ALSA sequencer (UMP mode) today, libremidi/CoreMIDI
+   later. Routing and protocol translation live in the engine, not the seam.
 2. **Audio backend seam** — JACK today, PortAudio/CoreAudio later.
 3. **Hosted-plugin seam** — CLAP today, VST3 later.

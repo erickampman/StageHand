@@ -25,13 +25,19 @@ enum class EventType {
 };
 
 // One event with a sample offset into the current block. A tagged record rather
-// than a variant, to stay trivially copyable and RT-friendly: `midi` is valid
-// when type == Midi, the parameter fields for the Param* kinds.
+// than a variant, to stay trivially copyable and RT-friendly: `midi` and
+// `portIndex` are valid when type == Midi, the parameter fields for the Param*
+// kinds.
+//
+// By the time a Midi event reaches a plugin, the engine has already routed it
+// and translated it into a protocol that note port accepts. The plugin seam only
+// maps by type: MT 0x2/0x1 → MIDI 1.0 bytes, MT 0x4 → MIDI 2.0.
 struct Event {
     std::uint32_t sampleOffset = 0;   // in [0, frameCount)
     EventType     type         = EventType::Midi;
 
-    MidiMessage midi;            // valid when type == Midi
+    MidiMessage   midi;               // valid when type == Midi
+    std::uint16_t portIndex = 0;      // plugin note-input port it's addressed to
 
     ParamRef param;             // valid when type is a Param* kind
     double   value = 0.0;       // new value (ParamValue) / mod amount (ParamMod)

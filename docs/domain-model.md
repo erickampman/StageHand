@@ -32,18 +32,22 @@ Platform seams  AudioBackend | MidiInput | HostedPlugin              (each hides
   (CLAP transport); the future sequencer is "the thing that advances TimeInfo".
 - **AudioBuffer** — non-interleaved float, `channels × frames`. Backend-neutral;
   JACK per-port pointers and CoreAudio AudioBufferList both adapt into it.
-- **MidiEvent** — the canonical MIDI unit, **UMP-native**: block sample-offset +
-  up to 4 UMP words + word count. UMP represents MIDI 1.0 *and* 2.0, so one type
-  carries both, and it maps ~1:1 onto CLAP `clap_event_midi2`. This is what makes
-  the host MIDI-2.0-native with no parallel 1.0 codepath.
+- **MidiEvent** — the canonical MIDI unit, in **UMP format**: block sample-offset
+  + up to 4 UMP words + word count. UMP carries both protocols, and **each message
+  keeps its original one**: MIDI 1.0 as MT `0x2` (a lossless wrap of the bytes),
+  MIDI 2.0 as MT `0x4`. One type, one codepath, no forced conversion. See "MIDI
+  protocol handling & per-plugin routing".
 - **EventBlock** — per-block, time-ordered list interleaving **MidiEvents and
   ParamEvents**, offsets in `[0, frames)`. Built once at block top, handed to
   plugins (matches CLAP's single sorted input event list).
 - **PluginDescriptor** — format-neutral identity: id, name, vendor, format tag
   (CLAP/VST3), path. What a browser lists and a saved Rack references.
 - **PortLayout** — a plugin's shape: audio in/out port & channel counts; note
-  ports and the MIDI dialect(s) each supports (MIDI1/MIDI2). Drives wiring and
-  which MidiEvent dialect to send.
+  ports with the dialects each supports (CLAP's four: native CLAP, MIDI, MIDI
+  MPE, MIDI2) plus its preferred dialect. Drives wiring and per-message delivery.
+- **MidiFilter** — per-slot routing: which source(s), UMP groups, channels, note
+  range, velocity range, and transpose a plugin slot receives. Overlaps = layers,
+  disjoint note ranges = splits.
 - **ParameterInfo / ParameterValue** — id, name, range, default, flags, and the
   CLAP cookie (opaque fast-lookup handle the plugin gives us); plus a value
   carrier for get/set and automation.
@@ -51,7 +55,7 @@ Platform seams  AudioBackend | MidiInput | HostedPlugin              (each hides
 ## Seam roles (the swappable boundaries — the "verbs")
 
 Abstract roles with defined lifecycles; concrete impls (JackBackend,
-AlsaUmpInput, ClapPlugin) are the only things touching a dependency.
+AlsaSeqInput, ClapPlugin) are the only things touching a dependency.
 
 - **AudioBackend** — owns the device connection and the RT thread; negotiates
   sample rate & block size; drives the engine process callback; presents output
@@ -59,11 +63,14 @@ AlsaUmpInput, ClapPlugin) are the only things touching a dependency.
   (needed for sample-accurate MIDI mapping — see that section).
   Lifecycle: `open(config) → start → [process…] → stop → close`. Owns the RT
   thread — the clock source for everything.
-- **MidiInput** — enumerate sources, open selected, receive messages, **timestamp
-  each message at capture**, normalize to UMP MidiEvents, deliver across the
-  thread boundary as `(timestamp, UMP)`.
-  Lifecycle: `enumerate → open(source) → [events on its own thread] → close`.
-  Owns a non-RT MIDI thread; hands events to RT via a lock-free queue.
+- **MidiInput** — enumerate sources (each with its native protocol), open
+  selected ones, receive messages, **timestamp each message at capture**, and
+  deliver them as `(source, timestamp, UMP)`. It **wraps but never translates**:
+  MIDI 1.0 arrives as MT `0x2`/`0x1`/`0x3`, MIDI 2.0 as MT `0x4`. It applies the
+  global MIDI 2.0 protocol preference and can expose virtual input ports for
+  other apps. Routing and translation are the engine's job, not the seam's.
+  Lifecycle: `setSink → open(source) → [events on its own thread] → close`.
+  Owns a non-RT MIDI thread; the engine's sink pushes to a lock-free queue.
 - **HostedPlugin** — load/instantiate; report PortLayout & Parameters;
   `activate(sampleRate, maxBlock)`; `process(AudioBuffers, EventBlock, TimeInfo)`;
   produce output events; `saveState() → opaque bytes` / `loadState(bytes)` (see
@@ -120,6 +127,102 @@ jitter from the MIDI transport itself, which no host can remove.
 AudioBackend must expose the block's start time / frame clock; MidiInput must
 timestamp every event at capture.
 
+## MIDI protocol handling & per-plugin routing
+
+Requirements: MIDI 1.0 and 2.0 are both first-class; non-UMP sources are
+supported; MIDI-1.0-only CLAP plugins are fully supported; several plugins are
+active at once and each receives the MIDI appropriate to it.
+
+### One rule: preserve the protocol, translate only at the plugin boundary
+
+UMP is a *format*; MIDI 1.0 and MIDI 2.0 are *protocols* carried inside it. The
+input side only **wraps**:
+- MIDI 1.0 (the seq MIDI 1.0 client, or the byte parser for non-UMP streams) →
+  MT `0x2` channel voice, MT `0x1` system, MT `0x3` SysEx7. Lossless, reversible.
+- UMP-native MIDI 2.0 → MT `0x4` (and `0x5`), untouched.
+
+Nothing is up- or downconverted at input (the one exception is the global
+preference set to *off*, which deliberately makes everything MIDI 1.0). So inside
+the engine every message keeps its origin protocol, and two plugins listening to
+the same source can each receive what suits them.
+
+### Delivery policy: per message, per plugin
+
+**If the plugin's note port accepts the message's own protocol, deliver it
+unchanged. Otherwise translate to a dialect the port accepts (its preferred one,
+if several).**
+
+| Message | Plugin port accepts | Delivered as | Fidelity |
+|---|---|---|---|
+| MIDI 1.0 (MT `0x2`) | MIDI (or MPE) | `clap_event_midi`, original bytes | exact |
+| MIDI 1.0 (MT `0x2`) | MIDI2 only | upconverted → `clap_event_midi2` | exact per spec; stateful |
+| MIDI 2.0 (MT `0x4`) | MIDI2 | `clap_event_midi2`, untouched | exact |
+| MIDI 2.0 (MT `0x4`) | MIDI only | downconverted → `clap_event_midi` | lossy: 2.0-only data dropped |
+| System / SysEx7 (MT `0x1`, `0x3`) | any | whichever dialect the port accepts | exact |
+| any | native CLAP only | translated to CLAP note events | deferred |
+
+- A plugin like PMU (`CLAP | MIDI | MIDI2`) hits rows 1 and 3: MIDI 1.0 arrives
+  as bytes and MIDI 2.0 as UMP, with nothing converted. Exactness beats
+  "preferred dialect"; the preference only picks the target when translation is
+  unavoidable.
+- Upconversion state (RPN/NRPN selection, bank select) belongs to the *incoming
+  stream*, so it's kept **per source** (by group/channel), not per plugin. Two
+  sources on one channel can't corrupt each other's RPN sequences, and each
+  upconverted message is computed once and shared by every MIDI2-only plugin.
+- Downconversion is stateless, but one MT `0x4` message can expand into several
+  MIDI 1.0 messages (a registered controller → CC 101/100/6/38). They share the
+  original sample offset, in order.
+- The engine does routing and translation. The plugin seam only maps the type
+  already chosen (MT `0x2`/`0x1` → `clap_event_midi`, MT `0x4` →
+  `clap_event_midi2`). A VST3 impl decodes both into VST3's own event model
+  (architecture.md §3a); which dialect it advertises is its choice.
+
+### Routing: which plugin hears what
+
+Each PluginSlot carries a **MidiFilter** (host-owned per-slot state, persisted in
+the Rack):
+- **source**: all open sources, or one specific source
+- **UMP group mask** and **channel mask**
+- **note range** and **velocity range** (note messages only)
+- **transpose** in semitones
+
+Overlapping filters on several slots give **layers**; disjoint note ranges give
+**splits** (MainStage-style keyboard zones). Non-note channel messages (CC, bend,
+pressure) pass whenever source, group, and channel match.
+
+Two correctness rules the router enforces:
+- **A note-off follows its note-on.** The router records, per (source, group,
+  channel, note), which slots received the note-on, and sends the note-off to
+  exactly those slots even if a filter has changed in between (a split moved, a
+  Rack switched). Otherwise notes hang. The same table is what will let held
+  notes ring through a Rack switch later.
+- **Transforms are protocol-aware.** A MIDI 2.0 note-on can carry a **pitch 7.9
+  attribute** (absolute pitch; PMU uses it for microtonal/EDO pitch). Transposing
+  the note number without moving the attribute breaks the tuning, so transpose
+  shifts both.
+
+Filters live in the immutable graph snapshot the engine runs, so a filter edit
+on the main thread takes the usual Main→RT snapshot swap. On the RT side, the
+per-slot event buffers, held-note table, and upconversion state are all
+preallocated and fixed-size. If a slot's event buffer overflows in a block, the
+excess is dropped and counted rather than allocated.
+
+### Global MIDI 2.0 protocol preference
+
+App-wide (Logic-style), default **on**. It chooses which of the input seam's two
+protocol paths UMP-native sources take (architecture.md §1): **on** = MIDI 2.0
+sources arrive as MIDI 2.0; **off** = everything arrives as MIDI 1.0 and no
+plugin ever receives `clap_event_midi2`. It's a compatibility safety valve, not
+a correctness requirement.
+
+### Testing MIDI 2.0 end to end (PMU)
+
+A MIDI 2.0 test source (the planned KeyEDO port, or a small test tool) registers
+as an ALSA seq **UMP MIDI 2.0** client and sends MT `0x4` note-ons carrying pitch
+7.9 attributes. StageHand receives them on the MIDI 2.0 path, and PMU (preferred
+MIDI2) gets them untouched. A MIDI 1.0 keyboard can't exercise the attribute
+path; it has no attribute to send.
+
 ## Parameter changes & automation timing
 
 Core realization: **a parameter change is just another timed event in the same
@@ -161,8 +264,10 @@ automation *recording*. Modeled as event kinds now so recording isn't a retrofit
 ## Session model — what persists
 
 - **Rack (Patch)** — user-facing, savable: an ordered set of **PluginSlots**
-  (PluginDescriptor + opaque plugin state blob + host-owned per-slot settings)
-  plus graph connections and MIDI source assignments. A future "setlist" is a
+  (PluginDescriptor + opaque plugin state blob + host-owned per-slot settings,
+  including its MidiFilter) plus graph connections. A saved filter refers to its
+  source by stable source *id*, which is resolved to a live handle when the Rack
+  loads or the device appears. A future "setlist" is a
   list of these. Lives on the main thread, serialized to disk (see Save /
   restore); the engine runs an immutable snapshot. A **PluginSlot** may also be a
   *missing-plugin placeholder* that retains the descriptor + blob when the plugin
@@ -251,10 +356,13 @@ take the non-RT `params.flush` path instead.
 - **Startup:** load Rack → instantiate HostedPlugins → open AudioBackend (learn
   sampleRate/block) → activate plugins → open MidiInput sources → start backend
   → callbacks begin.
-- **Per block (RT):** backend calls `process(frames, time)` → drain MIDI **and
-  param-input** queues into one time-sorted EventBlock (MIDI + param events) →
-  walk graph nodes → after each plugin, drain its output events (param feedback)
-  onto the RT→Main queue → OutputNode fills buffers → return.
+- **Per block (RT):** backend calls `process(frames, time)` → drain the MIDI
+  queue, mapping each timestamp to a sample offset → **route each message through
+  the slot filters (note-offs via the held-note table), apply transforms, and
+  translate per slot dialect** → drain the param-input queue → merge into each
+  slot's time-sorted EventBlock (MIDI + param events) → walk graph nodes → after
+  each plugin, drain its output events (param feedback) onto the RT→Main queue →
+  OutputNode fills buffers → return.
 
 ## Open questions (to resolve before turning these into interfaces)
 
@@ -272,3 +380,10 @@ take the non-RT `params.flush` path instead.
   duplicate vs project) or ignore it for v1. Leaning ignore until presets land.
 - Plugin state blob is opaque/plugin-versioned; only the manifest schema needs
   host-side version handling (resolved in Save / restore).
+- SysEx delivery: reassembly of multi-packet SysEx into a contiguous buffer for
+  plugins. Leaning: MIDI thread reassembles into a preallocated pool, the event
+  carries a reference (architecture.md §1).
+- Translation for native-CLAP-only and MPE-only plugins (MIDI 2.0 per-note data
+  → CLAP note expressions / MPE channel rotation). Deferred.
+- Rack switch while notes are held: sustain on the old Rack (MainStage-style) or
+  all-notes-off. The held-note table supports either; policy TBD.

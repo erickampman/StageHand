@@ -14,13 +14,26 @@ struct AudioPortInfo {
     bool          isMain       = false;
 };
 
-// One note/event port and the MIDI dialects it accepts. `supportsMidi2` is the
-// CLAP MIDI2 dialect; a VST3 event bus carries decoded events and honors neither
-// flag as such (docs/architecture.md 3a).
+// Note dialects a note port can accept, as bit flags. Values match CLAP's
+// CLAP_NOTE_DIALECT_* so the CLAP seam can copy them straight through.
+using NoteDialectMask = std::uint32_t;
+namespace NoteDialect {
+inline constexpr NoteDialectMask Clap    = 1u << 0;   // native CLAP note events
+inline constexpr NoteDialectMask Midi    = 1u << 1;   // MIDI 1.0
+inline constexpr NoteDialectMask MidiMpe = 1u << 2;   // MIDI 1.0 with MPE semantics
+inline constexpr NoteDialectMask Midi2   = 1u << 3;   // MIDI 2.0 (UMP)
+} // namespace NoteDialect
+
+// One note/event port, what it accepts, and what it prefers. The engine
+// delivers each message in its own protocol when the port accepts it and
+// translates only when it doesn't, using `preferredDialect` to pick the target
+// (docs/domain-model.md, "Delivery policy"). A VST3 event bus carries decoded
+// events; which dialect its impl advertises is its choice (docs/architecture.md
+// 3a).
 struct NotePortInfo {
-    std::string name;
-    bool        supportsMidi1 = true;
-    bool        supportsMidi2 = false;
+    std::string     name;
+    NoteDialectMask supportedDialects = NoteDialect::Midi;
+    NoteDialectMask preferredDialect  = NoteDialect::Midi;   // exactly one bit
 };
 
 // A plugin's full I/O shape, reported after instantiation. Drives how the engine
