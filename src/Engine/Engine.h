@@ -37,7 +37,10 @@ namespace stagehand {
 //      queue is in capture order, so each slot's events come out sorted.
 //   3. Split the block into chunks of at most kMaxPluginBlockFrames. For each
 //      chunk, run every slot with its share of the events, then sum the slot
-//      outputs (times gain) into the backend outputs.
+//      outputs into the backend outputs, times the slot's gain. A change of
+//      gain (SlotRuntime::targetGain) ramps linearly over kGainRampSeconds, per
+//      sample, so a fader move or mute doesn't click. Slot and output meters
+//      are fed post-gain.
 //
 // Plugin lifecycle across threads (CLAP's thread rules):
 //   main:  create, loadState, activate(rate, kMaxPluginBlockFrames), commit
@@ -87,9 +90,12 @@ public:
     };
     Stats stats() const noexcept;   // any thread
 
-    // Peak absolute sample value across all outputs since the last call, then
-    // reset. A level meter for the main thread; approximate by design.
-    float takeOutputPeak() noexcept;
+    // The backend outputs' level (the master meter): outputs 1 and 2, with any
+    // further outputs folded into the second channel. take() from the main thread.
+    LevelMeter& outputMeter() noexcept { return outputLevels; }
+
+    // How long a change of slot gain takes to arrive (docs/rack-view.md, section 3).
+    static constexpr double kGainRampSeconds = 0.010;
 
     // --- audio thread ---
     void process(const AudioCallbackContext& ctx) noexcept override;
@@ -138,6 +144,8 @@ private:
     HeldNote*            findHeld(MidiSourceHandle source, const MidiMessage& m) noexcept;
     HeldNote*            claimHeld(MidiSourceHandle source, const MidiMessage& m) noexcept;
     void                 runSlots(const AudioCallbackContext& ctx) noexcept;
+    const float*         advanceGain(SlotRuntime& runtime, std::uint32_t frames, double sampleRate,
+                                     float& constantGain) noexcept;
 
     HeldNote    heldNotes[256];     // audio thread only
     SourceState sourceStates[16];   // audio thread only
@@ -148,7 +156,7 @@ private:
     std::atomic<std::uint64_t>    adoptedSequence{0};       // written by audio
     SpscQueue<EngineGraph*, 16>   retiredGraphs;            // audio -> main
     EngineGraph*                  currentGraph = nullptr;   // audio thread only
-    std::atomic<float>            outputPeak{0.0f};
+    LevelMeter                    outputLevels;
 
     std::atomic<std::uint64_t> midiReceived{0};
     std::atomic<std::uint64_t> midiQueueFull{0};

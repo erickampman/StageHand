@@ -39,6 +39,11 @@ public:
     // Host-side logging. Thread: any.
     virtual void log(LogLevel level, const char* message) = 0;
 
+    // The plugin's state changed in a way a save would capture (e.g. an edit in
+    // its editor; CLAP state.mark_dirty), so the rack has unsaved changes.
+    // Thread: main.
+    virtual void stateChanged() {}
+
     // --- main-loop services (main thread; callbacks also run on the main thread)
     // Plugin editors on Linux have no event loop of their own; they rely on the
     // host's (CLAP timer-support and posix-fd-support). The defaults mean "not

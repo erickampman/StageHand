@@ -251,7 +251,7 @@ void testMixing() {
     auto quiet  = std::make_shared<FakePlugin>(2, NoteDialect::Midi, 0.25f);
     auto mono   = std::make_shared<FakePlugin>(1, NoteDialect::Midi, 0.5f);
     SlotConfig a = slotFor(loud);
-    a.gain       = 0.5f;
+    a.runtime    = std::make_shared<SlotRuntime>(0.5f);
     SlotConfig b = slotFor(quiet);
     SlotConfig c = slotFor(mono);   // mono feeds outputs 1 and 2
     engine->commit(graphOf({a, b, c}));
@@ -260,8 +260,103 @@ void testMixing() {
     engine->process(block.ctx);
     CHECK(block.samples[0][0] == 1.25f && block.samples[0][63] == 1.25f);   // 0.5 + 0.25 + 0.5
     CHECK(block.samples[1][0] == 1.25f);
-    CHECK(engine->takeOutputPeak() == 1.25f);
-    CHECK(engine->takeOutputPeak() == 0.0f);   // reset by the first call
+    const LevelMeter::Reading master = engine->outputMeter().take();
+    CHECK(master.peak[0] == 1.25f && master.peak[1] == 1.25f && master.clipped);
+    CHECK(engine->outputMeter().take().peak[0] == 0.0f);   // reset by the first take()
+}
+
+// Feed `frames` more frames through the engine in blocks of 64; append output 1.
+void run(Engine& engine, std::uint32_t frames, std::vector<float>& out) {
+    for (std::uint32_t done = 0; done < frames; done += 64) {
+        Block block(64, 48000.0, T);
+        engine.process(block.ctx);
+        CHECK(block.samples[0] == block.samples[1]);
+        out.insert(out.end(), block.samples[0].begin(), block.samples[0].end());
+    }
+}
+
+void testGainRamp() {
+    auto engine  = std::make_unique<Engine>();
+    auto plugin  = std::make_shared<FakePlugin>(2, NoteDialect::Midi, 1.0f);
+    auto runtime = std::make_shared<SlotRuntime>(1.0f);
+    SlotConfig slot = slotFor(plugin);
+    slot.runtime    = runtime;
+    engine->commit(graphOf({slot}));
+
+    std::vector<float> out;
+    run(*engine, 64, out);
+    CHECK(out.front() == 1.0f && out.back() == 1.0f);   // steady: no ramp
+
+    // 1 -> 0: 10 ms at 48 kHz = 480 samples, bounded steps, landing exactly on 0.
+    constexpr float step = 1.0f / 480.0f;
+    out.clear();
+    runtime->targetGain.store(0.0f);
+    run(*engine, 512, out);
+    CHECK(out[0] < 1.0f && out[0] > 1.0f - 1.5f * step);
+    bool bounded = true;
+    for (std::size_t f = 1; f < out.size(); ++f)
+        bounded = bounded && out[f] <= out[f - 1] && out[f - 1] - out[f] <= 1.5f * step;
+    CHECK(bounded);
+    CHECK(out[478] > 0.0f && out[479] == 0.0f && out.back() == 0.0f);
+
+    // Retarget mid-ramp: 0 -> 1, then after half of it (at ~0.5) back to 0.25.
+    // The new ramp starts where the gain is and still takes 480 samples.
+    out.clear();
+    runtime->targetGain.store(1.0f);
+    run(*engine, 256, out);   // 256 of 480 samples: ~0.53
+    const float reached = out.back();
+    CHECK(reached > 0.5f && reached < 0.55f);
+    runtime->targetGain.store(0.25f);
+    out.clear();
+    run(*engine, 512, out);
+    CHECK(out[0] < reached && reached - out[0] < 1.5f * step);
+    CHECK(out[478] != 0.25f && out[479] == 0.25f && out.back() == 0.25f);
+
+    // The ramp survives a commit: a new graph with the same runtime picks up
+    // mid-ramp instead of jumping.
+    runtime->targetGain.store(1.0f);
+    out.clear();
+    run(*engine, 128, out);
+    const float before = out.back();
+    engine->commit(graphOf({slot}));
+    out.clear();
+    run(*engine, 64, out);
+    CHECK(out[0] > before && out[0] - before < 1.5f * step);
+    engine->collect();
+}
+
+void testSlotMeters() {
+    auto engine = std::make_unique<Engine>();
+    auto stereo = std::make_shared<FakePlugin>(2, NoteDialect::Midi, 1.0f);
+    auto mono   = std::make_shared<FakePlugin>(1, NoteDialect::Midi, 0.5f);
+    auto muted  = std::make_shared<FakePlugin>(2, NoteDialect::Midi, 1.0f);
+    SlotConfig a = slotFor(stereo);
+    SlotConfig b = slotFor(mono);
+    SlotConfig c = slotFor(muted);
+    a.runtime    = std::make_shared<SlotRuntime>(0.5f);
+    b.runtime    = std::make_shared<SlotRuntime>(3.0f);   // 1.5 out: clips
+    c.runtime    = std::make_shared<SlotRuntime>(0.0f);
+    a.midiFilter.noteHigh = 59;                           // only b and c hear note 60
+    engine->commit(graphOf({a, b, c}));
+
+    engine->onMidi(1, note(T - 5 * ms, 60));
+    Block block(64, 48000.0, T);
+    engine->process(block.ctx);
+    CHECK(block.samples[0][0] == 2.0f && block.samples[1][63] == 2.0f);   // 0.5 + 1.5 + 0
+
+    LevelMeter::Reading ra = a.runtime->meter.take();
+    LevelMeter::Reading rb = b.runtime->meter.take();
+    LevelMeter::Reading rc = c.runtime->meter.take();
+    CHECK(ra.peak[0] == 0.5f && ra.peak[1] == 0.5f && !ra.clipped);
+    CHECK(rb.peak[0] == 1.5f && rb.peak[1] == 1.5f && rb.clipped);   // mono shows on both
+    CHECK(rc.peak[0] == 0.0f && rc.peak[1] == 0.0f);                 // muted: silent
+    CHECK(a.runtime->midiEvents.load() == 0);
+    CHECK(b.runtime->midiEvents.load() == 1 && c.runtime->midiEvents.load() == 1);
+
+    rb = b.runtime->meter.take();   // peaks reset; the clip stays latched...
+    CHECK(rb.peak[0] == 0.0f && rb.clipped);
+    b.runtime->meter.clearClip();   // ...until cleared
+    CHECK(!b.runtime->meter.take().clipped);
 }
 
 void testGraphLifecycle() {
@@ -318,6 +413,8 @@ int main() {
     testHeldNotes();
     testTransposeKeepsPitchAttribute();
     testMixing();
+    testGainRamp();
+    testSlotMeters();
     testGraphLifecycle();
     return test::finish("Engine");
 }

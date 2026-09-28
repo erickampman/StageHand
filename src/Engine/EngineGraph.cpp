@@ -5,8 +5,9 @@
 namespace stagehand {
 
 EngineGraph::EngineGraph(std::vector<SlotConfig> slotConfigs, std::uint32_t maxEventsPerSlotBlock)
-    : configs(std::move(slotConfigs)), states(configs.size()) {
+    : configs(std::move(slotConfigs)), states(configs.size()), gainRamp(kMaxPluginBlockFrames) {
     for (std::size_t i = 0; i < configs.size(); ++i) {
+        if (!configs[i].runtime) configs[i].runtime = std::make_shared<SlotRuntime>();
         SlotState& state = states[i];
         state.events.resize(maxEventsPerSlotBlock);
         if (!configs[i].plugin) continue;

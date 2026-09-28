@@ -2,6 +2,7 @@
 // before activation, placeholders that round-trip, disabled slots, source
 // resolution without fallback, and capture().
 
+#include <cmath>
 #include <map>
 #include <memory>
 #include <string>
@@ -188,10 +189,174 @@ void testNoFallbackToAll() {
     runBlock(*engine);
 }
 
+TimedMidiMessage noteOn(std::uint8_t note) {
+    TimedMidiMessage m;
+    m.captureTime       = 1'000'000'000 - 1'000'000;   // inside runBlock's window
+    m.message.words[0]  = 0x20900064u | (std::uint32_t{note} << 8);
+    m.message.wordCount = 1;
+    return m;
+}
+
+FakePlugin* fakeOf(const Session& session, const std::string& id) {
+    const Session::Slot* s = session.slot(id);
+    return s != nullptr ? dynamic_cast<FakePlugin*>(s->plugin.get()) : nullptr;
+}
+
+// Gain and mute go straight to the slot's runtime: no graph commit.
+void testLiveEdits() {
+    FakeFactory factory;
+    factory.installed = {installedPlugin("synth", "/clap/Synth.clap")};
+    FakeMidiInput midi;
+    NullHost      host;
+    auto          engine = std::make_unique<Engine>();
+    Session       session(factory, host, midi, *engine);
+
+    Rack rack;
+    rack.slots = {slot("a", "synth", "/clap/Synth.clap")};
+    Session::LoadReport report;
+    CHECK(session.load(rack, 48000.0, report));
+    runBlock(*engine);
+    CHECK(!session.modified());
+
+    const SlotRuntime& runtime = *session.slot("a")->runtime;
+    CHECK(session.setGainDb("a", -6.0f));
+    CHECK(std::fabs(runtime.targetGain.load() - 0.5012f) < 0.001f);
+    CHECK(session.modified() && !session.flushPending());
+    CHECK(engine->committedGraphAdopted());   // nothing new was committed
+
+    CHECK(session.setMuted("a", true));
+    CHECK(runtime.targetGain.load() == 0.0f);
+    CHECK(session.setGainDb("a", 0.0f));      // muted: the gain is kept, not heard
+    CHECK(runtime.targetGain.load() == 0.0f);
+    CHECK(session.setMuted("a", false));
+    CHECK(runtime.targetGain.load() == 1.0f);
+    CHECK(!session.setGainDb("nope", 0.0f));
+
+    CHECK(session.setMuted("a", true));
+    const Rack captured = session.capture();
+    CHECK(captured.slots.size() == 1 && captured.slots[0].muted && captured.slots[0].gainDb == 0.0f);
+    session.markSaved();
+    CHECK(!session.modified());
+
+    // A reloaded muted slot starts silent, without ramping down.
+    CHECK(session.load(captured, 48000.0, report));
+    CHECK(session.slot("a")->runtime->targetGain.load() == 0.0f);
+    CHECK(session.slot("a")->runtime->currentGain == 0.0f);
+    session.unload();
+    runBlock(*engine);
+    engine->collect();
+}
+
+// Filter, enable and source edits wait for flush(), which commits once.
+void testStructuralEdits() {
+    FakeFactory factory;
+    factory.installed = {installedPlugin("synth", "/clap/Synth.clap")};
+    FakeMidiInput midi;
+    NullHost      host;
+    auto          engine = std::make_unique<Engine>();
+    Session       session(factory, host, midi, *engine);
+
+    Rack rack;
+    RackSlot b = slot("b", "synth", "/clap/Synth.clap");
+    b.enabled  = false;
+    b.source   = MidiSourceRef{MidiSourceRef::Kind::Device, "Keys:Keys MIDI 1"};
+    rack.slots = {slot("a", "synth", "/clap/Synth.clap"), b};
+    Session::LoadReport report;
+    CHECK(session.load(rack, 48000.0, report));
+    CHECK(midi.opened.empty());   // disabled: its device isn't opened yet
+    runBlock(*engine);
+    engine->collect();
+    FakePlugin* fa = fakeOf(session, "a");
+    FakePlugin* fb = fakeOf(session, "b");
+    if (fa == nullptr || fb == nullptr) return;
+
+    // Three edits, one commit: a split at 59, and b joins on its device.
+    MidiFilter lower;
+    lower.noteHigh = 59;
+    CHECK(session.setFilter("a", lower));
+    CHECK(session.setFirstOutput("a", 0));
+    CHECK(session.setEnabled("b", true));
+    CHECK(midi.opened.size() == 1);   // resolved on enabling
+    CHECK(session.flushPending() && engine->committedGraphAdopted());
+    session.flush();
+    CHECK(!session.flushPending() && !engine->committedGraphAdopted());
+    runBlock(*engine);
+    CHECK(engine->collect() == 1);
+
+    fa->calls.clear();
+    fb->calls.clear();
+    engine->onMidi(42, noteOn(60));   // from Keys: above a's split, b's source
+    runBlock(*engine);
+    CHECK(fa->calls.size() == 1 && fa->calls[0].events.empty());
+    CHECK(fb->calls.size() == 1 && fb->calls[0].events.size() == 1);
+
+    // An unplugged device: the problem is reported and the slot hears nothing.
+    std::string problem;
+    CHECK(session.setSource("b", MidiSourceRef{MidiSourceRef::Kind::Device, "Unplugged:Port"}, problem));
+    CHECK(!problem.empty() && session.slot("b")->sourceProblem == problem);
+    CHECK(session.setEnabled("a", false));
+    session.flush();
+    runBlock(*engine);
+    CHECK(fa->stops == 1);   // disabled: stopped on the audio thread, still loaded
+    CHECK(fa->active);
+    fb->calls.clear();
+    engine->onMidi(42, noteOn(61));
+    runBlock(*engine);
+    CHECK(fb->calls.size() == 1 && fb->calls[0].events.empty());
+
+    CHECK(session.capture().slots[1].source.name == "Unplugged:Port");
+    session.unload();
+    runBlock(*engine);
+    engine->collect();
+}
+
+void testAddRemove() {
+    FakeFactory factory;
+    factory.installed = {installedPlugin("synth", "/clap/Synth.clap")};
+    FakeMidiInput midi;
+    NullHost      host;
+    auto          engine = std::make_unique<Engine>();
+    Session       session(factory, host, midi, *engine);
+
+    std::string problem;
+    CHECK(session.addSlot(factory.installed[0], 0, problem).empty() && !problem.empty());   // nothing loaded yet
+
+    Session::LoadReport report;
+    CHECK(!session.load(Rack{}, 48000.0, report));   // empty: nothing runs, but editing works
+    CHECK(session.addSlot(factory.installed[0], 0, problem) == "synth");
+    CHECK(session.addSlot(factory.installed[0], 0, problem) == "synth-2");   // unique; inserted first
+    CHECK(session.addSlot(installedPlugin("missing", "/nowhere"), 9, problem).empty());
+    CHECK(session.slots().size() == 2 && session.slots()[0].saved.id == "synth-2");
+    CHECK(session.modified());
+
+    session.flush();
+    runBlock(*engine);
+    FakePlugin* first = fakeOf(session, "synth");
+    CHECK(first != nullptr && first->active && first->calls.size() == 1);
+
+    std::weak_ptr<HostedPlugin> removed = session.slot("synth")->plugin;
+    CHECK(session.removeSlot("synth") && !session.removeSlot("synth"));
+    CHECK(!removed.expired());   // the running graph still holds it
+    session.flush();
+    runBlock(*engine);
+    CHECK(!removed.expired());   // stopped, and held by the retired graph
+    engine->collect();
+    CHECK(removed.expired());    // destroyed here, on the main thread
+
+    const Rack captured = session.capture();
+    CHECK(captured.slots.size() == 1 && captured.slots[0].id == "synth-2" && captured.slots[0].name == "synth");
+    session.unload();
+    runBlock(*engine);
+    engine->collect();
+}
+
 } // namespace
 
 int main() {
     testLoad();
     testNoFallbackToAll();
+    testLiveEdits();
+    testStructuralEdits();
+    testAddRemove();
     return test::finish("Session");
 }

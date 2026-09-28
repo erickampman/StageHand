@@ -1,8 +1,10 @@
 #pragma once
 
+#include <cctype>
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "Core/MidiFilter.h"
@@ -32,6 +34,7 @@ struct RackSlot {
     PluginDescriptor       plugin;             // format + id identify it; path is a hint
     std::vector<std::byte> state;              // opaque plugin state; empty = plugin defaults
     bool                   enabled     = true; // disabled: loaded, not run
+    bool                   muted       = false;// runs, but silent (gain ramps to 0)
     float                  gainDb      = 0.0f;
     std::uint32_t          firstOutput = 0;    // 0-based here, 1-based in the file
     std::uint16_t          notePort    = 0;
@@ -48,5 +51,19 @@ struct Rack {
     std::string           name;
     std::vector<RackSlot> slots;
 };
+
+// A slot id from a display name: lowercase letters and digits, other runs of
+// characters as one '-' (the file format's id rule). "slot" if nothing is left.
+inline std::string slotIdFrom(std::string_view name) {
+    std::string id;
+    for (const char c : name) {
+        if (std::isalnum(static_cast<unsigned char>(c)))
+            id += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        else if (!id.empty() && id.back() != '-')
+            id += '-';
+    }
+    while (!id.empty() && id.back() == '-') id.pop_back();
+    return id.empty() ? "slot" : id;
+}
 
 } // namespace stagehand

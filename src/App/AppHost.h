@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <functional>
 
 #include "App/MainLoop.h"
 #include "Plugin/HostServices.h"
@@ -23,6 +24,9 @@ public:
     void requestProcess() override {}
     void requestParamFlush() override {}
     void log(LogLevel level, const char* message) override;
+    void stateChanged() override {
+        if (onStateChanged) onStateChanged();
+    }
 
     TimerId addTimer(std::uint32_t periodMs, std::function<void()> callback) override;
     void    removeTimer(TimerId id) override;
@@ -31,6 +35,10 @@ public:
     void    unwatchFd(int fd) override;
 
     bool restartRequested() const noexcept { return restart.load(std::memory_order_relaxed); }
+
+    // Called when a plugin reports a state change (main thread), e.g. to mark
+    // the Session modified.
+    std::function<void()> onStateChanged;
 
 private:
     MainLoop&         loop;

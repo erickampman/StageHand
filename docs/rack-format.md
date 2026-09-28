@@ -71,6 +71,7 @@ rack or the new one intact, never a mix.
       },
       "state": "state/bass.bin",
       "enabled": true,
+      "muted": false,
       "gainDb": 0.0,
       "output": 1,
       "midi": {
@@ -119,6 +120,7 @@ get a **layer**.
 | `plugin.path` | none | Where it was last found. A hint only: if it's wrong, StageHand scans for the id |
 | `state` | none | Path of the state blob, relative to the bundle. Absent means the plugin's defaults |
 | `enabled` | `true` | A disabled slot is loaded but not run (quick to re-enable) |
+| `muted` | `false` | A muted slot runs but is silent. Muting and unmuting fade over 10 ms. It's the live-safe way to silence a slot, since disabling cuts it off, tails included |
 | `gainDb` | `0.0` | Level when summed into the outputs |
 | `output` | `1` | First output channel (1-based) for the plugin's first channel. A mono plugin feeds two |
 | `midi.source` | `"all"` | See "Sources" |

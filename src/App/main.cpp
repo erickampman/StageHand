@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <atomic>
 #include <cctype>
 #include <chrono>
@@ -389,18 +390,6 @@ void reportStats(const Engine::Stats& now, Engine::Stats& last) {
 }
 
 // A slot id from a display name: lowercase letters and digits, '-' between words.
-std::string slotIdFrom(const std::string& name) {
-    std::string id;
-    for (const char c : name) {
-        if (std::isalnum(static_cast<unsigned char>(c)))
-            id += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        else if (!id.empty() && id.back() != '-')
-            id += '-';
-    }
-    while (!id.empty() && id.back() == '-') id.pop_back();
-    return id.empty() ? "slot-1" : id;
-}
-
 // --plugin as a one-slot rack; --save-rack then writes it out as a starting point.
 Rack rackForPlugin(const PluginDescriptor& desc) {
     Rack rack;
@@ -549,6 +538,7 @@ int runPlay(const Options& options) {
     input->setSink(engine.get());
 
     Session session(factory, host, *input, *engine);
+    host.onStateChanged = [&session] { session.markModified(); };
     openMidiInputs(*input, options, &session);
 
     Session::LoadReport report;
@@ -574,9 +564,10 @@ int runPlay(const Options& options) {
             return false;
         }
         const RackFileResult saved = saveRack(saveTarget, session.capture());
-        if (saved.ok)
+        if (saved.ok) {
+            session.markSaved();
             std::printf("Saved the rack to %s\n", saveTarget.c_str());
-        else
+        } else
             std::fprintf(stderr, "Couldn't save the rack: %s\n", saved.error.c_str());
         std::fflush(stdout);
         return saved.ok;
@@ -639,7 +630,8 @@ int runPlay(const Options& options) {
     });
     loop.addTimer(500, [&] {   // twice a second: level and MIDI activity
         const std::uint64_t midi = engine->stats().midiReceived;
-        const float         peak = engine->takeOutputPeak();
+        const LevelMeter::Reading level = engine->outputMeter().take();
+        const float               peak  = std::max(level.peak[0], level.peak[1]);
         if (peak > 0.0f || midi != lastMidiCount)
             std::printf("output peak %6.1f dBFS   MIDI received %llu\n",
                         peak > 0.0f ? 20.0 * std::log10(peak) : -INFINITY,
@@ -661,6 +653,7 @@ int runPlay(const Options& options) {
     editors.clear();
     const int exitCode = (!saveTarget.empty() && !saveNow()) ? 1 : 0;
     input.reset();
+    host.onStateChanged = nullptr;   // plugins may outlive `session` (in the engine's graphs)
     session.unload();
     for (int i = 0; i < 2000 && !engine->committedGraphAdopted() && !backend.serverShutDown(); ++i)
         std::this_thread::sleep_for(std::chrono::milliseconds(1));

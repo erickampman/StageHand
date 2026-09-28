@@ -162,6 +162,7 @@ RackSlot parseSlot(const Json& s, const fs::path& bundle, std::vector<std::strin
         }
     }
     slot.enabled = s.value("enabled", true);
+    slot.muted   = s.value("muted", false);
     slot.gainDb  = s.value("gainDb", 0.0f);
     const int output = s.value("output", 1);
     if (output < 1) fail("output must be 1 or more");
@@ -203,6 +204,7 @@ Json slotJson(const RackSlot& slot, bool hasState) {
     s["plugin"] = plugin;
     if (hasState) s["state"] = "state/" + slot.id + ".bin";
     s["enabled"] = slot.enabled;
+    s["muted"]   = slot.muted;
     s["gainDb"]  = slot.gainDb;
     s["output"]  = slot.firstOutput + 1;
 

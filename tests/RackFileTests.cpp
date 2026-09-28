@@ -62,6 +62,7 @@ Rack sampleRack() {
     pad.plugin.format = PluginFormat::Clap;
     pad.plugin.id     = "com.example.pad";
     pad.enabled       = false;
+    pad.muted         = true;
     pad.source.kind   = MidiSourceRef::Kind::Virtual;
     pad.source.name   = "MIDI 2.0 In";
     pad.filter.noteLow = 60;
@@ -90,7 +91,7 @@ void testRoundTrip(const fs::path& dir) {
     CHECK(b.plugin.format == PluginFormat::Clap && b.plugin.id == "com.example.synth");
     CHECK(b.plugin.path == "/opt/clap/Synth.clap");
     CHECK(b.state == saved.slots[0].state);                 // opaque bytes, exactly
-    CHECK(b.enabled && b.gainDb == -3.5f && b.firstOutput == 2 && b.notePort == 1);
+    CHECK(b.enabled && !b.muted && b.gainDb == -3.5f && b.firstOutput == 2 && b.notePort == 1);
     CHECK(b.source.kind == MidiSourceRef::Kind::Device && b.source.name == "KeyLab 88:KeyLab 88 MIDI 1");
     CHECK(b.filter.channelMask == 0x0003 && b.filter.groupMask == 0xFFFF);
     CHECK(b.filter.noteLow == 0 && b.filter.noteHigh == 59);
@@ -98,7 +99,7 @@ void testRoundTrip(const fs::path& dir) {
     CHECK(b.filter.transpose == 12);
 
     const RackSlot& p = loaded.slots[1];
-    CHECK(!p.enabled && p.state.empty());
+    CHECK(!p.enabled && p.muted && p.state.empty());
     CHECK(p.source.kind == MidiSourceRef::Kind::Virtual && p.source.name == "MIDI 2.0 In");
     CHECK(p.filter.noteLow == 60 && p.filter.noteHigh == 127);
 
@@ -125,7 +126,7 @@ void testDefaults(const fs::path& dir) {
         return;
     }
     const RackSlot& s = rack.slots[0];
-    CHECK(s.name == "one" && s.enabled && s.gainDb == 0.0f && s.firstOutput == 0 && s.notePort == 0);
+    CHECK(s.name == "one" && s.enabled && !s.muted && s.gainDb == 0.0f && s.firstOutput == 0 && s.notePort == 0);
     CHECK(s.source.kind == MidiSourceRef::Kind::All);
     CHECK(s.filter.channelMask == 0xFFFF && s.filter.noteLow == 0 && s.filter.noteHigh == 127);
     CHECK(s.filter.velocityLow == 0 && s.filter.velocityHigh == 0xFFFF && s.filter.transpose == 0);

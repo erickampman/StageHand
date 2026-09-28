@@ -6,6 +6,7 @@
 
 #include "Core/Event.h"
 #include "Core/MidiFilter.h"
+#include "Engine/SlotRuntime.h"
 #include "Plugin/HostedPlugin.h"
 #include "Plugin/PortLayout.h"
 
@@ -26,9 +27,12 @@ struct SlotConfig {
     // on the audio thread.
     std::shared_ptr<HostedPlugin> plugin;
 
+    // Live gain, meter and MIDI activity, shared by every graph built for this
+    // slot. Null = the graph creates one at unity gain (tests, one-off graphs).
+    std::shared_ptr<SlotRuntime> runtime;
+
     MidiFilter    midiFilter;           // which MIDI this slot hears
     std::uint16_t notePort    = 0;      // plugin note-input port that receives it
-    float         gain        = 1.0f;   // linear, applied when summing to the outputs
     std::uint32_t firstOutput = 0;      // backend output for the plugin's first channel
 };
 
@@ -68,6 +72,7 @@ private:
 
     std::vector<SlotConfig> configs;
     std::vector<SlotState>  states;
+    std::vector<float>      gainRamp;            // kMaxPluginBlockFrames per-sample gains
     std::uint64_t           sequence = 0;        // set by Engine::commit()
 };
 

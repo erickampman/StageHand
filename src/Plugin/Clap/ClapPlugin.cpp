@@ -618,7 +618,9 @@ void ClapPlugin::hostParamsRequestFlush(const clap_host_t* host) {
     self->hostServices.requestParamFlush();
 }
 
-void ClapPlugin::hostMarkDirty(const clap_host_t*) {}   // no Rack persistence yet
+void ClapPlugin::hostMarkDirty(const clap_host_t* host) {
+    from(host)->hostServices.stateChanged();
+}
 
 void ClapPlugin::hostLatencyChanged(const clap_host_t* host) {
     from(host)->report(LogLevel::Info, "latency changed (not compensated yet)");
