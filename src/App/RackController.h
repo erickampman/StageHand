@@ -34,6 +34,7 @@ public:
         double        sampleRate = 0.0;
         std::uint32_t bufferSize = 0;
         std::uint64_t xruns      = 0;
+        std::uint32_t outputs    = 2;   // output channels the backend registered
     };
 
     struct Config {
@@ -128,6 +129,9 @@ private:
     std::string    sourceLabel(const MidiSourceRef& ref) const;
     SourceProtocol sourceProtocolOf(const MidiSourceRef& ref) const;
     void           notice(std::string text) { notices.push_back(std::move(text)); }
+    // The model's row for `id`, patched right away by edits, so input arriving
+    // before the next tick() builds on them (e.g. several wheel notches).
+    RowModel*      modelRow(const std::string& id);
 
     Session&       session;
     Engine&        engine;

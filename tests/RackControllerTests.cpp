@@ -58,7 +58,7 @@ struct Rig {
             editors.push_back(editor.get());
             return editor;
         };
-        c.audioStatus   = [] { return RackController::AudioStatus{48000.0, 256, 3}; };
+        c.audioStatus   = [] { return RackController::AudioStatus{48000.0, 256, 3, 4}; };
         c.quit          = [this] { ++quits; };
         c.virtualInputs = {{"MIDI 2.0 In", MidiProtocol::Midi2}, {"MIDI 1.0 In", MidiProtocol::Midi1}};
         c.saveTarget    = saveTarget;
@@ -118,6 +118,7 @@ void testViewModel() {
         CHECK(view.sources[4].label == "Midi Through" && !view.sources[4].hardware);
     }
     CHECK(view.status.sampleRate == 48000.0 && view.status.bufferSize == 256 && view.status.xruns == 3);
+    CHECK(view.status.outputs == 4);
     CHECK(view.status.saveTarget.empty() && view.status.noSaveReason == "saving is off");
 
     // Edits show up in the next model; structural ones are committed by tick().
@@ -126,6 +127,10 @@ void testViewModel() {
     controller.setFilter("a", lower);
     controller.setGainDb("a", -6.0f);
     controller.setMuted("c", true);
+    controller.setFirstOutput("a", 2);
+    // The model shows edits at once, before the next tick (the UI builds on them).
+    CHECK(view.rows[0].filter.noteHigh == 59 && view.rows[0].gainDb == -6.0f && view.rows[2].muted);
+    CHECK(view.rows[0].firstOutput == 2);
     CHECK(rig.session->flushPending());
     controller.tick(1.1);
     CHECK(!rig.session->flushPending() && !rig.engine->committedGraphAdopted());

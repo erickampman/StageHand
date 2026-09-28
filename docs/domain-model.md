@@ -470,3 +470,18 @@ take the non-RT `params.flush` path instead.
   per slot, keyed by plugin like the held-note table, so it survives graph
   adoption. `SlotConfig::gain` becomes the target. Build it with the first live
   gain control, not separately.
+- **Tempo control (requested 2026-09-28).** The path to plugins already
+  exists: each block's TimeInfo becomes CLAP's transport event (tempo, time
+  signature, playing), which ClapPlugin sends with every process() call. What's
+  missing is a source for it. Sketch: a rack-level tempo (and time signature)
+  saved in rack.json and set from a toolbar control (typed or dragged value, tap
+  tempo). The main thread writes it to the engine atomically, and the audio
+  thread advances the beat position per block. Later: follow incoming MIDI
+  clock, and send it out. The future sequencer is "the thing that advances
+  TimeInfo", so this is its first piece.
+- **MIDI 1.0 / 2.0 in the row's input filter (requested 2026-09-28).** Today
+  protocol is global (the preference), per source (the row's badge), and per
+  plugin (the engine delivers what each note port takes). There's no per-row
+  choice. Clarify what's wanted before designing. It could be "receive as"
+  (Auto = the plugin's preference, or force MIDI 1.0 / MIDI 2.0 translation for
+  this row), or accepting only sources of one protocol.

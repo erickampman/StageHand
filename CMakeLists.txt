@@ -89,7 +89,8 @@ target_link_libraries(stagehand-app
 
 # --- stagehand-ui: the rack window (DGL). Only this library sees DGL. -------------
 add_library(stagehand-ui STATIC
-    src/Ui/RackUi.cpp)
+    src/Ui/RackUi.cpp
+    src/Ui/RackWidget.cpp)
 target_link_libraries(stagehand-ui
     PUBLIC  stagehand-app
     PRIVATE dgl-opengl dgl-opengl-definitions stagehand-warnings)

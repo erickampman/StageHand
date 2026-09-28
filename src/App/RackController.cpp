@@ -58,6 +58,7 @@ void RackController::tick(double now) {
         status.sampleRate       = audio.sampleRate;
         status.bufferSize       = audio.bufferSize;
         status.xruns            = audio.xruns;
+        status.outputs          = audio.outputs;
     }
     const Engine::Stats stats = engine.stats();
     status.midiDropped  = stats.midiQueueFull + stats.slotEventsFull + stats.unsupportedDialect;
@@ -205,12 +206,20 @@ SourceProtocol RackController::sourceProtocolOf(const MidiSourceRef& ref) const 
 
 // --- intents -----------------------------------------------------------------------
 
+RowModel* RackController::modelRow(const std::string& id) {
+    for (RowModel& row : model.rows)
+        if (row.id == id) return &row;
+    return nullptr;
+}
+
 void RackController::setGainDb(const std::string& id, float db) {
-    session.setGainDb(id, db);
+    if (session.setGainDb(id, db))
+        if (RowModel* row = modelRow(id)) row->gainDb = db;
 }
 
 void RackController::setMuted(const std::string& id, bool muted) {
-    session.setMuted(id, muted);
+    if (session.setMuted(id, muted))
+        if (RowModel* row = modelRow(id)) row->muted = muted;
 }
 
 void RackController::setEnabled(const std::string& id, bool enabled) {
@@ -218,11 +227,13 @@ void RackController::setEnabled(const std::string& id, bool enabled) {
 }
 
 void RackController::setFilter(const std::string& id, const MidiFilter& filter) {
-    session.setFilter(id, filter);
+    if (session.setFilter(id, filter))
+        if (RowModel* row = modelRow(id)) row->filter = filter;
 }
 
 void RackController::setFirstOutput(const std::string& id, std::uint32_t firstOutput) {
-    session.setFirstOutput(id, firstOutput);
+    if (session.setFirstOutput(id, firstOutput))
+        if (RowModel* row = modelRow(id)) row->firstOutput = firstOutput;
 }
 
 void RackController::setSource(const std::string& id, const MidiSourceRef& source) {

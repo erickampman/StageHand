@@ -67,6 +67,7 @@ struct StatusModel {
     double        sampleRate    = 0.0;
     std::uint32_t bufferSize    = 0;
     std::uint64_t xruns         = 0;
+    std::uint32_t outputs       = 2;   // for the output-pair choice
     std::uint64_t midiDropped   = 0;   // queue or buffer full, or no form a plugin takes
     MidiProtocol  preference    = MidiProtocol::Midi2;
     std::string   saveTarget;          // empty: not saving

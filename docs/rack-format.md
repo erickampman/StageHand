@@ -5,17 +5,23 @@ MIDI reaches each of them. It's the Session model's persistent form
 (domain-model.md, "Session model" and "Save / restore"). Until StageHand has a
 UI, rack files are also meant to be readable and hand-editable.
 
-## Making a rack (until there's a UI)
+## Making a rack
 
-1. Start from one plugin and save it as a rack. Pick a patch in the plugin's
-   editor, then quit (Ctrl-Q in the editor window, or Ctrl-C in the terminal);
-   the rack is saved with that state:
-   `stagehand --play --plugin <id> --save-rack ~/Racks/Piano.rack`
-2. Edit `rack.json` by hand to add slots, splits, and layers (the example below).
-   A new slot can reuse another's state file, or omit `state` to start from the
-   plugin's defaults.
-3. Play it and adjust the plugins in their editors. The rack is saved back when
-   you quit: `stagehand --play --rack ~/Racks/Piano.rack`
+In the rack window (docs/rack-view.md):
+
+1. Start a new, empty rack: `stagehand --play --save-rack ~/Racks/Piano.rack`
+   (or start from one plugin: `--plugin <id> --save-rack ...`).
+2. **+ Add plugin** adds a row. Each row's input side picks its MIDI source (the
+   source menu), drags its key range, and opens its filter panel (channels,
+   groups, keys, velocity, transpose). Overlapping rows are layers; disjoint key
+   ranges are splits. The row's **...** menu enables, disables, removes, and
+   picks the output pair.
+3. Pick patches in the plugins' editors (**Editor**), set levels, and quit
+   (Ctrl-Q, or close the window): the rack is saved with everything. Play it
+   again, and save back to it, with `stagehand --play --rack ~/Racks/Piano.rack`.
+
+`rack.json` stays readable and hand-editable (the example below), for anything
+the window doesn't do yet.
 
 **Saving (default on):**
 - A `--rack` is saved back to itself when StageHand quits, with each plugin's

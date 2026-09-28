@@ -45,7 +45,8 @@ void printUsage() {
         "usage: stagehand MODE [options]\n"
         "\n"
         "Modes:\n"
-        "  --play               host plugins: MIDI in, audio out (needs --rack or --plugin)\n"
+        "  --play               host plugins: MIDI in, audio out (needs --rack, --plugin,\n"
+        "                       or --save-rack alone to start a new, empty rack)\n"
         "  --list-plugins       list installed CLAP plugins\n"
         "  --list-midi          list MIDI sources (id, protocol, hardware/software/app)\n"
         "  --monitor            print incoming MIDI exactly as it arrives\n"
@@ -94,6 +95,7 @@ void printUsage() {
         "\n"
         "Examples (audio goes through PipeWire's JACK layer, hence pw-jack):\n"
         "  pw-jack stagehand --play --rack ~/Racks/Piano.rack\n"
+        "  pw-jack stagehand --play --save-rack ~/Racks/New.rack    (build it in the window)\n"
         "  pw-jack stagehand --play --rack ~/Racks/Gig.rack --no-save-rack --quantum 128\n"
         "  pw-jack stagehand --play --plugin com.unlikelyware.polygraphmodular \\\n"
         "      --save-rack ~/Racks/New.rack\n"
@@ -503,8 +505,10 @@ int runPlay(const Options& options) {
                      options.rack.c_str(), options.plugin.c_str());
         return 2;
     }
-    if (options.plugin.empty() && options.rack.empty()) {
-        std::fprintf(stderr, "--play needs a rack (--rack PATH) or a plugin (--plugin PATH|ID)\n");
+    if (options.plugin.empty() && options.rack.empty() && options.saveRack.empty()) {
+        std::fprintf(stderr,
+                     "--play needs a rack (--rack PATH), a plugin (--plugin PATH|ID), or a new rack to\n"
+                     "build in the rack window (--save-rack PATH)\n");
         return 2;
     }
     if (options.noSaveRack && !options.saveRack.empty()) {
@@ -522,10 +526,12 @@ int runPlay(const Options& options) {
             return 1;
         }
         for (const std::string& warning : result.warnings) std::fprintf(stderr, "warning: %s\n", warning.c_str());
-    } else {
+    } else if (!options.plugin.empty()) {
         PluginDescriptor desc;
         if (!resolvePlugin(factory, options, desc)) return 1;
         rack = rackForPlugin(desc);
+    } else {   // --save-rack alone: a new, empty rack, named after its file
+        rack.name = std::filesystem::path(resolvePath(options.saveRack)).stem().string();
     }
 
     // Declaration order matters: destruction runs in reverse, so plugins (held
@@ -558,10 +564,13 @@ int runPlay(const Options& options) {
     const bool          runnable = session.load(rack, negotiated.sampleRate, report);
     printRack(session);
     for (const std::string& warning : report.warnings) std::fprintf(stderr, "warning: %s\n", warning.c_str());
-    if (!runnable) {
+    // With the rack window, an empty or broken rack can be fixed there; the
+    // console alone can't.
+    if (!runnable && !options.ui) {
         std::fprintf(stderr, "Nothing to play: no slot could be loaded and enabled.\n");
         return 1;
     }
+    if (!runnable) std::puts("Nothing plays yet: add or enable plugins in the rack window.");
 
     if (!backend.start()) return 1;
     if (const std::uint32_t forced = backend.forcedQuantum(); forced != 0)
@@ -586,8 +595,9 @@ int runPlay(const Options& options) {
         return handle;
     };
     config.audioStatus = [&backend] {
-        return RackController::AudioStatus{backend.config().sampleRate, backend.config().bufferSize,
-                                           backend.xrunCount()};
+        const AudioConfig audio = backend.config();
+        return RackController::AudioStatus{audio.sampleRate, audio.bufferSize, backend.xrunCount(),
+                                           audio.outputChannels};
     };
     config.quit               = [&loop] { loop.requestQuit(); };
     config.virtualInputs      = kVirtualInputs;
@@ -615,8 +625,8 @@ int runPlay(const Options& options) {
     if (ui ? options.openEditors : options.editor) controller.openAllEditors();
 
     if (!saveTarget.empty())
-        std::printf("Saves to %s on exit; Ctrl-Shift-S in an editor window saves now (--no-save-rack: off).\n",
-                    saveTarget.c_str());
+        std::printf("Saves to %s on exit; Ctrl-Shift-S in %s saves now (--no-save-rack: off).\n",
+                    saveTarget.c_str(), ui ? "StageHand's windows" : "an editor window");
     else if (options.noSaveRack)
         std::puts("Not saving (--no-save-rack).");
     else

@@ -208,7 +208,27 @@ status bar (audio, xruns, MIDI drops, protocol, save target or the latest
 notice, master meter). Faders move with the drag, not to the click, so a stray
 click on stage changes nothing. Shift gives fine control, double-click resets
 to 0 dB, and the wheel moves 0.5 dB. Fader and meters share one -60..+6 dB
-scale. Step 5 adds editing on the input side, and add, remove and enable.
+scale.
+
+Implemented in step 5:
+- Input side: the source label opens a menu of sources (All, the virtual
+  inputs, then hardware and software devices, each with its protocol). The key
+  bar is dragged: an end moves that end, the middle moves the range, and a
+  press outside it extends the nearer end. The filter chip opens the filter
+  panel: channels and groups (from "all", a click picks just that one, and the
+  last one stays on), key and velocity ranges, and transpose, as steppers
+  (Shift for an octave or 10, and the wheel works too), plus Reset.
+- Each row's "..." menu: Enabled, the output pair (when there are more than
+  two outputs), and Remove, which asks for confirmation.
+- "+ Add plugin" lists the scanned plugins (scanned once, on first use) and
+  adds the choice at the bottom. `--play --save-rack PATH` alone starts a new,
+  empty rack. With the window, a rack with nothing runnable no longer exits.
+- Placeholder rows show no output controls.
+- Menus and the panel are overlays inside the window (DGL has no native
+  menus). A click outside or Escape closes them. Input goes to regions recorded
+  during the last draw, topmost first.
+- Edits patch the controller's model right away, so input that arrives before
+  the next tick (several wheel notches) builds on them.
 
 Constraints carried from the spike and the DGL notes in architecture.md:
 - Construct and destroy NanoVG widgets inside a
