@@ -59,6 +59,7 @@ public:
         std::shared_ptr<SlotRuntime>  runtime;  // live gain, meter, MIDI activity; null for a placeholder
         MidiSourceHandle              source = kInvalidMidiSource;   // resolved saved.source
         std::string                   sourceProblem;                 // why it didn't resolve, if it didn't
+        std::string                   loadProblem;                   // placeholder: why the plugin didn't load
     };
     const std::vector<Slot>& slots() const noexcept { return loaded; }
     const Slot*              slot(const std::string& id) const noexcept;

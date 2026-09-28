@@ -9,79 +9,13 @@
 
 #include "Check.h"
 #include "FakePlugin.h"
+#include "SessionFakes.h"
 #include "Session/Session.h"
 
 using namespace stagehand;
-using stagehand::test::FakePlugin;
+using namespace stagehand::test;
 
 namespace {
-
-class FakeFactory final : public PluginFactory {
-public:
-    PluginFormat                  format() const override { return PluginFormat::Clap; }
-    std::vector<PluginDescriptor> scan() override {
-        ++scans;
-        return installed;
-    }
-    std::unique_ptr<HostedPlugin> create(const PluginDescriptor& desc, HostServices&) override {
-        for (const PluginDescriptor& d : installed)
-            if (d.id == desc.id && d.path == desc.path) {
-                auto plugin  = std::make_unique<FakePlugin>(2, NoteDialect::Midi | NoteDialect::Midi2, 1.0f, d.id);
-                plugin->desc = d;
-                created[d.id] = plugin.get();
-                return plugin;
-            }
-        return nullptr;
-    }
-
-    std::vector<PluginDescriptor>       installed;
-    std::map<std::string, FakePlugin*>  created;
-    int                                 scans = 0;
-};
-
-class FakeMidiInput final : public MidiInput {
-public:
-    void                        setProtocolPreference(MidiProtocol) override {}
-    void                        setSink(MidiSink*) override {}
-    std::vector<MidiSourceInfo> enumerate() override { return {}; }
-    MidiSourceHandle            open(const std::string& id) override {
-        if (id != "Keys:Keys MIDI 1") return kInvalidMidiSource;
-        opened.push_back(id);
-        return 42;
-    }
-    MidiSourceHandle openVirtual(const std::string&, MidiProtocol) override { return kInvalidMidiSource; }
-    void             close(MidiSourceHandle) override {}
-    const char*      name() const override { return "fake"; }
-
-    std::vector<std::string> opened;
-};
-
-class NullHost final : public HostServices {
-public:
-    void requestRestart() override {}
-    void requestProcess() override {}
-    void requestParamFlush() override {}
-    void log(LogLevel, const char*) override {}
-};
-
-PluginDescriptor installedPlugin(const std::string& id, const std::string& path) {
-    PluginDescriptor d;
-    d.format = PluginFormat::Clap;
-    d.id     = id;
-    d.name   = id;
-    d.path   = path;
-    return d;
-}
-
-RackSlot slot(const std::string& id, const std::string& pluginId, const std::string& pathHint = "") {
-    RackSlot s;
-    s.id            = id;
-    s.name          = id;
-    s.plugin.format = PluginFormat::Clap;
-    s.plugin.id     = pluginId;
-    s.plugin.path   = pathHint;
-    return s;
-}
 
 std::vector<std::byte> bytes(const std::string& text) {
     std::vector<std::byte> out;
@@ -89,17 +23,6 @@ std::vector<std::byte> bytes(const std::string& text) {
     return out;
 }
 
-// One audio block, so the engine adopts what was committed and runs it.
-void runBlock(Engine& engine) {
-    std::vector<float>   left(64), right(64);
-    float*               channels[2] = {left.data(), right.data()};
-    AudioCallbackContext ctx;
-    ctx.frameCount      = 64;
-    ctx.blockStartTime  = 1'000'000'000;
-    ctx.time.sampleRate = 48000.0;
-    ctx.output          = AudioBuffer{channels, 2, 64};
-    engine.process(ctx);
-}
 
 void testLoad() {
     FakeFactory factory;

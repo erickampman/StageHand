@@ -89,17 +89,17 @@ second, and only while it moves.
   sound, and its tails, immediately. Mute is the live equivalent.
 - `setFirstOutput(id, n)`
 - `addSlot(PluginDescriptor, index) -> id`: create, activate, generate a unique
-  id, add to the graph. Activation happens on the main thread and may take a
-  moment. The UI shows it as loading.
+  id, add to the graph. Activation happens on the main thread, synchronously;
+  a slow plugin briefly holds up the UI (not audio).
 - `removeSlot(id)`: the controller closes the slot's editor first. The plugin
   lives on in the old graph until the audio thread stops it and `collect()`
   destroys it on the main thread (the existing contract).
 
 **Other queries and hooks**
 - `bool modified()`, `markSaved()`: drive the toolbar's unsaved indicator.
-  Plugin state changes count too: CLAP's `clap_host_state.mark_dirty`
-  (currently a no-op in ClapPlugin) is forwarded through HostServices to the
-  Session.
+  Plugin state changes count too: CLAP's `clap_host_state.mark_dirty` goes
+  through `HostServices::stateChanged()` to the app, which marks the Session
+  modified.
 - `load()`, `capture()`, `unload()` are unchanged. `load()` resets
   `modified()`.
 
@@ -144,48 +144,73 @@ target exactly.
 ## 4. RackViewModel
 
 This is what the widgets draw: plain values rebuilt by the controller each
-tick, with no pointers into the Session.
+tick, with no pointers into the Session. Implemented in
+`src/App/RackViewModel.h`.
 
 ```
 RackViewModel
   rackName, modified
   rows[]: RowModel
     id, name, pluginName, vendor
-    state          running | disabled | loading | placeholder (+ reason)
+    state          running | disabled | placeholder (+ reason)
     hasEditor, editorOpen
     sourceLabel    "All" | "KeyLab 88" | "MIDI 2.0 In" | "KeyLab 88 (not connected)"
-    sourceProtocol MIDI 1.0 | 2.0 (for the badge)
-    pluginNoteDialects             (to warn when a MIDI 2.0 source feeds a MIDI 1.0 plugin)
+    sourceProtocol mixed | MIDI 1.0 | 2.0 (for the badge)
+    pluginDialects, protocolWarning (a MIDI 2.0 source feeds a MIDI 1.0 plugin)
     filter         channels, groups, noteLow/High, velocityLow/High, transpose
     gainDb, muted, output pair
     meterDb[2], peakHoldDb[2], clipped, midiActive
   sourceChoices[]  All, virtual inputs, enumerated hardware (for the source menu)
-  status           sample rate, buffer, xruns, MIDI drops, protocol preference
+  status           sample rate, buffer, xruns, MIDI drops, protocol preference,
+                   save target, master meter and clip
 ```
 
 Intents from the widgets map one-to-one onto Session edits, plus
-`openEditor(id)`, `closeEditor(id)`, `save()`, `quit()` and `clearClip(id)`.
+`openEditor(id)`, `closeEditor(id)`, `save()`, `quit()`, `clearClip(id)`,
+`clearOutputClip()`, `addPlugin()` (from `availablePlugins()`, scanned once)
+and `refreshSources()` (when the source menu opens). Meter ballistics: the
+display falls at 24 dB/s to a -60 dB floor, and peaks hold for 1.5 s. The MIDI
+light stays on for 150 ms after activity.
 
 ## 5. RackController
 
-It owns what main.cpp now does inline: the Session, the editor
-windows (keyed by slot id), save-target logic, and the ticks. main.cpp shrinks
-to parsing arguments, starting the backend and MIDI input, and building a
-RackController plus the RackWindow. `--no-ui` keeps today's headless behavior,
-which stays useful for tests and for a machine with no display.
+`src/App/RackController.h`. It owns the editor windows (keyed by slot id),
+saving, and the periodic work: `service()` every 5 ms (engine collect, plugin
+idle) and `tick()` about 30 times a second (flush edits, rebuild the model).
+It sees editors only as `EditorHandle`s and audio only as an `AudioStatus`
+function, both supplied by the app. That keeps it free of X11 and JACK and
+tested headless (tests/RackControllerTests.cpp). main.cpp builds it and keeps
+the console reporting, which is the only UI until step 4. In step 4, `--no-ui`
+will keep that headless behavior, which stays useful for tests and for a
+machine with no display.
 
 Behavior on the main window:
 - Closing the main window quits, saving by default.
 - Closing an editor window only closes the editor.
 - Editors open on request, not all at load (a change from M4's "open all by
   default", which doesn't scale to a real rack). `--open-editors` keeps the old
-  behavior.
+  behavior. Until the rack window exists (step 4), main.cpp still opens them all
+  at start, since nothing else could.
 
-## 6. DGL layer (after this is reviewed)
+## 6. DGL layer
 
-`RackWindow` (a top-level NanoVG widget), then `RowWidget`s with three
-sub-areas, a toolbar and a status bar. Constraints carried from the spike and
-the DGL notes in architecture.md:
+`src/Ui/RackUi.h` is the only DGL-facing class. Its header has no DGL types, so
+main.cpp and the tests never include DGL. It owns the DGL Application and the
+Window, and a single top-level NanoVG widget that draws the whole view model
+and hit-tests it, rather than one widget per control. The MainLoop drives it
+(`idle()` every 16 ms, `refresh()` after each controller tick), and closing
+the window quits, saving by default. `--no-ui` keeps the console-only mode.
+
+Implemented in step 4: toolbar (rack name, unsaved-changes tag, Save), rows
+(input side displayed, not yet editable; slot and plugin names; Editor button;
+mute; fader; stereo meters with peak hold; clip light, click to clear), and
+status bar (audio, xruns, MIDI drops, protocol, save target or the latest
+notice, master meter). Faders move with the drag, not to the click, so a stray
+click on stage changes nothing. Shift gives fine control, double-click resets
+to 0 dB, and the wheel moves 0.5 dB. Fader and meters share one -60..+6 dB
+scale. Step 5 adds editing on the input side, and add, remove and enable.
+
+Constraints carried from the spike and the DGL notes in architecture.md:
 - Construct and destroy NanoVG widgets inside a
   `Window::ScopedGraphicsContext`. Close the window and quit the Application
   before it's destroyed.

@@ -1,0 +1,312 @@
+#include "App/RackController.h"
+
+#include <algorithm>
+#include <cmath>
+
+#include "Session/RackFile.h"
+
+namespace stagehand {
+
+namespace {
+
+SourceProtocol toSourceProtocol(MidiProtocol p) {
+    return p == MidiProtocol::Midi2 ? SourceProtocol::Midi2 : SourceProtocol::Midi1;
+}
+
+} // namespace
+
+RackController::RackController(Session& runningSession, Engine& runningEngine, MidiInput& midiInput,
+                               PluginFactory& pluginFactory, Config appConfig)
+    : session(runningSession), engine(runningEngine), midi(midiInput), factory(pluginFactory),
+      config(std::move(appConfig)) {
+    refreshSources();
+    tick(0.0);
+}
+
+RackController::~RackController() {
+    editors.clear();
+}
+
+// --- periodic ----------------------------------------------------------------------
+
+void RackController::service() {
+    engine.collect();
+    for (const Session::Slot& slot : session.slots())
+        if (slot.plugin) slot.plugin->idle();
+}
+
+void RackController::tick(double now) {
+    session.flush();
+
+    for (auto it = editors.begin(); it != editors.end();)
+        it = it->second->isOpen() ? std::next(it) : editors.erase(it);
+
+    const double dt = lastTick < 0.0 ? 0.0 : std::max(0.0, now - lastTick);
+    lastTick        = now;
+
+    model.rackName = session.rackName();
+    model.modified = session.modified();
+    model.rows.clear();
+    for (const Session::Slot& slot : session.slots()) model.rows.push_back(rowFor(slot, now, dt));
+    // Forget rows that are gone.
+    for (auto it = rows.begin(); it != rows.end();)
+        it = session.slot(it->first) != nullptr ? std::next(it) : rows.erase(it);
+
+    StatusModel& status = model.status;
+    if (config.audioStatus) {
+        const AudioStatus audio = config.audioStatus();
+        status.sampleRate       = audio.sampleRate;
+        status.bufferSize       = audio.bufferSize;
+        status.xruns            = audio.xruns;
+    }
+    const Engine::Stats stats = engine.stats();
+    status.midiDropped  = stats.midiQueueFull + stats.slotEventsFull + stats.unsupportedDialect;
+    status.preference   = config.protocolPreference;
+    status.saveTarget   = config.saveTarget;
+    status.noSaveReason = config.noSaveReason;
+    const LevelMeter::Reading output = engine.outputMeter().take();
+    master.update(output, now, dt);
+    for (std::size_t c = 0; c < LevelMeter::kChannels; ++c) status.outputDb[c] = master.displayDb[c];
+    status.outputClipped = output.clipped;
+}
+
+void RackController::Ballistics::update(const LevelMeter::Reading& reading, double now, double dt) noexcept {
+    for (std::size_t c = 0; c < LevelMeter::kChannels; ++c) {
+        const float peak = reading.peak[c];
+        const float db   = peak > 0.0f ? std::max(kFloorDb, 20.0f * std::log10(peak)) : kFloorDb;
+        displayDb[c]     = std::max(db, std::max(kFloorDb, displayDb[c] - kFallDbPerSec * static_cast<float>(dt)));
+        if (db >= holdDb[c]) {
+            holdDb[c]    = db;
+            holdUntil[c] = now + kPeakHoldSec;
+        } else if (now >= holdUntil[c]) {
+            holdDb[c] = displayDb[c];   // released: falls with the meter
+        }
+    }
+}
+
+RowModel RackController::rowFor(const Session::Slot& slot, double now, double dt) {
+    const RackSlot& saved = slot.saved;
+    RowCache&       cache = rows[saved.id];
+    if (cache.plugin != slot.plugin.get()) {   // new, or re-created: query it once
+        cache        = RowCache{};
+        cache.plugin = slot.plugin.get();
+        if (slot.plugin) {
+            const PortLayout layout = slot.plugin->portLayout();
+            if (saved.notePort < layout.noteInputs.size())
+                cache.dialects = layout.noteInputs[saved.notePort].supportedDialects;
+            cache.hasEditor = slot.plugin->hasEditor();
+        }
+    }
+
+    RowModel row;
+    row.id   = saved.id;
+    row.name = saved.name;
+    if (slot.plugin) {
+        row.pluginName = slot.plugin->descriptor().name;
+        row.vendor     = slot.plugin->descriptor().vendor;
+        row.state      = saved.enabled ? RowState::Running : RowState::Disabled;
+    } else {
+        row.pluginName = saved.plugin.id;
+        row.state      = RowState::Placeholder;
+        row.problem    = slot.loadProblem;
+    }
+    row.hasEditor  = cache.hasEditor;
+    const auto ed  = editors.find(saved.id);
+    row.editorOpen = ed != editors.end() && ed->second->isOpen();
+
+    row.source          = saved.source;
+    row.sourceConnected = slot.sourceProblem.empty();
+    row.sourceLabel     = sourceLabel(saved.source) + (row.sourceConnected ? "" : " (not connected)");
+    row.sourceProtocol  = sourceProtocolOf(saved.source);
+    row.pluginDialects  = cache.dialects;
+    row.protocolWarning = row.sourceProtocol == SourceProtocol::Midi2 && cache.dialects != 0 &&
+                          (cache.dialects & NoteDialect::Midi2) == 0;
+    row.filter          = saved.filter;
+
+    row.gainDb      = saved.gainDb;
+    row.muted       = saved.muted;
+    row.firstOutput = saved.firstOutput;
+
+    if (slot.runtime) {
+        const LevelMeter::Reading reading = slot.runtime->meter.take();
+        cache.meter.update(reading, now, dt);
+        row.clipped = reading.clipped;
+
+        const std::uint32_t events = slot.runtime->midiEvents.load(std::memory_order_relaxed);
+        if (events != cache.lastMidiEvents) {
+            cache.lastMidiEvents  = events;
+            cache.midiActiveUntil = now + kMidiLightSec;
+        }
+        row.midiActive = now < cache.midiActiveUntil;
+    }
+    for (std::size_t c = 0; c < LevelMeter::kChannels; ++c) {
+        row.meterDb[c]    = cache.meter.displayDb[c];
+        row.peakHoldDb[c] = cache.meter.holdDb[c];
+    }
+    return row;
+}
+
+std::vector<std::string> RackController::takeNotices() {
+    return std::exchange(notices, {});
+}
+
+// --- sources -----------------------------------------------------------------------
+
+void RackController::refreshSources() {
+    enumerated = midi.enumerate();
+
+    model.sources.clear();
+    model.sources.push_back(SourceChoice{"All inputs", MidiSourceRef{}, SourceProtocol::Mixed, false});
+    for (const auto& [name, protocol] : config.virtualInputs)
+        model.sources.push_back(SourceChoice{name, MidiSourceRef{MidiSourceRef::Kind::Virtual, name},
+                                             sourceProtocolOf(MidiSourceRef{MidiSourceRef::Kind::Virtual, name}),
+                                             false});
+    // Hardware first: it's what a player picks.
+    std::vector<const MidiSourceInfo*> ordered;
+    for (const MidiSourceInfo& info : enumerated)
+        if (info.isHardware) ordered.push_back(&info);
+    for (const MidiSourceInfo& info : enumerated)
+        if (!info.isHardware) ordered.push_back(&info);
+    for (const MidiSourceInfo* info : ordered) {
+        const MidiSourceRef ref{MidiSourceRef::Kind::Device, info->id};
+        model.sources.push_back(SourceChoice{info->name.empty() ? info->id : info->name, ref,
+                                             sourceProtocolOf(ref), info->isHardware});
+    }
+}
+
+std::string RackController::sourceLabel(const MidiSourceRef& ref) const {
+    switch (ref.kind) {
+        case MidiSourceRef::Kind::All:     return "All inputs";
+        case MidiSourceRef::Kind::Virtual: return ref.name;
+        case MidiSourceRef::Kind::Device:
+            for (const MidiSourceInfo& info : enumerated)
+                if (info.id == ref.name && !info.name.empty()) return info.name;
+            return ref.name;
+    }
+    return ref.name;
+}
+
+SourceProtocol RackController::sourceProtocolOf(const MidiSourceRef& ref) const {
+    // With the preference off, every source arrives as MIDI 1.0 (MidiInput).
+    if (config.protocolPreference == MidiProtocol::Midi1) return SourceProtocol::Midi1;
+    switch (ref.kind) {
+        case MidiSourceRef::Kind::All: return SourceProtocol::Mixed;
+        case MidiSourceRef::Kind::Virtual:
+            for (const auto& [name, protocol] : config.virtualInputs)
+                if (name == ref.name) return toSourceProtocol(protocol);
+            return SourceProtocol::Mixed;
+        case MidiSourceRef::Kind::Device:
+            for (const MidiSourceInfo& info : enumerated)
+                if (info.id == ref.name) return toSourceProtocol(info.protocol);
+            return SourceProtocol::Mixed;
+    }
+    return SourceProtocol::Mixed;
+}
+
+// --- intents -----------------------------------------------------------------------
+
+void RackController::setGainDb(const std::string& id, float db) {
+    session.setGainDb(id, db);
+}
+
+void RackController::setMuted(const std::string& id, bool muted) {
+    session.setMuted(id, muted);
+}
+
+void RackController::setEnabled(const std::string& id, bool enabled) {
+    session.setEnabled(id, enabled);
+}
+
+void RackController::setFilter(const std::string& id, const MidiFilter& filter) {
+    session.setFilter(id, filter);
+}
+
+void RackController::setFirstOutput(const std::string& id, std::uint32_t firstOutput) {
+    session.setFirstOutput(id, firstOutput);
+}
+
+void RackController::setSource(const std::string& id, const MidiSourceRef& source) {
+    std::string problem;
+    if (session.setSource(id, source, problem) && !problem.empty())
+        notice("'" + id + "': " + problem + "; it hears nothing until that's fixed");
+}
+
+void RackController::clearClip(const std::string& id) {
+    if (const Session::Slot* slot = session.slot(id); slot != nullptr && slot->runtime)
+        slot->runtime->meter.clearClip();
+}
+
+void RackController::clearOutputClip() {
+    engine.outputMeter().clearClip();
+}
+
+const std::vector<PluginDescriptor>& RackController::availablePlugins() {
+    if (!scanned) {
+        available = factory.scan();
+        std::sort(available.begin(), available.end(),
+                  [](const PluginDescriptor& a, const PluginDescriptor& b) { return a.name < b.name; });
+        scanned = true;
+    }
+    return available;
+}
+
+std::string RackController::addPlugin(const PluginDescriptor& plugin, std::size_t position) {
+    std::string       problem;
+    const std::string id = session.addSlot(plugin, position, problem);
+    if (id.empty()) notice("Couldn't add " + (plugin.name.empty() ? plugin.id : plugin.name) + ": " + problem);
+    return id;
+}
+
+void RackController::removeSlot(const std::string& id) {
+    closeEditor(id);   // while the plugin is certainly alive
+    session.removeSlot(id);
+}
+
+void RackController::openEditor(const std::string& id) {
+    const Session::Slot* slot = session.slot(id);
+    if (slot == nullptr || !slot->plugin || !config.openEditor) return;
+    if (const auto it = editors.find(id); it != editors.end() && it->second->isOpen()) return;
+    const std::string title = slot->saved.name + " - " + slot->plugin->descriptor().name + " (StageHand)";
+    if (std::unique_ptr<EditorHandle> editor = config.openEditor(*slot->plugin, title))
+        editors[id] = std::move(editor);
+}
+
+void RackController::closeEditor(const std::string& id) {
+    editors.erase(id);
+}
+
+void RackController::closeAllEditors() {
+    editors.clear();
+}
+
+void RackController::openAllEditors() {
+    for (const Session::Slot& slot : session.slots()) openEditor(slot.saved.id);
+}
+
+std::size_t RackController::openEditorCount() const {
+    return static_cast<std::size_t>(std::count_if(editors.begin(), editors.end(),
+                                                  [](const auto& e) { return e.second->isOpen(); }));
+}
+
+// --- saving and quitting -----------------------------------------------------------
+
+bool RackController::save() {
+    if (config.saveTarget.empty()) {
+        notice("Not saved: " + config.noSaveReason);
+        return false;
+    }
+    const RackFileResult result = saveRack(config.saveTarget, session.capture());
+    if (!result.ok) {
+        notice("Couldn't save the rack: " + result.error);
+        return false;
+    }
+    session.markSaved();
+    notice("Saved the rack to " + config.saveTarget);
+    return true;
+}
+
+void RackController::quit() {
+    if (config.quit) config.quit();
+}
+
+} // namespace stagehand

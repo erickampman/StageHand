@@ -18,6 +18,7 @@
 #include "App/EditorWindow.h"
 #include "App/MainLoop.h"
 #include "App/MidiMonitor.h"
+#include "App/RackController.h"
 #include "App/TestTone.h"
 #include "Audio/JackBackend.h"
 #include "Engine/Engine.h"
@@ -25,6 +26,7 @@
 #include "Plugin/Clap/ClapPluginFactory.h"
 #include "Session/RackFile.h"
 #include "Session/Session.h"
+#include "Ui/RackUi.h"
 
 using namespace stagehand;
 
@@ -55,7 +57,10 @@ void printUsage() {
         "  --plugin PATH|ID     or a single plugin: a .clap file, or an id or name from\n"
         "                       --list-plugins (starts from the plugin's defaults)\n"
         "  --plugin-id ID       which plugin, when the .clap file holds several\n"
-        "  --no-editor          don't open the plugins' editor windows\n"
+        "  --open-editors       open every plugin's editor at start (otherwise the rack\n"
+        "                       window's Editor buttons open them)\n"
+        "  --no-ui              no rack window, console only; every editor opens at start\n"
+        "  --no-editor          with --no-ui: don't open the editors either\n"
         "\n"
         "Saving (--play). A --rack is saved back to itself when StageHand quits, with\n"
         "each plugin's current state:\n"
@@ -80,10 +85,11 @@ void printUsage() {
         "  --midi-protocol 1|2  MIDI 2.0 protocol preference (default 2). With 1, every\n"
         "                       source is received as MIDI 1.0\n"
         "\n"
-        "Keys in a plugin editor window:\n"
+        "Keys in the rack window and in plugin editor windows:\n"
         "  Ctrl-Q               quit StageHand (saving, unless --no-save-rack)\n"
         "  Ctrl-Shift-S         save the rack now\n"
-        "  close button         close that editor only; StageHand keeps playing\n"
+        "Closing the rack window quits the same way. Closing an editor window closes\n"
+        "that editor only; StageHand keeps playing.\n"
         "In the terminal, Ctrl-C quits the same way as Ctrl-Q.\n"
         "\n"
         "Examples (audio goes through PipeWire's JACK layer, hence pw-jack):\n"
@@ -102,7 +108,9 @@ struct Options {
     std::string              pluginId;
     std::string              rack;
     std::string              saveRack;
-    bool                     editor      = true;
+    bool                     editor      = true;    // --no-ui: open the editors at start
+    bool                     openEditors = false;   // with the rack window: open them all at start
+    bool                     ui          = true;
     bool                     overwrite   = false;
     bool                     noSaveRack  = false;
     double                   toneHz      = 440.0;
@@ -135,6 +143,10 @@ int parseArguments(int argc, char** argv, Options& options) {
             options.plugin = argv[++i];
         } else if (arg == "--plugin-id" && i + 1 < argc) {
             options.pluginId = argv[++i];
+        } else if (arg == "--open-editors") {
+            options.openEditors = true;
+        } else if (arg == "--no-ui") {
+            options.ui = false;
         } else if (arg == "--no-editor") {
             options.editor = false;
         } else if (arg == "--rack" && i + 1 < argc) {
@@ -193,6 +205,10 @@ std::string dialectNames(NoteDialectMask mask) {
     return text.empty() ? "none" : text;
 }
 
+// Virtual inputs other apps (a MIDI 2.0 test tool, later KeyEDO) connect to.
+const std::vector<std::pair<std::string, MidiProtocol>> kVirtualInputs = {
+    {"MIDI 2.0 In", MidiProtocol::Midi2}, {"MIDI 1.0 In", MidiProtocol::Midi1}};
+
 // Opens the two virtual inputs plus the requested sources and prints where each
 // landed. Registers each with `session` (if given) so rack sources resolve to
 // it. Returns handle -> label.
@@ -202,15 +218,12 @@ std::map<MidiSourceHandle, std::string> openMidiInputs(AlsaSeqInput& input, cons
     std::printf("MIDI protocol preference: %s\n", protocolName(options.preference));
     std::puts("MIDI inputs:");
 
-    // Virtual inputs other apps (a MIDI 2.0 test tool, later KeyEDO) connect to.
-    const std::pair<const char*, MidiProtocol> virtualInputs[] = {
-        {"MIDI 2.0 In", MidiProtocol::Midi2}, {"MIDI 1.0 In", MidiProtocol::Midi1}};
-    for (const auto& [name, protocol] : virtualInputs) {
+    for (const auto& [name, protocol] : kVirtualInputs) {
         const MidiSourceHandle handle = input.openVirtual(name, protocol);
         if (handle == kInvalidMidiSource) continue;
         names[handle] = name;
         if (session) session->addOpenSource(MidiSourceRef{MidiSourceRef::Kind::Virtual, name}, handle);
-        std::printf("  %-30s virtual, %s\n", name, input.describe(handle).c_str());
+        std::printf("  %-30s virtual, %s\n", name.c_str(), input.describe(handle).c_str());
     }
 
     // No --midi: every hardware input, as a live host should (MainStage listens to
@@ -554,35 +567,52 @@ int runPlay(const Options& options) {
     if (const std::uint32_t forced = backend.forcedQuantum(); forced != 0)
         std::printf("Forcing a %u-frame quantum while running (applies at activation).\n", forced);
 
-    // One save routine for Ctrl-Shift-S (editor windows) and exit. Main thread;
-    // plugins are running, so their state is current.
-    auto saveNow = [&]() -> bool {
-        if (saveTarget.empty()) {
-            std::puts(options.noSaveRack ? "Not saved: saving is off (--no-save-rack)."
-                                         : "Not saved: this session has no rack; start it with --save-rack PATH.");
-            std::fflush(stdout);
-            return false;
+    // Editors, saving, and the rack view's model (docs/rack-view.md, section 5).
+    // Until StageHand has its own window, every editor opens at start.
+    RackController* controllerRef = nullptr;   // for the editors' save key
+    RackController::Config config;
+    config.openEditor = [&loop, &controllerRef](HostedPlugin& plugin,
+                                                const std::string& title) -> std::unique_ptr<EditorHandle> {
+        struct Handle final : EditorHandle {
+            std::unique_ptr<EditorWindow> window;
+            bool isOpen() const override { return window->isOpen(); }
+        };
+        auto window = EditorWindow::open(plugin, loop, title, [&controllerRef] {
+            if (controllerRef != nullptr) controllerRef->save();
+        });
+        if (!window) return nullptr;
+        auto handle    = std::make_unique<Handle>();
+        handle->window = std::move(window);
+        return handle;
+    };
+    config.audioStatus = [&backend] {
+        return RackController::AudioStatus{backend.config().sampleRate, backend.config().bufferSize,
+                                           backend.xrunCount()};
+    };
+    config.quit               = [&loop] { loop.requestQuit(); };
+    config.virtualInputs      = kVirtualInputs;
+    config.protocolPreference = options.preference;
+    config.saveTarget         = saveTarget;
+    config.noSaveReason       = options.noSaveRack ? "saving is off (--no-save-rack)"
+                                                   : "this session has no rack; start it with --save-rack PATH";
+    RackController controller(session, *engine, *input, factory, std::move(config));
+    controllerRef = &controller;
+    std::unique_ptr<RackUi>* uiRef = nullptr;   // set once the window exists
+    auto printNotices = [&controller, &uiRef] {
+        for (const std::string& text : controller.takeNotices()) {
+            std::puts(text.c_str());
+            if (uiRef != nullptr && *uiRef) (*uiRef)->showNotice(text);
         }
-        const RackFileResult saved = saveRack(saveTarget, session.capture());
-        if (saved.ok) {
-            session.markSaved();
-            std::printf("Saved the rack to %s\n", saveTarget.c_str());
-        } else
-            std::fprintf(stderr, "Couldn't save the rack: %s\n", saved.error.c_str());
         std::fflush(stdout);
-        return saved.ok;
     };
 
-    // Editors open after audio starts, so they show the running plugins.
-    std::vector<std::unique_ptr<EditorWindow>> editors;
-    if (options.editor)
-        for (const Session::Slot& slot : session.slots())
-            if (slot.plugin)
-                if (auto editor = EditorWindow::open(*slot.plugin, loop,
-                                                     slot.saved.name + " - " + slot.plugin->descriptor().name +
-                                                         " (StageHand)",
-                                                     [&saveNow] { saveNow(); }))
-                    editors.push_back(std::move(editor));
+    // The rack window, unless --no-ui (or there's no display).
+    std::unique_ptr<RackUi> ui = options.ui ? RackUi::open(controller) : nullptr;
+    uiRef                      = &ui;
+
+    // Editors open after audio starts, so they show the running plugins. With
+    // the rack window they open on request; without it, at start.
+    if (ui ? options.openEditors : options.editor) controller.openAllEditors();
 
     if (!saveTarget.empty())
         std::printf("Saves to %s on exit; Ctrl-Shift-S in an editor window saves now (--no-save-rack: off).\n",
@@ -591,21 +621,20 @@ int runPlay(const Options& options) {
         std::puts("Not saving (--no-save-rack).");
     else
         std::puts("Not saving: this session has no rack. Add --save-rack PATH to keep it.");
-    std::printf("Playing %s. Send MIDI to an input above. Ctrl-Q in an editor window, or Ctrl-C here, stops.\n",
-                session.rackName().c_str());
+    std::printf("Playing %s. Send MIDI to an input above. Ctrl-Q in %s, or Ctrl-C here, stops.\n",
+                session.rackName().c_str(), ui ? "StageHand's windows" : "an editor window");
     std::fflush(stdout);
 
-    // Housekeeping on the main loop (engine collect, plugin requests, reporting).
+    // Housekeeping on the main loop: the controller's service and tick, plus the
+    // console reporting that stands in for a UI.
     Engine::Stats lastStats;
     std::uint64_t lastXruns       = 0;
     std::uint64_t lastMidiCount   = 0;
     std::uint32_t lastBuffer      = negotiated.bufferSize;
     bool          restartReported = false;
-    std::size_t   openEditors     = editors.size();
+    std::size_t   openEditors     = controller.openEditorCount();
     loop.addTimer(5, [&] {
-        engine->collect();
-        for (const Session::Slot& slot : session.slots())
-            if (slot.plugin) slot.plugin->idle();
+        controller.service();
         reportStats(engine->stats(), lastStats);
         if (const std::uint64_t x = backend.xrunCount(); x != lastXruns) {
             std::printf("xruns: %llu\n", static_cast<unsigned long long>(x));
@@ -619,22 +648,32 @@ int runPlay(const Options& options) {
             std::puts("The plugin asked for a restart; not supported yet (reload StageHand).");
             restartReported = true;
         }
-        std::size_t stillOpen = 0;
-        for (const auto& editor : editors) stillOpen += editor->isOpen() ? 1 : 0;
-        if (stillOpen < openEditors) {
-            std::puts("Editor closed; still playing. Ctrl-C to quit.");
-            openEditors = stillOpen;
-        }
         if (backend.serverShutDown()) loop.requestQuit();
         std::fflush(stdout);
     });
+    const auto started = std::chrono::steady_clock::now();
+    loop.addTimer(33, [&] {
+        controller.tick(std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count());
+        printNotices();
+        if (ui) ui->refresh();
+        const std::size_t stillOpen = controller.openEditorCount();
+        if (stillOpen < openEditors && !ui) {   // with the window, it's plain to see
+            std::puts("Editor closed; still playing. Ctrl-C to quit.");
+            std::fflush(stdout);
+        }
+        openEditors = stillOpen;
+    });
+    if (ui)
+        loop.addTimer(16, [&] {   // the rack window's events
+            ui->idle();
+            if (ui->closed()) loop.requestQuit();   // closing it quits, like Ctrl-Q
+        });
     loop.addTimer(500, [&] {   // twice a second: level and MIDI activity
         const std::uint64_t midi = engine->stats().midiReceived;
-        const LevelMeter::Reading level = engine->outputMeter().take();
-        const float               peak  = std::max(level.peak[0], level.peak[1]);
-        if (peak > 0.0f || midi != lastMidiCount)
-            std::printf("output peak %6.1f dBFS   MIDI received %llu\n",
-                        peak > 0.0f ? 20.0 * std::log10(peak) : -INFINITY,
+        const StatusModel&  status = controller.view().status;
+        const float         db     = std::max(status.outputDb[0], status.outputDb[1]);
+        if (db > -60.0f || midi != lastMidiCount)
+            std::printf("output %6.1f dBFS   MIDI received %llu\n", static_cast<double>(db),
                         static_cast<unsigned long long>(midi));
         lastMidiCount = midi;
     });
@@ -645,13 +684,16 @@ int runPlay(const Options& options) {
     activeLoop.store(nullptr);
     if (backend.serverShutDown()) std::fprintf(stderr, "JACK server shut down\n");
 
-    // Shutdown (Engine.h): close editors while the plugins are fully alive; save
+    // Shutdown (Engine.h): close the rack window, then the editors while the
+    // plugins are fully alive; save
     // (plugins still running, so their state is current) unless saving is off;
     // stop MIDI; run nothing so the audio thread stops the plugins; stop audio.
     // The plugins are deactivated and destroyed on this thread when the session
     // goes.
-    editors.clear();
-    const int exitCode = (!saveTarget.empty() && !saveNow()) ? 1 : 0;
+    ui.reset();
+    controller.closeAllEditors();
+    const int exitCode = (!saveTarget.empty() && !controller.save()) ? 1 : 0;
+    printNotices();
     input.reset();
     host.onStateChanged = nullptr;   // plugins may outlive `session` (in the engine's graphs)
     session.unload();

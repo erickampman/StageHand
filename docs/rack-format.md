@@ -19,8 +19,8 @@ UI, rack files are also meant to be readable and hand-editable.
 
 **Saving (default on):**
 - A `--rack` is saved back to itself when StageHand quits, with each plugin's
-  current state. **Ctrl-Shift-S** in any editor window saves right away, without
-  quitting.
+  current state. **Ctrl-Shift-S** (or **Save**) in the rack window, or
+  Ctrl-Shift-S in any editor window, saves right away without quitting.
 - `--no-save-rack` turns saving off entirely, e.g. for a gig where accidental
   tweaks shouldn't stick.
 - `--save-rack PATH` saves somewhere else instead ("save as"). It's also the only

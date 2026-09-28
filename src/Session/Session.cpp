@@ -51,6 +51,7 @@ bool Session::load(const Rack& rack, double rate, LoadReport& report) {
             plugin.reset();
         }
         if (!plugin) {
+            slot.loadProblem = problem;
             report.warnings.push_back(where + problem + "; kept as a placeholder (not running)");
             next.push_back(std::move(slot));
             continue;
