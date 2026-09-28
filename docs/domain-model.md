@@ -255,6 +255,44 @@ as an ALSA seq **UMP MIDI 2.0** client and sends MT `0x4` note-ons carrying pitc
 MIDI2) gets them untouched. A MIDI 1.0 keyboard can't exercise the attribute
 path; it has no attribute to send.
 
+## Sequences (data model, draft)
+
+A sequence is a MIDI source the rack owns (rack-format.md, "Reserved:
+sequences"). Its UI is the sources dock plus an editor window
+(architecture.md, "Sequencer UI"). Decided 2026-09-28:
+
+- **A sequence has a protocol, like every source**, chosen when it's created. A
+  MIDI 1.0 / 2.0 toggle sits to the left of the sequence canvas in the editor.
+  Changing it later is an explicit conversion. Going from 2.0 to 1.0 is lossy
+  and needs a rule for EDO steps that don't land on a note.
+- **Notes are stored in the form the protocol sends.**
+  - **MIDI 1.0:** each note stores a note number (0–127) and a 7-bit velocity.
+    The grid has one row per note number. For a plugin that does its own
+    keyboard-mapped tuning (a Scala `.kbm`, for example), the editor can label
+    rows as EDO steps. That labeling is display only.
+  - **MIDI 2.0:** each note stores an EDO step and a 16-bit velocity. The
+    tuning (EDO size and reference pitch) belongs to the sequence, so changing
+    the tuning doesn't rewrite the notes, and two sequences can play in
+    different EDOs at once. Playback sends MT `0x4` note-ons with the pitch 7.9
+    attribute.
+- **Delivery needs nothing new.** The engine treats a sequence like a device of
+  the same protocol and applies the per-plugin delivery policy above. A MIDI 2.0
+  sequence driving a MIDI 1.0 plugin loses pitch 7.9 on downconversion. The row
+  could warn when that happens.
+- **Note-number assignment for MIDI 2.0 (EDO) notes: nearest free.** With a
+  pitch attribute, the note number is the note's *identity*: note-off matching,
+  per-note controllers and per-note pitch bend, and the host's held-note table
+  all key on it. For EDOs above 12, several steps round to the same 12-TET note.
+  If they sound together, they would collide: the second note-on would retrigger
+  the first note's voice, and either note-off would end both. So each note-on
+  gets the nearest note number (to the step's 12-TET pitch) not already sounding
+  in that sequence and channel, and keeps it until its note-off. That's done at
+  playback, on the audio thread, with a fixed-size table. A plugin that ignores
+  the attribute is off by at most a semitone or two in dense chords. Rejected:
+  note number = step index (a plugin that ignores the attribute plays wildly
+  wrong pitches, and it covers only ~4 octaves of 31-EDO), and spreading
+  collisions across channels (it fights the row's channel filter).
+
 ## Parameter changes & automation timing
 
 Core realization: **a parameter change is just another timed event in the same

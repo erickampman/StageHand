@@ -453,9 +453,23 @@ plus two system libraries (ALSA, JACK-API) that are already on the machine.
   macOS, dropped foreign-X11 embedding), JUCE (weight, licensing), wxWidgets
   (GTK underneath), web UIs (weight). To be decided at the UI milestone.
 - **Sequencer UI** — a later goal. Sequences are sources in the Rack model
-  (docs/rack-format.md, "Reserved: sequences"): created from something like a
-  bottom side-bar, possibly shown as minimized rows. The graph/routing model
-  already leaves room.
+  (docs/rack-format.md, "Reserved: sequences"). The graph/routing model already
+  leaves room. Layout decisions (2026-09-28):
+  - **Rack rows are plugin instances, nothing else.** Each row has three parts.
+    The input side holds sources, the filter (MIDI version, channel, group,
+    key range, …) and MIDI effects. The middle holds the plugin, its editor
+    button and, later, a few exposed parameters. The output side holds level,
+    meter, sends and insert effects. Sequences are not rack rows.
+  - **Placement rule:** anything that belongs to one row lives in that row.
+    Anything that can feed several rows is a source.
+  - **Sources dock** at the bottom of the main window. One row holds hardware
+    inputs. One or more rows hold sequences, each with its own transport
+    controls (MIDI-mappable). A plugin row connects to a source through its input
+    side, by picking it or by dragging the source onto the row.
+  - **The sequence editor is its own window**, like plugin editors. It's a grid
+    with one row per note (one per EDO step for EDO sequences) that is too tall
+    for a dock pane. The sequence data model (MIDI 1.0 and MIDI 2.0 / pitch 7.9
+    EDO sequences) is still open.
 - **VST3 hosting** — after CLAP works end to end.
 - **Cross-platform (macOS)** — design the seams for it, don't build it yet.
 

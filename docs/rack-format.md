@@ -164,10 +164,9 @@ Sequences aren't designed yet, but the format leaves room for them:
   slots.
 - A slot selects one as its input with `"source": "sequence:<id>"`, just as it
   selects a device.
-- That separation is a data-model choice, not a UI choice. A sequence can still
-  be *shown* as a minimized row in the rack (as proposed) or live only in a
-  bottom side-bar, with slots showing it as their input. Either presentation
-  reads the same file.
+- That separation is a data-model choice. The UI matches it: sequences live in
+  a sources dock below the rack, not as rack rows, and slots show them as
+  their input (architecture.md, "Sequencer UI").
 
 ## Versioning
 
