@@ -457,7 +457,9 @@ take the non-RT `params.flush` path instead.
   → CLAP note expressions / MPE channel rotation). Deferred.
 - Rack switch while notes are held: sustain on the old Rack (MainStage-style) or
   all-notes-off. The held-note table supports either; policy TBD.
-- Host gain smoothing (required before any live gain control ships). Slot gain
+- ~~Host gain smoothing~~ Resolved in docs/rack-view.md, sections 2 and 3:
+  gain moves to a per-slot SlotRuntime shared across graphs, with a fixed 10 ms
+  linear ramp on the audio thread. Original note: slot gain
   is applied as a per-block constant, so every committed change is a step at a
   block boundary. Dragging a gain knob in the DGL spike (2026-09-28) produced
   audible zipper noise. A faster UI commit rate only shrinks the steps; it does

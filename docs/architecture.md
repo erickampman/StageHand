@@ -451,7 +451,9 @@ plus two system libraries (ALSA, JACK-API) that are already on the machine.
   UI, can run on pugl + OpenGL; developer-tool look unless styled, shares
   nothing with PMU). **Ruled out:** Qt (user decision), GTK 4 (heavy, weak on
   macOS, dropped foreign-X11 embedding), JUCE (weight, licensing), wxWidgets
-  (GTK underneath), web UIs (weight). To be decided at the UI milestone.
+  (GTK underneath), web UIs (weight). **Decided 2026-09-28: DGL** (the spike
+  ran a DGL window next to PMU's editor on StageHand's MainLoop, both
+  responsive, with 0 xruns). The v1 rack view design is in docs/rack-view.md.
 - **Sequencer UI** — a later goal. Sequences are sources in the Rack model
   (docs/rack-format.md, "Reserved: sequences"). The graph/routing model already
   leaves room. Layout decisions (2026-09-28):
