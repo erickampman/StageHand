@@ -101,6 +101,13 @@ std::unique_ptr<ClapPlugin> ClapPlugin::create(std::shared_ptr<ClapModule> loade
     }
 
     const clap_plugin_t* p = instance->plugin;
+    // Name, vendor and version come from the plugin itself: the descriptor we
+    // were given may carry only format, id and path (e.g. from a rack file).
+    if (const clap_plugin_descriptor_t* d = p->desc) {
+        if (d->name != nullptr) instance->desc.name = d->name;
+        if (d->vendor != nullptr) instance->desc.vendor = d->vendor;
+        if (d->version != nullptr) instance->desc.version = d->version;
+    }
     instance->audioPortsExt = static_cast<const clap_plugin_audio_ports_t*>(p->get_extension(p, CLAP_EXT_AUDIO_PORTS));
     instance->notePortsExt  = static_cast<const clap_plugin_note_ports_t*>(p->get_extension(p, CLAP_EXT_NOTE_PORTS));
     instance->paramsExt     = static_cast<const clap_plugin_params_t*>(p->get_extension(p, CLAP_EXT_PARAMS));

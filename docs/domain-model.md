@@ -419,3 +419,14 @@ take the non-RT `params.flush` path instead.
   → CLAP note expressions / MPE channel rotation). Deferred.
 - Rack switch while notes are held: sustain on the old Rack (MainStage-style) or
   all-notes-off. The held-note table supports either; policy TBD.
+- Host gain smoothing (required before any live gain control ships). Slot gain
+  is applied as a per-block constant, so every committed change is a step at a
+  block boundary. Dragging a gain knob in the DGL spike (2026-09-28) produced
+  audible zipper noise. A faster UI commit rate only shrinks the steps; it does
+  not remove them. Any host gain that changes while sound plays needs a per-sample
+  ramp on the audio thread (~5–20 ms toward the target). That covers pedal/CC
+  mappings (7-bit MIDI 1.0 pedals give 128 steps), slot faders, mute/unmute and
+  crossfades on rack switches. Leaning: the engine keeps an RT-owned current gain
+  per slot, keyed by plugin like the held-note table, so it survives graph
+  adoption. `SlotConfig::gain` becomes the target. Build it with the first live
+  gain control, not separately.
