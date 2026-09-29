@@ -16,6 +16,7 @@ public:
     struct Call {
         std::uint32_t      frames   = 0;
         std::int64_t       position = 0;
+        TimeInfo           time;
         std::vector<Event> events;
     };
 
@@ -55,6 +56,7 @@ public:
         Call call;
         call.frames   = ctx.frameCount;
         call.position = ctx.time.samplePosition;
+        call.time     = ctx.time;
         call.events.assign(ctx.eventsIn.events, ctx.eventsIn.events + ctx.eventsIn.count);
         calls.push_back(call);   // allocates: fine in a test
         for (std::uint32_t c = 0; c < ctx.audioOut.channelCount; ++c)

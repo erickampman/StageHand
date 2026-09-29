@@ -133,6 +133,29 @@ Engine::Stats Engine::stats() const noexcept {
     return s;
 }
 
+void Engine::setTempo(double bpm) noexcept {
+    tempo.store(std::clamp(bpm, kMinTempo, kMaxTempo), std::memory_order_relaxed);
+}
+
+void Engine::setTimeSignature(int numerator, int denominator) noexcept {
+    const bool powerOfTwo = denominator > 0 && (denominator & (denominator - 1)) == 0;
+    if (numerator < 1 || numerator > 32 || !powerOfTwo || denominator > 32) return;
+    signature.store((static_cast<std::uint32_t>(numerator) << 16) | static_cast<std::uint32_t>(denominator),
+                    std::memory_order_relaxed);
+}
+
+Engine::Transport Engine::transport() const noexcept {
+    Transport t;
+    t.tempoBpm         = tempo.load(std::memory_order_relaxed);
+    const auto sig     = signature.load(std::memory_order_relaxed);
+    t.numerator        = static_cast<int>(sig >> 16);
+    t.denominator      = static_cast<int>(sig & 0xFFFF);
+    t.beatPosition     = publishedBeat.load(std::memory_order_relaxed);
+    t.barStartBeats    = publishedBarStart.load(std::memory_order_relaxed);
+    t.barNumber        = publishedBar.load(std::memory_order_relaxed);
+    return t;
+}
+
 // --- MIDI thread -----------------------------------------------------------------
 
 void Engine::onMidi(MidiSourceHandle source, const TimedMidiMessage& msg) noexcept {
@@ -146,8 +169,50 @@ void Engine::onMidi(MidiSourceHandle source, const TimedMidiMessage& msg) noexce
 
 void Engine::process(const AudioCallbackContext& ctx) noexcept {
     adoptPendingGraph();
+    advanceTransport(ctx);
     gatherMidi(ctx);
     runSlots(ctx);
+
+    clock.beat += static_cast<double>(ctx.frameCount) * clock.beatsPerFrame;
+    const TimeInfo now = timeAt(ctx, 0);   // the next block's start (the clock has moved)
+    publishedBeat.store(now.beatPosition, std::memory_order_relaxed);
+    publishedBarStart.store(now.barStartBeats, std::memory_order_relaxed);
+    publishedBar.store(now.barNumber, std::memory_order_relaxed);
+}
+
+// Read this block's tempo and signature. A new signature starts at the current
+// bar's start (under the old one), so bars stay contiguous.
+void Engine::advanceTransport(const AudioCallbackContext& ctx) noexcept {
+    clock.tempoBpm      = tempo.load(std::memory_order_relaxed);
+    clock.beatsPerFrame = ctx.time.sampleRate > 0.0 ? clock.tempoBpm / 60.0 / ctx.time.sampleRate : 0.0;
+
+    const auto sig         = signature.load(std::memory_order_relaxed);
+    const int  numerator   = static_cast<int>(sig >> 16);
+    const int  denominator = static_cast<int>(sig & 0xFFFF);
+    if (numerator == clock.numerator && denominator == clock.denominator) return;
+    const TimeInfo now  = timeAt(ctx, 0);
+    clock.barAnchorBeat = now.barStartBeats;
+    clock.barAnchor     = now.barNumber;
+    clock.numerator     = numerator;
+    clock.denominator   = denominator;
+}
+
+// The transport as of `frame` frames into this block.
+TimeInfo Engine::timeAt(const AudioCallbackContext& ctx, std::uint32_t frame) const noexcept {
+    TimeInfo t            = ctx.time;
+    t.samplePosition     += frame;
+    t.tempoBpm            = clock.tempoBpm;
+    t.timeSigNumerator    = clock.numerator;
+    t.timeSigDenominator  = clock.denominator;
+    t.playing             = true;   // free-running
+    t.beatPosition        = clock.beat + static_cast<double>(frame) * clock.beatsPerFrame;
+    const double barBeats = clock.numerator * 4.0 / clock.denominator;
+    // A hair of tolerance, so a position exactly on a bar line isn't read as the
+    // end of the previous bar after rounding.
+    const double bars = std::floor((t.beatPosition - clock.barAnchorBeat) / barBeats + 1e-9);
+    t.barStartBeats   = clock.barAnchorBeat + bars * barBeats;
+    t.barNumber       = clock.barAnchor + static_cast<std::int32_t>(bars);
+    return t;
 }
 
 void Engine::adoptPendingGraph() noexcept {
@@ -365,8 +430,7 @@ void Engine::runSlots(const AudioCallbackContext& ctx) noexcept {
 
                 ProcessContext pc;
                 pc.frameCount           = chunk;
-                pc.time                 = ctx.time;
-                pc.time.samplePosition += chunkStart;
+                pc.time                 = timeAt(ctx, chunkStart);
                 pc.audioOut             = AudioBuffer{state.channels.data(), state.audioChannels, chunk};
                 pc.eventsIn             = EventBlock{state.events.data() + first, state.cursor - first};
                 config.plugin->process(pc);

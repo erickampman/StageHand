@@ -80,6 +80,11 @@ public:
     void setFilter(const std::string& id, const MidiFilter& filter);
     void setSource(const std::string& id, const MidiSourceRef& source);
     void setFirstOutput(const std::string& id, std::uint32_t firstOutput);
+    void setTempo(double bpm);
+    void setTimeSignature(int numerator, int denominator);
+    // Tap tempo: the average of the last four intervals. A gap of more than 2 s
+    // starts over. `nowSeconds` is any steady clock.
+    void tapTempo(double nowSeconds);
     void clearClip(const std::string& id);
     void clearOutputClip();
 
@@ -145,6 +150,7 @@ private:
     Ballistics                                            master;
     std::vector<MidiSourceInfo>                           enumerated;
     std::vector<PluginDescriptor>                         available;
+    std::vector<double>                                   taps;      // tap-tempo times
     bool                                                  scanned  = false;
     double                                                lastTick = -1.0;
     std::vector<std::string>                              notices;

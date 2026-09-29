@@ -2,6 +2,7 @@
 // behind), block splitting, routing through filters and dialects, output mixing,
 // and the commit / adopt / retire lifecycle. No JACK, ALSA or real plugins.
 
+#include <cmath>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -359,6 +360,68 @@ void testSlotMeters() {
     CHECK(!b.runtime->meter.take().clipped);
 }
 
+// The free-running beat clock: what plugins see, block by block and chunk by
+// chunk, through tempo and time-signature changes.
+void testTransport() {
+    auto engine = std::make_unique<Engine>();
+    auto plugin = std::make_shared<FakePlugin>();
+    engine->commit(graphOf({slotFor(plugin)}));
+
+    // 120 BPM at 48 kHz: 2 beats a second, so 480 frames = 0.02 beats.
+    for (int i = 0; i < 3; ++i) {
+        Block block(480, 48000.0, T);
+        engine->process(block.ctx);
+    }
+    CHECK(plugin->calls.size() == 3);
+    const TimeInfo& third = plugin->calls[2].time;
+    CHECK(third.playing && third.tempoBpm == 120.0 && third.timeSigNumerator == 4);
+    CHECK(std::fabs(third.beatPosition - 0.04) < 1e-9);
+    CHECK(std::fabs(engine->transport().beatPosition - 0.06) < 1e-9);
+
+    // A split block: each chunk starts where it starts. 48000 frames = 2 beats,
+    // in chunks of 8192 frames (0.341333 beats each).
+    plugin->calls.clear();
+    Block big(48000, 48000.0, T);
+    engine->process(big.ctx);
+    CHECK(plugin->calls.size() == 6);
+    if (plugin->calls.size() == 6) {
+        CHECK(std::fabs(plugin->calls[0].time.beatPosition - 0.06) < 1e-9);
+        CHECK(std::fabs(plugin->calls[1].time.beatPosition - (0.06 + 8192.0 / 24000.0)) < 1e-9);
+        CHECK(plugin->calls[1].time.samplePosition == 8192);
+    }
+    CHECK(std::fabs(engine->transport().beatPosition - 2.06) < 1e-9);
+
+    // 60 BPM from the next block: 48000 frames = 1 beat. Bars of 4 beats.
+    engine->setTempo(60.0);
+    plugin->calls.clear();
+    for (int i = 0; i < 3; ++i) {   // to beat 5.06: bar 1, which started at 4
+        Block block(48000, 48000.0, T);
+        engine->process(block.ctx);
+    }
+    Engine::Transport now = engine->transport();
+    CHECK(now.tempoBpm == 60.0 && std::fabs(now.beatPosition - 5.06) < 1e-9);
+    CHECK(now.barNumber == 1 && now.barStartBeats == 4.0);
+
+    // 3/4 from bar 1's start (beat 4): bar 2 begins at beat 7, not 8.
+    engine->setTimeSignature(3, 4);
+    for (int i = 0; i < 2; ++i) {   // to beat 7.06
+        Block block(48000, 48000.0, T);
+        engine->process(block.ctx);
+    }
+    now = engine->transport();
+    CHECK(now.numerator == 3 && now.barNumber == 2 && std::fabs(now.barStartBeats - 7.0) < 1e-9);
+
+    // 6/8: bars of 3 quarter-note beats. Invalid signatures and tempos are
+    // refused or clamped.
+    engine->setTimeSignature(6, 8);
+    engine->setTimeSignature(5, 6);    // not a power of two: ignored
+    engine->setTimeSignature(0, 4);    // ignored
+    engine->setTempo(1000.0);          // clamped
+    now = engine->transport();
+    CHECK(now.numerator == 6 && now.denominator == 8 && now.tempoBpm == Engine::kMaxTempo);
+    engine->collect();
+}
+
 void testGraphLifecycle() {
     auto engine = std::make_unique<Engine>();
     auto first  = std::make_shared<FakePlugin>();
@@ -415,6 +478,7 @@ int main() {
     testMixing();
     testGainRamp();
     testSlotMeters();
+    testTransport();
     testGraphLifecycle();
     return test::finish("Engine");
 }

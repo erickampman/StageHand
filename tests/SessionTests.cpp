@@ -233,6 +233,36 @@ void testStructuralEdits() {
     engine->collect();
 }
 
+void testTransport() {
+    FakeFactory   factory;
+    FakeMidiInput midi;
+    NullHost      host;
+    auto          engine = std::make_unique<Engine>();
+    Session       session(factory, host, midi, *engine);
+
+    Rack rack;
+    rack.tempoBpm           = 90.0;
+    rack.timeSigNumerator   = 6;
+    rack.timeSigDenominator = 8;
+    Session::LoadReport report;
+    session.load(rack, 48000.0, report);
+    CHECK(!session.modified());
+    CHECK(engine->transport().tempoBpm == 90.0 && engine->transport().numerator == 6);
+
+    session.setTempo(133.3);
+    CHECK(session.modified() && engine->transport().tempoBpm == 133.3);
+    CHECK(!session.setTimeSignature(3, 5));   // refused; unchanged
+    CHECK(session.setTimeSignature(3, 4) && engine->transport().numerator == 3);
+    session.setTempo(5.0);                    // clamped
+    CHECK(session.tempoBpm() == Engine::kMinTempo);
+
+    const Rack captured = session.capture();
+    CHECK(captured.tempoBpm == Engine::kMinTempo && captured.timeSigNumerator == 3 && captured.timeSigDenominator == 4);
+    session.unload();
+    runBlock(*engine);
+    engine->collect();
+}
+
 void testAddRemove() {
     FakeFactory factory;
     factory.installed = {installedPlugin("synth", "/clap/Synth.clap")};
@@ -281,5 +311,6 @@ int main() {
     testLiveEdits();
     testStructuralEdits();
     testAddRemove();
+    testTransport();
     return test::finish("Session");
 }

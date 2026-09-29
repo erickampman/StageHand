@@ -46,6 +46,17 @@ void RackController::tick(double now) {
 
     model.rackName = session.rackName();
     model.modified = session.modified();
+
+    TransportModel&         transport = model.transport;
+    const Engine::Transport clock     = engine.transport();
+    transport.tempoBpm     = session.tempoBpm();
+    transport.numerator    = session.timeSigNumerator();
+    transport.denominator  = session.timeSigDenominator();
+    transport.beatPosition = clock.beatPosition;
+    transport.beatsInBar   = static_cast<int>(std::ceil(transport.numerator * 4.0 / transport.denominator - 1e-9));
+    transport.beatInBar    = std::clamp(static_cast<int>(std::floor(clock.beatPosition - clock.barStartBeats)), 0,
+                                        std::max(0, transport.beatsInBar - 1));
+    transport.onBeat       = clock.beatPosition - std::floor(clock.beatPosition) < 0.15;
     model.rows.clear();
     for (const Session::Slot& slot : session.slots()) model.rows.push_back(rowFor(slot, now, dt));
     // Forget rows that are gone.
@@ -240,6 +251,26 @@ void RackController::setSource(const std::string& id, const MidiSourceRef& sourc
     std::string problem;
     if (session.setSource(id, source, problem) && !problem.empty())
         notice("'" + id + "': " + problem + "; it hears nothing until that's fixed");
+}
+
+void RackController::setTempo(double bpm) {
+    session.setTempo(std::round(bpm * 10.0) / 10.0);
+    model.transport.tempoBpm = session.tempoBpm();
+}
+
+void RackController::setTimeSignature(int numerator, int denominator) {
+    if (!session.setTimeSignature(numerator, denominator)) return;
+    model.transport.numerator   = numerator;
+    model.transport.denominator = denominator;
+}
+
+void RackController::tapTempo(double now) {
+    if (!taps.empty() && now - taps.back() > 2.0) taps.clear();   // a new count
+    taps.push_back(now);
+    if (taps.size() > 5) taps.erase(taps.begin());                // four intervals
+    if (taps.size() < 2) return;
+    const double interval = (taps.back() - taps.front()) / static_cast<double>(taps.size() - 1);
+    if (interval > 0.0) setTempo(60.0 / interval);
 }
 
 void RackController::clearClip(const std::string& id) {

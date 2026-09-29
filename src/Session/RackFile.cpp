@@ -246,7 +246,18 @@ RackFileResult loadRack(const std::string& bundlePath, Rack& rack) {
 
         std::string stem = bundle.filename().string();
         if (stem.size() > 5 && stem.compare(stem.size() - 5, 5, ".rack") == 0) stem.resize(stem.size() - 5);
-        loaded.name = doc.value("name", stem);
+        loaded.name     = doc.value("name", stem);
+        loaded.tempoBpm = doc.value("tempo", 120.0);
+        if (loaded.tempoBpm < 20.0 || loaded.tempoBpm > 400.0) fail("tempo must be within 20-400 BPM");
+        if (doc.contains("timeSignature")) {
+            const Json& sig = doc.at("timeSignature");
+            if (!sig.is_array() || sig.size() != 2) fail("timeSignature must be [numerator, denominator]");
+            const int n = sig[0].get<int>(), d = sig[1].get<int>();
+            if (n < 1 || n > 32 || d < 1 || d > 32 || (d & (d - 1)) != 0)
+                fail("timeSignature must be 1-32 over 1, 2, 4, 8, 16 or 32");
+            loaded.timeSigNumerator   = n;
+            loaded.timeSigDenominator = d;
+        }
 
         std::set<std::string> ids;
         std::size_t           index = 0;
@@ -282,7 +293,9 @@ RackFileResult saveRack(const std::string& bundlePath, const Rack& rack) {
         Json doc;
         doc["format"]  = kFormatName;
         doc["version"] = kFormatVersion;
-        doc["name"]    = rack.name;
+        doc["name"]          = rack.name;
+        doc["tempo"]         = rack.tempoBpm;
+        doc["timeSignature"] = Json::array({rack.timeSigNumerator, rack.timeSigDenominator});
         Json slots     = Json::array();
         std::set<std::string> ids;
         for (const RackSlot& slot : rack.slots) {

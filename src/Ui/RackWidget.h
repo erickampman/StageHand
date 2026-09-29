@@ -89,6 +89,7 @@ private:
 
     // --- parts
     void drawToolbar();
+    void drawTransport(float x);
     void drawRow(const RowModel& row, std::size_t index);
     void drawRowInput(const RowModel& row, float y);
     void drawRowPlugin(const RowModel& row, float y);
@@ -122,6 +123,8 @@ private:
     float         scrollY = 0;
     std::string   lastFaderId;        // double-click on a fader
     std::uint32_t lastFaderTime = 0;
+    std::uint32_t lastTempoTime = 0;  // double-click on the tempo...
+    bool          tempoClicked  = false;   // ...once there's been a first click
     std::string   notice;
     double        noticeUntil = 0;
 };

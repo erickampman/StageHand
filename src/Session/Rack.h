@@ -49,6 +49,9 @@ struct RackSlot {
 // not something that makes sound.
 struct Rack {
     std::string           name;
+    double                tempoBpm           = 120.0;   // the host tempo (docs/sequences.md, section 1)
+    int                   timeSigNumerator   = 4;
+    int                   timeSigDenominator = 4;
     std::vector<RackSlot> slots;
 };
 

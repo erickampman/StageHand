@@ -66,6 +66,8 @@ rack or the new one intact, never a mix.
   "format": "stagehand-rack",
   "version": 1,
   "name": "Split: bass + pad",
+  "tempo": 120.0,
+  "timeSignature": [4, 4],
   "slots": [
     {
       "id": "bass",
@@ -112,6 +114,8 @@ get a **layer**.
 | `format` | yes | Always `"stagehand-rack"` |
 | `version` | yes | Format version. A newer version is refused, not guessed at |
 | `name` | no | Display name; defaults to the bundle's name |
+| `tempo` | no | The host tempo in BPM (quarter notes), 20-400; default 120. Plugins get it through CLAP's transport, and sequences follow it |
+| `timeSignature` | no | `[numerator, denominator]`: 1-32 over 1, 2, 4, 8, 16 or 32; default `[4, 4]` |
 | `slots` | yes | Plugin slots, in order |
 | `sequences` | reserved | See "Reserved: sequences" |
 

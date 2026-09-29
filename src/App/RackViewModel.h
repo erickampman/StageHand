@@ -76,9 +76,21 @@ struct StatusModel {
     bool          outputClipped = false;
 };
 
+// The host transport (docs/sequences.md, section 1). Beats are quarter notes.
+struct TransportModel {
+    double tempoBpm     = 120.0;
+    int    numerator    = 4;
+    int    denominator  = 4;
+    double beatPosition = 0.0;   // as of the last audio block
+    int    beatInBar    = 0;     // 0-based, for the beat lights
+    int    beatsInBar   = 4;     // lights to draw (a 6/8 bar is 3 beats; 5/8 rounds up to 3)
+    bool   onBeat       = false; // the first part of a beat: the light is lit
+};
+
 struct RackViewModel {
     std::string               rackName;
     bool                      modified = false;
+    TransportModel            transport;
     std::vector<RowModel>     rows;
     std::vector<SourceChoice> sources;   // for the source menu: All, virtual inputs, devices
     StatusModel               status;

@@ -71,6 +71,8 @@ bool Session::load(const Rack& rack, double rate, LoadReport& report) {
 
     loaded     = std::move(next);   // the old plugins live on in the old graph until it's collected
     name       = rack.name;
+    setTempo(rack.tempoBpm);
+    if (!setTimeSignature(rack.timeSigNumerator, rack.timeSigDenominator)) setTimeSignature(4, 4);
     sampleRate = rate;
     dirty      = false;
     commitGraph();
@@ -80,7 +82,10 @@ bool Session::load(const Rack& rack, double rate, LoadReport& report) {
 
 Rack Session::capture() const {
     Rack rack;
-    rack.name = name;
+    rack.name               = name;
+    rack.tempoBpm           = tempo;
+    rack.timeSigNumerator   = sigNumerator;
+    rack.timeSigDenominator = sigDenominator;
     for (const Slot& slot : loaded) {
         RackSlot saved = slot.saved;
         if (slot.plugin) {
@@ -122,6 +127,22 @@ bool Session::setMuted(const std::string& id, bool muted) {
     if (s == nullptr) return false;
     s->saved.muted = muted;
     if (s->runtime) s->runtime->targetGain.store(targetGainOf(s->saved), std::memory_order_relaxed);
+    dirty = true;
+    return true;
+}
+
+void Session::setTempo(double bpm) {
+    tempo = std::clamp(bpm, Engine::kMinTempo, Engine::kMaxTempo);
+    engine.setTempo(tempo);
+    dirty = true;
+}
+
+bool Session::setTimeSignature(int numerator, int denominator) {
+    const bool powerOfTwo = denominator > 0 && (denominator & (denominator - 1)) == 0;
+    if (numerator < 1 || numerator > 32 || !powerOfTwo || denominator > 32) return false;
+    sigNumerator   = numerator;
+    sigDenominator = denominator;
+    engine.setTimeSignature(numerator, denominator);
     dirty = true;
     return true;
 }

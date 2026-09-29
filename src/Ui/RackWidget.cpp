@@ -242,8 +242,12 @@ void RackWidget::drawToolbar() {
     region(0, 0, width(), kToolbarH, nullptr);
 
     const std::string name = view.rackName.empty() ? "Untitled rack" : view.rackName;
-    label(kPad, kToolbarH / 2, name, 18.0f, kText);
-    if (view.modified) label(kPad + labelWidth(name, 18.0f) + 12.0f, kToolbarH / 2, "unsaved changes", 13.0f, kAmber);
+    save();
+    scissor(kPad, 0, kInputW - kPad * 2, kToolbarH);
+    label(kPad, kToolbarH / 2 - (view.modified ? 6.0f : 0.0f), name, 18.0f, kText);
+    if (view.modified) label(kPad, kToolbarH / 2 + 12.0f, "unsaved changes", 11.0f, kAmber);
+    restore();
+    drawTransport(kInputW);
 
     const bool  canSave = !view.status.saveTarget.empty();
     const float saveX   = width() - kPad - 70.0f;
@@ -253,8 +257,61 @@ void RackWidget::drawToolbar() {
     const float addX = saveX - 10.0f - 118.0f;
     button(addX, 8.0f, 118.0f, 28.0f, "+ Add plugin", false, true, kAccent);
     region(addX, 8.0f, 118.0f, 28.0f, [this, addX](const Press&) { openAddMenu(addX, kToolbarH); });
+}
 
-    label(addX - 14.0f, kToolbarH / 2, "Ctrl-Shift-S save    Ctrl-Q quit", 12.0f, kDim, ALIGN_RIGHT | ALIGN_MIDDLE);
+// Tempo (drag up/down, Shift for fine; wheel; double-click for 120), Tap, time
+// signature (a menu), and a light per beat of the bar.
+void RackWidget::drawTransport(float x) {
+    const TransportModel& t = controller.view().transport;
+    char                  text[32];
+    std::snprintf(text, sizeof text, "%.1f BPM", t.tempoBpm);
+    box(x, 8.0f, 104.0f, 28.0f, kTrack, 4.0f);
+    label(x + 52.0f, kToolbarH / 2, text, 14.0f, kText, ALIGN_CENTER | ALIGN_MIDDLE);
+    region(
+        x, 8.0f, 104.0f, 28.0f,
+        [this](const Press& p) {
+            if (tempoClicked && p.time - lastTempoTime < 400) {
+                controller.setTempo(120.0);
+                tempoClicked = false;
+                return;
+            }
+            tempoClicked  = true;
+            lastTempoTime = p.time;
+            drag = [this, start = controller.view().transport.tempoBpm, startY = p.y](float, float y,
+                                                                                        std::uint32_t mod) {
+                const double perPixel = (mod & dgl::kModifierShift) != 0 ? 0.05 : 0.5;
+                controller.setTempo(start + (startY - y) * perPixel);   // up is faster
+            };
+        },
+        [this](float notches) { controller.setTempo(controller.view().transport.tempoBpm + notches); });
+
+    button(x + 110.0f, 8.0f, 48.0f, 28.0f, "Tap", false, true, kAccent);
+    region(x + 110.0f, 8.0f, 48.0f, 28.0f, [this](const Press& p) { controller.tapTempo(p.time / 1000.0); });
+
+    std::snprintf(text, sizeof text, "%d/%d", t.numerator, t.denominator);
+    button(x + 164.0f, 8.0f, 52.0f, 28.0f, text, false, true, kAccent);
+    region(x + 164.0f, 8.0f, 52.0f, 28.0f, [this, x](const Press&) {
+        Menu m;
+        m.x     = x + 164.0f;
+        m.y     = kToolbarH;
+        m.w     = 140.0f;
+        m.title = "Time signature";
+        const TransportModel& now = controller.view().transport;
+        for (const auto [n, d] : {std::pair{2, 4}, {3, 4}, {4, 4}, {5, 4}, {6, 8}, {7, 8}, {9, 8}, {12, 8}})
+            m.items.push_back(MenuItem{std::to_string(n) + "/" + std::to_string(d),
+                                       [this, n, d] { controller.setTimeSignature(n, d); },
+                                       now.numerator == n && now.denominator == d, false});
+        openMenu(std::move(m));
+    });
+
+    const int beats = std::clamp(t.beatsInBar, 1, 12);
+    for (int b = 0; b < beats; ++b) {
+        const bool lit = t.onBeat && b == t.beatInBar;
+        beginPath();
+        circle(x + 232.0f + static_cast<float>(b) * 15.0f, kToolbarH / 2, 5.0f);
+        fill(!lit ? kTrack : b == 0 ? kAmber : kGreen);   // the downbeat stands out
+        NanoVG::fill();
+    }
 }
 
 void RackWidget::drawRow(const RowModel& row, std::size_t index) {

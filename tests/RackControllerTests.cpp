@@ -232,6 +232,43 @@ void testAddPlugin() {
     CHECK(controller.view().modified);
 }
 
+void testTransport() {
+    Rig                 rig;
+    Session::LoadReport report;
+    rig.session->load(Rack{}, 48000.0, report);
+    RackController controller(*rig.session, *rig.engine, rig.midi, rig.factory, rig.config());
+    const RackViewModel& view = controller.view();
+    CHECK(view.transport.tempoBpm == 120.0 && view.transport.beatsInBar == 4);
+
+    // Taps half a second apart: 120 BPM. A 2 s gap starts a new count.
+    for (double t : {10.0, 10.5, 11.0, 11.5}) controller.tapTempo(t);
+    CHECK(view.transport.tempoBpm == 120.0);
+    controller.tapTempo(20.0);                        // new count: one tap, no change
+    CHECK(view.transport.tempoBpm == 120.0);
+    controller.tapTempo(20.4);                        // 0.4 s: 150 BPM
+    CHECK(view.transport.tempoBpm == 150.0);
+    for (double t : {20.8, 21.2, 21.6, 22.0, 22.6}) controller.tapTempo(t);   // the last four intervals only
+    CHECK(std::fabs(view.transport.tempoBpm - 60.0 / 0.45) < 0.051);          // (0.4+0.4+0.4+0.6)/4
+
+    controller.setTempo(97.26);                       // rounded to 0.1
+    CHECK(std::fabs(view.transport.tempoBpm - 97.3) < 1e-9);
+    controller.setTimeSignature(6, 8);
+    controller.setTimeSignature(6, 7);                // refused
+    controller.tick(1.0);
+    CHECK(view.transport.numerator == 6 && view.transport.denominator == 8 && view.transport.beatsInBar == 3);
+    controller.setTimeSignature(5, 8);                // 2.5 beats: three lights
+    controller.tick(1.1);
+    CHECK(view.transport.beatsInBar == 3);
+
+    // The beat lights follow the engine's clock: 640 frames at 97.3 BPM is 0.02
+    // beats, still the lit start of the first beat.
+    for (int i = 0; i < 10; ++i) runBlock(*rig.engine);
+    controller.tick(1.2);
+    CHECK(std::fabs(view.transport.beatPosition - 640.0 * 97.3 / 60.0 / 48000.0) < 1e-9);
+    CHECK(view.transport.beatInBar == 0 && view.transport.onBeat);
+    CHECK(view.modified);
+}
+
 void testSave() {
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "stagehand-controller-test";
     std::filesystem::remove_all(dir);
@@ -271,5 +308,6 @@ int main() {
     testEditorsAndRemove();
     testAddPlugin();
     testSave();
+    testTransport();
     return test::finish("RackController");
 }

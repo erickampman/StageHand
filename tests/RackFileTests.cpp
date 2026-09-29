@@ -35,7 +35,10 @@ std::vector<std::byte> bytes(const std::string& text) {
 
 Rack sampleRack() {
     Rack rack;
-    rack.name = "Split";
+    rack.name               = "Split";
+    rack.tempoBpm           = 97.5;
+    rack.timeSigNumerator   = 7;
+    rack.timeSigDenominator = 8;
 
     RackSlot bass;
     bass.id                  = "bass";
@@ -84,6 +87,7 @@ void testRoundTrip(const fs::path& dir) {
     result = loadRack(path, loaded);
     CHECK(result.ok && result.warnings.empty());
     CHECK(loaded.name == "Split" && loaded.slots.size() == 2);
+    CHECK(loaded.tempoBpm == 97.5 && loaded.timeSigNumerator == 7 && loaded.timeSigDenominator == 8);
     if (loaded.slots.size() != 2) return;
 
     const RackSlot& b = loaded.slots[0];
@@ -121,6 +125,7 @@ void testDefaults(const fs::path& dir) {
     const RackFileResult result = loadRack((dir / "Minimal.rack/").string(), rack);   // trailing slash ok
     CHECK(result.ok);
     CHECK(rack.name == "Minimal");                            // from the bundle name
+    CHECK(rack.tempoBpm == 120.0 && rack.timeSigNumerator == 4 && rack.timeSigDenominator == 4);
     if (rack.slots.size() != 1) {
         CHECK(false);
         return;
@@ -168,6 +173,10 @@ void testFailures(const fs::path& dir) {
                   R"({"format":"stagehand-rack","version":1,"slots":[
                       {"id":"a","plugin":{"format":"clap","id":"x"},"midi":{"channels":[17]}}]})",
                   "1-16");
+    expectFailure(dir, "Fast.rack", R"({"format":"stagehand-rack","version":1,"tempo":500,"slots":[]})",
+                  "20-400 BPM");
+    expectFailure(dir, "Sig.rack",
+                  R"({"format":"stagehand-rack","version":1,"timeSignature":[4,3],"slots":[]})", "1-32 over");
     Rack none;
     CHECK(!loadRack((dir / "Missing.rack").string(), none).ok);
 }

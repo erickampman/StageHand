@@ -1,6 +1,7 @@
 #include "Plugin/Clap/ClapPlugin.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <utility>
@@ -315,11 +316,19 @@ void ClapPlugin::stopProcessing() noexcept {
 void ClapPlugin::fillTransport(const TimeInfo& time) noexcept {
     transport        = clap_event_transport_t{};
     transport.header = eventHeader(sizeof transport, 0, CLAP_EVENT_TRANSPORT);
-    transport.flags  = CLAP_TRANSPORT_HAS_TEMPO | CLAP_TRANSPORT_HAS_TIME_SIGNATURE;
+    transport.flags  = CLAP_TRANSPORT_HAS_TEMPO | CLAP_TRANSPORT_HAS_TIME_SIGNATURE | CLAP_TRANSPORT_HAS_BEATS_TIMELINE;
     if (time.playing) transport.flags |= CLAP_TRANSPORT_IS_PLAYING;
     transport.tempo      = time.tempoBpm;
     transport.tsig_num   = static_cast<std::uint16_t>(time.timeSigNumerator);
     transport.tsig_denom = static_cast<std::uint16_t>(time.timeSigDenominator);
+    // Beats timeline (quarter notes, CLAP's fixed point): what tempo-synced LFOs
+    // and delays lock to.
+    auto beatTime = [](double beats) {
+        return static_cast<clap_beattime>(std::llround(beats * static_cast<double>(CLAP_BEATTIME_FACTOR)));
+    };
+    transport.song_pos_beats = beatTime(time.beatPosition);
+    transport.bar_start      = beatTime(time.barStartBeats);
+    transport.bar_number     = time.barNumber;
 }
 
 std::uint32_t ClapPlugin::convertAll(const EventBlock& events) noexcept {

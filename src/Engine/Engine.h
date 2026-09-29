@@ -90,6 +90,24 @@ public:
     };
     Stats stats() const noexcept;   // any thread
 
+    // --- transport (docs/sequences.md, section 1) ---
+    // A free-running beat clock: it starts at beat 0 and always advances. Tempo
+    // and time signature are read once per block, so a change lands at the next
+    // block boundary. Main thread (the values are atomics).
+    void setTempo(double bpm) noexcept;                       // clamped to kMinTempo..kMaxTempo
+    void setTimeSignature(int numerator, int denominator) noexcept;
+    struct Transport {
+        double       tempoBpm      = 120.0;
+        int          numerator     = 4;
+        int          denominator   = 4;
+        double       beatPosition  = 0.0;   // as of the last block (for display)
+        double       barStartBeats = 0.0;
+        std::int32_t barNumber     = 0;
+    };
+    Transport transport() const noexcept;   // any thread
+    static constexpr double kMinTempo = 20.0;
+    static constexpr double kMaxTempo = 400.0;
+
     // The backend outputs' level (the master meter): outputs 1 and 2, with any
     // further outputs folded into the second channel. take() from the main thread.
     LevelMeter& outputMeter() noexcept { return outputLevels; }
@@ -144,6 +162,8 @@ private:
     HeldNote*            findHeld(MidiSourceHandle source, const MidiMessage& m) noexcept;
     HeldNote*            claimHeld(MidiSourceHandle source, const MidiMessage& m) noexcept;
     void                 runSlots(const AudioCallbackContext& ctx) noexcept;
+    void                 advanceTransport(const AudioCallbackContext& ctx) noexcept;
+    TimeInfo             timeAt(const AudioCallbackContext& ctx, std::uint32_t frame) const noexcept;
     const float*         advanceGain(SlotRuntime& runtime, std::uint32_t frames, double sampleRate,
                                      float& constantGain) noexcept;
 
@@ -157,6 +177,23 @@ private:
     SpscQueue<EngineGraph*, 16>   retiredGraphs;            // audio -> main
     EngineGraph*                  currentGraph = nullptr;   // audio thread only
     LevelMeter                    outputLevels;
+
+    // Transport. Tempo and signature: main writes, audio reads per block. The
+    // beat clock itself is audio-thread state, published after each block.
+    std::atomic<double>        tempo{120.0};
+    std::atomic<std::uint32_t> signature{(4u << 16) | 4u};   // numerator << 16 | denominator
+    struct BeatClock {
+        double       beat          = 0.0;   // at the current block's first frame
+        double       tempoBpm      = 120.0; // this block's tempo
+        double       beatsPerFrame = 0.0;
+        int          numerator     = 4;
+        int          denominator   = 4;
+        double       barAnchorBeat = 0.0;   // bars count from here (moves when the signature changes)
+        std::int32_t barAnchor     = 0;     // the bar number at barAnchorBeat
+    } clock;                                // audio thread only
+    std::atomic<double>       publishedBeat{0.0};
+    std::atomic<double>       publishedBarStart{0.0};
+    std::atomic<std::int32_t> publishedBar{0};
 
     std::atomic<std::uint64_t> midiReceived{0};
     std::atomic<std::uint64_t> midiQueueFull{0};

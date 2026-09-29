@@ -64,6 +64,9 @@ public:
     const std::vector<Slot>& slots() const noexcept { return loaded; }
     const Slot*              slot(const std::string& id) const noexcept;
     const std::string&       rackName() const noexcept { return name; }
+    double                   tempoBpm() const noexcept { return tempo; }
+    int                      timeSigNumerator() const noexcept { return sigNumerator; }
+    int                      timeSigDenominator() const noexcept { return sigDenominator; }
 
     // --- editing (docs/rack-view.md, section 1). Each returns false for an
     // unknown id and marks the session modified. A placeholder's settings can be
@@ -73,6 +76,12 @@ public:
     // No graph commit, no allocation.
     bool setGainDb(const std::string& id, float db);
     bool setMuted(const std::string& id, bool muted);
+
+    // The rack's transport: applied to the engine at once (it's read per block)
+    // and saved with the rack. setTempo clamps; setTimeSignature returns false
+    // for an invalid one (numerator 1-32, denominator a power of two to 32).
+    void setTempo(double bpm);
+    bool setTimeSignature(int numerator, int denominator);
 
     // Structural: take effect at the next flush(), which commits one new graph
     // for any number of edits.
@@ -127,7 +136,10 @@ private:
     std::string                             name;
     std::vector<Slot>                       loaded;
     std::map<std::string, MidiSourceHandle> openSources;   // "device:<id>" / "virtual:<name>"
-    double                                  sampleRate = 0.0;
+    double                                  sampleRate     = 0.0;
+    double                                  tempo          = 120.0;
+    int                                     sigNumerator   = 4;
+    int                                     sigDenominator = 4;
     bool                                    graphDirty = false;
     bool                                    dirty      = false;
 };
