@@ -101,6 +101,7 @@ public:
     std::size_t openEditorCount() const;
 
     // --- sequences (the sources dock) ---
+    const Sequence* sequence(const std::string& id) const;   // as the Session has it; null if none
     std::string addSequence(MidiProtocol protocol);   // returns its id
     void        removeSequence(const std::string& id);
     // Play/Stop: start if stopped, stop if playing; a pending start or stop is
@@ -113,6 +114,14 @@ public:
     void setSequenceLength(const std::string& id, std::uint32_t length);
     void setSequenceLaunch(const std::string& id, LaunchQuantize launch);
     void setSequenceRepeat(const std::string& id, bool repeat);
+    // The editor's edits (the editor window, docs/sequences.md section 5).
+    // Notes are replaced whole; the rest changes one setting and leaves the notes.
+    void setSequenceNotes(const std::string& id, std::vector<SequenceNote> notes);
+    void setSequenceProtocol(const std::string& id, MidiProtocol protocol);   // only while it has no notes
+    void setSequenceTuning(const std::string& id, int edo, int referenceNote);
+    void setSequenceChannel(const std::string& id, int channel);   // 0-based
+    void setSequenceGroup(const std::string& id, int group);       // 0-based
+    void setSequenceNoteOffOffset(const std::string& id, double ms);
 
     // Refresh the source menu (MidiInput::enumerate()); call when it opens.
     void refreshSources();

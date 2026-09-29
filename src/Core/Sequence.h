@@ -20,6 +20,8 @@ struct SequenceNote {
     std::int32_t  pitch    = 0;
     // MIDI 1.0: 1-127. MIDI 2.0: 1-65535. (0 would be a note-off.)
     std::uint16_t velocity = 100;
+
+    bool operator==(const SequenceNote&) const = default;
 };
 
 // Units per beat as a ratio: 4/1 = sixteenth notes, 1/2 = a unit every two beats.

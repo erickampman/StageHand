@@ -402,6 +402,11 @@ void RackController::editSequence(const std::string& id, Change change) {
     if (!session.setSequence(seq, problem)) notice(problem);
 }
 
+const Sequence* RackController::sequence(const std::string& id) const {
+    const Session::SequenceEntry* entry = session.sequence(id);
+    return entry != nullptr ? &entry->sequence : nullptr;
+}
+
 std::string RackController::addSequence(MidiProtocol protocol) {
     const std::string id = session.addSequence(protocol);
     refreshSources();   // it's a source now
@@ -449,6 +454,34 @@ void RackController::setSequenceLaunch(const std::string& id, LaunchQuantize lau
 
 void RackController::setSequenceRepeat(const std::string& id, bool repeat) {
     editSequence(id, [repeat](Sequence& seq) { seq.repeat = repeat; });
+}
+
+void RackController::setSequenceNotes(const std::string& id, std::vector<SequenceNote> notes) {
+    editSequence(id, [&notes](Sequence& seq) { seq.notes = std::move(notes); });
+}
+
+void RackController::setSequenceProtocol(const std::string& id, MidiProtocol protocol) {
+    editSequence(id, [protocol](Sequence& seq) { seq.protocol = protocol; });   // the Session refuses it with notes
+    refreshSources();                                                           // the menu shows protocols
+}
+
+void RackController::setSequenceTuning(const std::string& id, int edo, int referenceNote) {
+    editSequence(id, [=](Sequence& seq) {
+        seq.edo           = std::clamp(edo, 1, 128);
+        seq.referenceNote = std::clamp(referenceNote, 0, 127);
+    });
+}
+
+void RackController::setSequenceChannel(const std::string& id, int channel) {
+    editSequence(id, [channel](Sequence& seq) { seq.channel = static_cast<std::uint8_t>(std::clamp(channel, 0, 15)); });
+}
+
+void RackController::setSequenceGroup(const std::string& id, int group) {
+    editSequence(id, [group](Sequence& seq) { seq.group = static_cast<std::uint8_t>(std::clamp(group, 0, 15)); });
+}
+
+void RackController::setSequenceNoteOffOffset(const std::string& id, double ms) {
+    editSequence(id, [ms](Sequence& seq) { seq.noteOffOffsetMs = std::clamp(ms, -1000.0, 1000.0); });
 }
 
 // --- saving and quitting -----------------------------------------------------------

@@ -10,6 +10,7 @@
 namespace stagehand {
 
 namespace dgl = DGL_NAMESPACE;
+using namespace ui;
 
 namespace {
 
@@ -23,22 +24,12 @@ constexpr float kStatusH    = 30.0f;
 constexpr float kInputW     = 330.0f;
 constexpr float kPluginW    = 270.0f;
 constexpr float kMinOutputW = 330.0f;
-constexpr float kPad        = 12.0f;
 constexpr float kMinDb      = -60.0f;   // one scale for fader and meters, so they line up
 constexpr float kMaxDb      = 6.0f;
 constexpr float kKeyBarX    = kPad + 16.0f;   // 128 keys at 1 logical pixel each
-constexpr float kMenuItemH  = 26.0f;
 constexpr float kDockHeadH  = 28.0f;   // the sources dock: header, inputs row, sequence rows
 constexpr float kInputsH    = 34.0f;
 constexpr float kSeqRowH    = 44.0f;
-
-constexpr UiColor kBg{22, 24, 30}, kRowA{31, 34, 42}, kRowB{35, 38, 47}, kBarBg{16, 18, 23}, kPanel{44, 48, 59},
-    kText{232, 234, 240}, kDim{140, 146, 160}, kAccent{90, 160, 255}, kAmber{240, 170, 50}, kRed{232, 72, 60},
-    kGreen{80, 200, 120}, kTrack{58, 62, 74}, kLine{48, 52, 62};
-
-double nowSeconds() {
-    return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
-}
 
 float dbToPos(float db) {
     return std::clamp((db - kMinDb) / (kMaxDb - kMinDb), 0.0f, 1.0f);
@@ -95,9 +86,7 @@ const char* protocolText(SourceProtocol p) {
 } // namespace
 
 RackWidget::RackWidget(dgl::Window& window, RackController& rackController)
-    : NanoTopLevelWidget(window), controller(rackController) {
-    loadSharedResources();   // DGL's built-in font (DejaVu Sans)
-}
+    : UiWidget(window), controller(rackController) {}
 
 void RackWidget::showNotice(const std::string& text, double now) {
     notice      = text;
@@ -106,15 +95,6 @@ void RackWidget::showNotice(const std::string& text, double now) {
 
 // --- geometry ------------------------------------------------------------------------
 
-float RackWidget::scaleFactor() {
-    return static_cast<float>(getWindow().getScaleFactor());
-}
-float RackWidget::width() {
-    return static_cast<float>(getWidth()) / scaleFactor();
-}
-float RackWidget::height() {
-    return static_cast<float>(getHeight()) / scaleFactor();
-}
 float RackWidget::outputX() const {
     return kInputW + kPluginW;
 }
@@ -127,7 +107,9 @@ float RackWidget::rowsHeight() {
 // The dock grows with its sequences, up to a little over half the space; past
 // that its sequence rows scroll.
 float RackWidget::dockHeight() {
-    const float want = kDockHeadH + kInputsH + static_cast<float>(controller.view().sequences.size()) * kSeqRowH;
+    // At least one sequence row's height: an empty dock shows how to add one.
+    const float rows = static_cast<float>(std::max<std::size_t>(controller.view().sequences.size(), 1));
+    const float want = kDockHeadH + kInputsH + rows * kSeqRowH;
     const float most = std::max(kDockHeadH + kInputsH + kSeqRowH, (height() - kToolbarH - kStatusH) * 0.55f);
     return std::min(want, most);
 }
@@ -153,47 +135,6 @@ float RackWidget::maxScroll() {
 
 // --- drawing helpers -----------------------------------------------------------------
 
-void RackWidget::fill(UiColor c, int alpha) {
-    fillColor(c.r, c.g, c.b, alpha);
-}
-
-void RackWidget::box(float x, float y, float w, float h, UiColor c, float radius) {
-    beginPath();
-    if (radius > 0.0f)
-        roundedRect(x, y, w, h, radius);
-    else
-        rect(x, y, w, h);
-    fill(c);
-    NanoVG::fill();
-}
-
-void RackWidget::outline(float x, float y, float w, float h, UiColor c, float radius) {
-    beginPath();
-    roundedRect(x + 0.5f, y + 0.5f, w - 1.0f, h - 1.0f, radius);
-    strokeColor(c.r, c.g, c.b);
-    strokeWidth(1.0f);
-    stroke();
-}
-
-void RackWidget::label(float x, float y, const std::string& text, float size, UiColor c, int align) {
-    fontSize(size);
-    fill(c);
-    textAlign(align);
-    this->text(x, y, text.c_str(), nullptr);
-}
-
-float RackWidget::labelWidth(const std::string& text, float size) {
-    fontSize(size);
-    dgl::Rectangle<float> bounds;
-    return textBounds(0, 0, text.c_str(), nullptr, bounds);
-}
-
-void RackWidget::button(float x, float y, float w, float h, const std::string& text, bool on, bool enabled,
-                        UiColor onColor) {
-    box(x, y, w, h, on ? onColor : kTrack, 4.0f);
-    label(x + w / 2, y + h / 2, text, 13.0f, !enabled ? kDim : on ? kBarBg : kText, ALIGN_CENTER | ALIGN_MIDDLE);
-}
-
 // Two thin bars (L, R) on the fader's scale, with a peak-hold tick each.
 void RackWidget::meterBars(float x0, float x1, float y, const float db[2], const float hold[2]) {
     const float w = x1 - x0;
@@ -211,17 +152,9 @@ void RackWidget::meterBars(float x0, float x1, float y, const float db[2], const
     }
 }
 
-void RackWidget::region(float x, float y, float w, float h, std::function<void(const Press&)> press,
-                        std::function<void(float)> wheel) {
-    regions.push_back(Region{x, y, w, h, std::move(press), std::move(wheel)});
-}
-
 // --- the frame -----------------------------------------------------------------------
 
-void RackWidget::onNanoDisplay() {
-    regions.clear();
-    const float sf = scaleFactor();
-    scale(sf, sf);
+void RackWidget::draw() {
     box(0, 0, width(), height(), kBg);
 
     const RackViewModel& view = controller.view();
@@ -242,16 +175,6 @@ void RackWidget::onNanoDisplay() {
     drawDock();
     drawToolbar();
     drawStatus();
-
-    if (menu || !filterId.empty()) {
-        // A click anywhere else dismisses the overlay (and does nothing else).
-        region(0, 0, width(), height(), [this](const Press&) {
-            menu.reset();
-            filterId.clear();
-        }, [](float) {});
-        drawFilterPanel();
-        drawMenu();
-    }
 }
 
 void RackWidget::drawToolbar() {
@@ -389,7 +312,7 @@ void RackWidget::drawRowInput(const RowModel& row, float y) {
     label(chipX + 6.0f, y + 44.0f, summary, 12.0f, open ? kBarBg : kText);
     restore();
     region(chipX, y + 33.0f, chipW, 22.0f, [this, row](const Press&) {
-        menu.reset();
+        closeMenu();
         if (filterId == row.id) {
             filterId.clear();
             return;
@@ -505,7 +428,7 @@ void RackWidget::drawStatus() {
     const float tx = kPad + labelWidth(left, 12.0f) + 28.0f;
     save();
     scissor(tx, y, std::max(0.0f, mx0 - 12.0f - tx), kStatusH);
-    if (!notice.empty() && nowSeconds() < noticeUntil)
+    if (!notice.empty() && ui::nowSeconds() < noticeUntil)
         label(tx, y + kStatusH / 2, notice, 12.0f, kAccent);
     else if (!s.saveTarget.empty())
         label(tx, y + kStatusH / 2, "Saves to " + s.saveTarget, 12.0f, kDim);
@@ -583,7 +506,7 @@ void RackWidget::drawSequenceRow(const SequenceRowModel& seq, float y) {
     // Play/Stop: a triangle or a square; a pending start or stop blinks.
     const bool pending = seq.state == SequenceState::Starting || seq.state == SequenceState::Stopping;
     const bool running = seq.state == SequenceState::Playing || seq.state == SequenceState::Stopping;
-    const bool blinkOn = std::fmod(nowSeconds(), 0.5) < 0.25;
+    const bool blinkOn = std::fmod(ui::nowSeconds(), 0.5) < 0.25;
     box(kPad, y + 8.0f, 32.0f, 28.0f, pending ? (blinkOn ? kAmber : kTrack) : running ? kGreen : kTrack, 4.0f);
     beginPath();
     if (running) {
@@ -612,6 +535,9 @@ void RackWidget::drawSequenceRow(const SequenceRowModel& seq, float y) {
     }
     label(nameX, y + 33.0f, detail, 11.0f, seq.usedBy.empty() ? kAmber : kDim);
     restore();
+    region(nameX, y + 4.0f, mapX - nameX - 10.0f, kSeqRowH - 8.0f, [this, id = seq.id](const Press&) {
+        if (openSequenceEditor) openSequenceEditor(id);   // a click on the name opens its editor
+    });
 
     // Mini-map: beats, note starts, the playhead.
     box(mapX, y + 10.0f, mapW, 24.0f, kRowA, 3.0f);
@@ -689,7 +615,9 @@ void RackWidget::openSequenceMenu(const SequenceRowModel& seq, float x, float y)
     m.y     = y;
     m.w     = 230.0f;
     m.title = seq.name;
-    m.items.push_back(MenuItem{"Edit notes (the editor comes next)", {}});
+    m.items.push_back(MenuItem{"Edit notes...", [this, id = seq.id] {
+                                   if (openSequenceEditor) openSequenceEditor(id);
+                               }});
     m.items.push_back(MenuItem{"Remove...", [this, id = seq.id, name = seq.name, x, y] {
                                    Menu confirm;
                                    confirm.x     = x;
@@ -706,12 +634,6 @@ void RackWidget::openSequenceMenu(const SequenceRowModel& seq, float x, float y)
 }
 
 // --- menus ---------------------------------------------------------------------------
-
-void RackWidget::openMenu(Menu m) {
-    filterId.clear();
-    m.x  = std::clamp(m.x, 4.0f, std::max(4.0f, width() - m.w - 4.0f));
-    menu = std::move(m);
-}
 
 void RackWidget::openSourceMenu(const RowModel& row, float x, float y) {
     controller.refreshSources();   // devices come and go
@@ -784,48 +706,6 @@ void RackWidget::openAddMenu(float x, float y) {
     openMenu(std::move(m));
 }
 
-void RackWidget::drawMenu() {
-    if (!menu) return;
-    Menu&       m      = *menu;
-    const float titleH = m.title.empty() ? 0.0f : 28.0f;
-    const float totalH = titleH + static_cast<float>(m.items.size()) * kMenuItemH + 8.0f;
-    const float bottom = height() - 8.0f;
-    if (m.y + totalH > bottom) m.y = std::max(kToolbarH, bottom - totalH);   // flip up if there's room
-    const float visibleH = std::min(totalH, bottom - m.y);
-    m.scroll             = std::clamp(m.scroll, 0.0f, totalH - visibleH);
-
-    box(m.x, m.y, m.w, visibleH, kPanel, 6.0f);
-    outline(m.x, m.y, m.w, visibleH, kTrack, 6.0f);
-    region(m.x, m.y, m.w, visibleH, nullptr, [this, maxScroll = totalH - visibleH](float notches) {
-        menu->scroll = std::clamp(menu->scroll - notches * kMenuItemH, 0.0f, maxScroll);
-    });
-    if (titleH > 0.0f) {
-        save();
-        scissor(m.x, m.y, m.w - 8.0f, titleH);
-        label(m.x + 12.0f, m.y + titleH / 2 + 2.0f, m.title, 12.0f, kDim);
-        restore();
-    }
-
-    const float listTop = m.y + titleH, listBottom = m.y + visibleH;
-    save();
-    scissor(m.x, listTop, m.w, listBottom - listTop);
-    for (std::size_t i = 0; i < m.items.size(); ++i) {
-        const MenuItem& item = m.items[i];
-        const float     iy   = listTop + 4.0f + static_cast<float>(i) * kMenuItemH - m.scroll;
-        if (iy + kMenuItemH < listTop || iy > listBottom) continue;
-        if (item.checked) label(m.x + 12.0f, iy + kMenuItemH / 2, "\xE2\x9C\x93", 14.0f, kAccent);   // U+2713
-        label(m.x + 30.0f, iy + kMenuItemH / 2, item.label, 14.0f,
-              !item.action ? kDim : item.danger ? kRed : kText);
-        const float top = std::max(iy, listTop), bot = std::min(iy + kMenuItemH, listBottom);
-        region(m.x, top, m.w, bot - top, [this, action = item.action](const Press&) {
-            if (!action) return;   // a disabled item: the menu stays
-            menu.reset();          // before the action, which may open another menu
-            action();
-        });
-    }
-    restore();
-}
-
 // --- the filter panel ------------------------------------------------------------------
 
 const RowModel* RackWidget::rowById(const std::string& id) const {
@@ -870,16 +750,6 @@ void RackWidget::startKeyRangeDrag(const RowModel& row, float barX, const Press&
         applyFilter(id, f);
     };
     if (mode != Mode::Move) drag(p.x, p.y, p.mod);   // the press itself sets that end
-}
-
-void RackWidget::stepper(float x, float y, const std::string& value,
-                         const std::function<void(int dir, bool big)>& change) {
-    button(x, y, 22.0f, 22.0f, "-", false, true, kAccent);
-    region(x, y, 22.0f, 22.0f, [change](const Press& p) { change(-1, (p.mod & dgl::kModifierShift) != 0); });
-    label(x + 70.0f, y + 11.0f, value, 13.0f, kText, ALIGN_CENTER | ALIGN_MIDDLE);
-    region(x + 22.0f, y, 96.0f, 22.0f, nullptr, [change](float notches) { change(notches > 0 ? 1 : -1, false); });
-    button(x + 118.0f, y, 22.0f, 22.0f, "+", false, true, kAccent);
-    region(x + 118.0f, y, 22.0f, 22.0f, [change](const Press& p) { change(1, (p.mod & dgl::kModifierShift) != 0); });
 }
 
 void RackWidget::drawFilterPanel() {
@@ -986,58 +856,15 @@ void RackWidget::drawFilterPanel() {
 
 // --- input -------------------------------------------------------------------------
 
-bool RackWidget::onMouse(const MouseEvent& ev) {
-    if (ev.button != 1) return false;
-    if (!ev.press) {
-        drag = nullptr;
-        return true;
-    }
-    const float sf = scaleFactor();
-    const Press p{static_cast<float>(ev.pos.getX()) / sf, static_cast<float>(ev.pos.getY()) / sf, ev.mod, ev.time};
-    for (auto r = regions.rbegin(); r != regions.rend(); ++r) {   // topmost first
-        if (p.x < r->x || p.x >= r->x + r->w || p.y < r->y || p.y >= r->y + r->h) continue;
-        if (r->press) {
-            const auto press = r->press;   // a copy: the handler may change what's drawn
-            press(p);
-        }
-        repaint();
-        return true;
-    }
-    return false;
-}
-
-bool RackWidget::onMotion(const MotionEvent& ev) {
-    if (!drag) return false;
-    const float sf = scaleFactor();
-    drag(static_cast<float>(ev.pos.getX()) / sf, static_cast<float>(ev.pos.getY()) / sf, ev.mod);
-    repaint();
-    return true;
-}
-
-bool RackWidget::onScroll(const ScrollEvent& ev) {
-    const float sf = scaleFactor();
-    const float x = static_cast<float>(ev.pos.getX()) / sf, y = static_cast<float>(ev.pos.getY()) / sf;
-    const float notches = static_cast<float>(ev.delta.getY());
-    // The topmost region under the pointer that takes the wheel (a fader, a
-    // value, a menu, the dock) gets it; otherwise it scrolls the rack.
-    for (auto r = regions.rbegin(); r != regions.rend(); ++r) {
-        if (x < r->x || x >= r->x + r->w || y < r->y || y >= r->y + r->h || !r->wheel) continue;
-        const auto wheel = r->wheel;
-        wheel(notches);
-        repaint();
-        return true;
-    }
-    if (menu || !filterId.empty()) return true;
-    scrollY = std::clamp(scrollY - notches * kRowH / 2.0f, 0.0f, maxScroll());
-    repaint();
-    return true;
+void RackWidget::wheelUnclaimed(float, float, float notches, std::uint32_t) {
+    if (!menuOpen() && filterId.empty()) scrollY = std::clamp(scrollY - notches * kRowH / 2.0f, 0.0f, maxScroll());
 }
 
 bool RackWidget::onKeyboard(const KeyboardEvent& ev) {
     if (!ev.press) return false;
     if (ev.key == dgl::kKeyEscape) {
-        menu.reset();
-        filterId.clear();
+        closeMenu();
+        dismissOverlays();
         repaint();
         return true;
     }

@@ -83,7 +83,8 @@ target_link_libraries(stagehand-lib
 
 # --- stagehand-app: the rack view's controller and model (no DGL, X11 or JACK) ---
 add_library(stagehand-app STATIC
-    src/App/RackController.cpp)
+    src/App/RackController.cpp
+    src/App/SequenceEditor.cpp)
 target_link_libraries(stagehand-app
     PUBLIC  stagehand-session
     PRIVATE stagehand-warnings)
@@ -91,7 +92,9 @@ target_link_libraries(stagehand-app
 # --- stagehand-ui: the rack window (DGL). Only this library sees DGL. -------------
 add_library(stagehand-ui STATIC
     src/Ui/RackUi.cpp
-    src/Ui/RackWidget.cpp)
+    src/Ui/RackWidget.cpp
+    src/Ui/UiWidget.cpp
+    src/Ui/SequenceEditorWidget.cpp)
 target_link_libraries(stagehand-ui
     PUBLIC  stagehand-app
     PRIVATE dgl-opengl dgl-opengl-definitions stagehand-warnings)
@@ -120,3 +123,4 @@ stagehand_add_test(test-sequence tests/SequenceTests.cpp stagehand-engine)
 stagehand_add_test(test-rackfile tests/RackFileTests.cpp stagehand-session)
 stagehand_add_test(test-session  tests/SessionTests.cpp  stagehand-session)
 stagehand_add_test(test-rackcontroller tests/RackControllerTests.cpp stagehand-app)
+stagehand_add_test(test-sequenceeditor tests/SequenceEditorTests.cpp stagehand-app)

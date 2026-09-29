@@ -191,7 +191,31 @@ row, one per sequence.
   - Vertical scroll over the pitch range, horizontal zoom.
 - **Notes** are rectangles, their brightness showing velocity.
 
-### Drag and click rules (proposed; was TBD)
+Implemented 2026-09-29 (milestone 4):
+- **Where it lives:** `src/App/SequenceEditor` is the editing logic, tested
+  headless: working notes, selection, gestures, undo and the trimming rule.
+  `src/Ui/SequenceEditorWidget` is the window.
+- **Opening:** one window per sequence, from the dock (a click on the
+  sequence's name, or "Edit notes..."). Opening an open one brings it forward.
+- **Closing:** closing an editor closes just that window. Closing the rack
+  window quits even while editors are open (DGL alone would wait for every
+  window).
+- **Notes and settings:** notes belong to the editor. Every other setting is
+  read fresh from the Session, so the dock and the editor never overwrite
+  each other. Edits are heard as you make them.
+- **Gestures:** each drag is one gesture, recomputed from its start on every
+  move, and one undo step. The right-edge zone is 6 px. Ctrl-drag changes
+  velocity over 200 px for the full range.
+- **Keys:**
+  - Arrows move the selection; Shift moves by a beat, or by an octave (one EDO
+    period) vertically.
+  - Space plays or stops the sequence.
+  - The wheel scrolls, Shift-wheel scrolls sideways, and Ctrl-wheel zooms. The
+    zoom fits the loop to the window until you zoom yourself.
+- **The strip also sets:** "Step 0 at" (the reference note), and the length
+  of new notes.
+
+### Drag and click rules (accepted)
 
 | Gesture | Where | Result |
 |---|---|---|
