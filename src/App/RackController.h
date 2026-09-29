@@ -100,6 +100,20 @@ public:
     void closeAllEditors();
     std::size_t openEditorCount() const;
 
+    // --- sequences (the sources dock) ---
+    std::string addSequence(MidiProtocol protocol);   // returns its id
+    void        removeSequence(const std::string& id);
+    // Play/Stop: start if stopped, stop if playing; a pending start or stop is
+    // cancelled.
+    void togglePlay(const std::string& id);
+    void stopAllSequences();
+    void setSequenceRate(const std::string& id, SequenceRate rate);
+    // Refused, with a notice, if notes lie past the new end: the editor deletes
+    // notes, the length control never does.
+    void setSequenceLength(const std::string& id, std::uint32_t length);
+    void setSequenceLaunch(const std::string& id, LaunchQuantize launch);
+    void setSequenceRepeat(const std::string& id, bool repeat);
+
     // Refresh the source menu (MidiInput::enumerate()); call when it opens.
     void refreshSources();
 
@@ -137,6 +151,10 @@ private:
     // The model's row for `id`, patched right away by edits, so input arriving
     // before the next tick() builds on them (e.g. several wheel notches).
     RowModel*      modelRow(const std::string& id);
+    // Apply `change` to a copy of the sequence and hand it to the Session.
+    template <typename Change>
+    void           editSequence(const std::string& id, Change change);
+    void           buildDock(double now);
 
     Session&       session;
     Engine&        engine;
@@ -151,6 +169,7 @@ private:
     std::vector<MidiSourceInfo>                           enumerated;
     std::vector<PluginDescriptor>                         available;
     std::vector<double>                                   taps;      // tap-tempo times
+    std::map<MidiSourceHandle, std::pair<std::uint32_t, double>> inputActivity;   // last count, lit until
     bool                                                  scanned  = false;
     double                                                lastTick = -1.0;
     std::vector<std::string>                              notices;

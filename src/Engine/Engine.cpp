@@ -134,6 +134,27 @@ void Engine::commitSequences(std::unique_ptr<SequenceSet> sequences) {
     delete pendingSequences.exchange(sequences.release(), std::memory_order_acq_rel);   // superseded, never ran
 }
 
+std::uint32_t Engine::sourceActivity(MidiSourceHandle source) const noexcept {
+    for (const SourceCount& c : sourceCounts)
+        if (c.source.load(std::memory_order_acquire) == source) return c.count.load(std::memory_order_relaxed);
+    return 0;
+}
+
+void Engine::countSource(MidiSourceHandle source) noexcept {
+    for (SourceCount& c : sourceCounts) {
+        const MidiSourceHandle held = c.source.load(std::memory_order_relaxed);
+        if (held == source) {
+            c.count.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        if (held == kInvalidMidiSource) {   // first time heard: claim this slot
+            c.count.store(1, std::memory_order_relaxed);
+            c.source.store(source, std::memory_order_release);
+            return;
+        }
+    }
+}
+
 bool Engine::sendSequenceCommand(MidiSourceHandle source, SequenceCommand command) noexcept {
     return sequenceCommands.push(QueuedCommand{source, command});
 }
@@ -323,6 +344,7 @@ void Engine::gatherMidi(const AudioCallbackContext& ctx) noexcept {
     while (const QueuedMidi* next = midiQueue.peek()) {
         if (next->message.captureTime >= blockStart) break;   // belongs to the next block
         midiQueue.pop(item);
+        countSource(item.source);
 
         const Nanoseconds sinceWindow = item.message.captureTime - windowStart;
         std::uint32_t     offset      = 0;

@@ -63,6 +63,8 @@ void RackController::tick(double now) {
     for (auto it = rows.begin(); it != rows.end();)
         it = session.slot(it->first) != nullptr ? std::next(it) : rows.erase(it);
 
+    buildDock(now);
+
     StatusModel& status = model.status;
     if (config.audioStatus) {
         const AudioStatus audio = config.audioStatus();
@@ -158,6 +160,51 @@ RowModel RackController::rowFor(const Session::Slot& slot, double now, double dt
     return row;
 }
 
+void RackController::buildDock(double now) {
+    model.inputs.clear();
+    for (const Session::OpenInput& input : session.openInputs()) {
+        InputChipModel chip;
+        chip.label     = sourceLabel(input.ref);
+        chip.isVirtual = input.ref.kind == MidiSourceRef::Kind::Virtual;
+        chip.protocol  = sourceProtocolOf(input.ref);
+        auto& [lastCount, litUntil] = inputActivity[input.handle];
+        if (const std::uint32_t count = engine.sourceActivity(input.handle); count != lastCount) {
+            lastCount = count;
+            litUntil  = now + kMidiLightSec;
+        }
+        chip.active = now < litUntil;
+        model.inputs.push_back(std::move(chip));
+    }
+
+    model.sequences.clear();
+    for (const Session::SequenceEntry& entry : session.sequences()) {
+        const Sequence&  seq = entry.sequence;
+        SequenceRowModel row;
+        row.id              = seq.id;
+        row.name            = seq.name;
+        row.protocol        = seq.protocol;
+        row.edo             = seq.edo;
+        row.rate            = seq.rate;
+        row.length          = seq.length;
+        row.launch          = seq.launch;
+        row.repeat          = seq.repeat;
+        row.noteOffOffsetMs = seq.noteOffOffsetMs;
+        row.noteCount       = seq.notes.size();
+        for (const SequenceNote& note : seq.notes) {
+            row.noteStarts.push_back(note.start);
+            row.lastNoteEnd = std::max(row.lastNoteEnd, note.start + note.length);
+        }
+        std::sort(row.noteStarts.begin(), row.noteStarts.end());
+        row.noteStarts.erase(std::unique(row.noteStarts.begin(), row.noteStarts.end()), row.noteStarts.end());
+        row.state    = session.sequenceState(seq.id);
+        row.position = session.sequencePosition(seq.id);
+        for (const Session::Slot& slot : session.slots())
+            if (slot.saved.source.kind == MidiSourceRef::Kind::Sequence && slot.saved.source.name == seq.id)
+                row.usedBy.push_back(slot.saved.name);
+        model.sequences.push_back(std::move(row));
+    }
+}
+
 std::vector<std::string> RackController::takeNotices() {
     return std::exchange(notices, {});
 }
@@ -183,6 +230,10 @@ void RackController::refreshSources() {
         const MidiSourceRef ref{MidiSourceRef::Kind::Device, info->id};
         model.sources.push_back(SourceChoice{info->name.empty() ? info->id : info->name, ref,
                                              sourceProtocolOf(ref), info->isHardware});
+    }
+    for (const Session::SequenceEntry& entry : session.sequences()) {   // last: the rack's own sources
+        const MidiSourceRef ref{MidiSourceRef::Kind::Sequence, entry.sequence.id};
+        model.sources.push_back(SourceChoice{"Sequence: " + entry.sequence.name, ref, sourceProtocolOf(ref), false});
     }
 }
 
@@ -337,6 +388,67 @@ void RackController::openAllEditors() {
 std::size_t RackController::openEditorCount() const {
     return static_cast<std::size_t>(std::count_if(editors.begin(), editors.end(),
                                                   [](const auto& e) { return e.second->isOpen(); }));
+}
+
+// --- sequences ---------------------------------------------------------------------
+
+template <typename Change>
+void RackController::editSequence(const std::string& id, Change change) {
+    const Session::SequenceEntry* entry = session.sequence(id);
+    if (entry == nullptr) return;
+    Sequence seq = entry->sequence;
+    change(seq);
+    std::string problem;
+    if (!session.setSequence(seq, problem)) notice(problem);
+}
+
+std::string RackController::addSequence(MidiProtocol protocol) {
+    const std::string id = session.addSequence(protocol);
+    refreshSources();   // it's a source now
+    return id;
+}
+
+void RackController::removeSequence(const std::string& id) {
+    if (session.removeSequence(id)) refreshSources();
+}
+
+void RackController::togglePlay(const std::string& id) {
+    switch (session.sequenceState(id)) {
+        case SequenceState::Stopped:
+        case SequenceState::Stopping: session.startSequence(id); break;   // a pending stop is cancelled
+        case SequenceState::Starting:
+        case SequenceState::Playing: session.stopSequence(id); break;     // a pending start is cancelled
+    }
+}
+
+void RackController::stopAllSequences() {
+    session.stopAllSequences();
+}
+
+void RackController::setSequenceRate(const std::string& id, SequenceRate rate) {
+    editSequence(id, [rate](Sequence& seq) { seq.rate = rate; });
+}
+
+void RackController::setSequenceLength(const std::string& id, std::uint32_t length) {
+    const Session::SequenceEntry* entry = session.sequence(id);
+    if (entry == nullptr) return;
+    length = std::clamp<std::uint32_t>(length, 1, 4096);
+    std::uint32_t lastEnd = 0;
+    for (const SequenceNote& note : entry->sequence.notes) lastEnd = std::max(lastEnd, note.start + note.length);
+    if (length < lastEnd) {
+        notice(entry->sequence.name + ": notes reach unit " + std::to_string(lastEnd) +
+               "; delete them in the editor to make it shorter");
+        return;
+    }
+    editSequence(id, [length](Sequence& seq) { seq.length = length; });
+}
+
+void RackController::setSequenceLaunch(const std::string& id, LaunchQuantize launch) {
+    editSequence(id, [launch](Sequence& seq) { seq.launch = launch; });
+}
+
+void RackController::setSequenceRepeat(const std::string& id, bool repeat) {
+    editSequence(id, [repeat](Sequence& seq) { seq.repeat = repeat; });
 }
 
 // --- saving and quitting -----------------------------------------------------------

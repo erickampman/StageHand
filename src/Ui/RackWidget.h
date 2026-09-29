@@ -74,6 +74,9 @@ private:
     float faderX0() const;
     float faderX1();
     float maxScroll();
+    float dockHeight();
+    float dockTop();
+    float dockMaxScroll();
 
     // --- drawing helpers
     void  fill(UiColor c, int alpha = 255);
@@ -95,6 +98,9 @@ private:
     void drawRowPlugin(const RowModel& row, float y);
     void drawRowOutput(const RowModel& row, float y);
     void drawStatus();
+    void drawDock();
+    void drawSequenceRow(const SequenceRowModel& seq, float y);
+    void openSequenceMenu(const SequenceRowModel& seq, float x, float y);
     void drawMenu();
     void drawFilterPanel();
     // [-] value [+]; `change` gets the direction and whether Shift made it a big step.
@@ -120,7 +126,8 @@ private:
     std::string                                           filterId;  // the row whose filter panel is open
     MidiFilter                                            panelFilter;
 
-    float         scrollY = 0;
+    float         scrollY    = 0;
+    float         dockScroll = 0;   // the dock's sequence rows
     std::string   lastFaderId;        // double-click on a fader
     std::uint32_t lastFaderTime = 0;
     std::uint32_t lastTempoTime = 0;  // double-click on the tempo...

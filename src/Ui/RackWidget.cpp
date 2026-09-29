@@ -28,6 +28,9 @@ constexpr float kMinDb      = -60.0f;   // one scale for fader and meters, so th
 constexpr float kMaxDb      = 6.0f;
 constexpr float kKeyBarX    = kPad + 16.0f;   // 128 keys at 1 logical pixel each
 constexpr float kMenuItemH  = 26.0f;
+constexpr float kDockHeadH  = 28.0f;   // the sources dock: header, inputs row, sequence rows
+constexpr float kInputsH    = 34.0f;
+constexpr float kSeqRowH    = 44.0f;
 
 constexpr UiColor kBg{22, 24, 30}, kRowA{31, 34, 42}, kRowB{35, 38, 47}, kBarBg{16, 18, 23}, kPanel{44, 48, 59},
     kText{232, 234, 240}, kDim{140, 146, 160}, kAccent{90, 160, 255}, kAmber{240, 170, 50}, kRed{232, 72, 60},
@@ -119,7 +122,21 @@ float RackWidget::outputW() {
     return std::max(kMinOutputW, width() - outputX());
 }
 float RackWidget::rowsHeight() {
-    return height() - kToolbarH - kStatusH;
+    return dockTop() - kToolbarH;
+}
+// The dock grows with its sequences, up to a little over half the space; past
+// that its sequence rows scroll.
+float RackWidget::dockHeight() {
+    const float want = kDockHeadH + kInputsH + static_cast<float>(controller.view().sequences.size()) * kSeqRowH;
+    const float most = std::max(kDockHeadH + kInputsH + kSeqRowH, (height() - kToolbarH - kStatusH) * 0.55f);
+    return std::min(want, most);
+}
+float RackWidget::dockTop() {
+    return height() - kStatusH - dockHeight();
+}
+float RackWidget::dockMaxScroll() {
+    const float content = static_cast<float>(controller.view().sequences.size()) * kSeqRowH;
+    return std::max(0.0f, content - (dockHeight() - kDockHeadH - kInputsH));
 }
 float RackWidget::rowY(std::size_t row) const {
     return kToolbarH + static_cast<float>(row) * kRowH - scrollY;
@@ -222,6 +239,7 @@ void RackWidget::onNanoDisplay() {
     resetScissor();
 
     // Drawn after the rows, so their regions cover rows scrolled under them.
+    drawDock();
     drawToolbar();
     drawStatus();
 
@@ -494,6 +512,197 @@ void RackWidget::drawStatus() {
     else
         label(tx, y + kStatusH / 2, "Not saving: " + s.noSaveReason, 12.0f, kAmber);
     restore();
+}
+
+// --- the sources dock (docs/sequences.md, section 4) -----------------------------------
+
+void RackWidget::drawDock() {
+    const RackViewModel& view = controller.view();
+    const float          top  = dockTop();
+    box(0, top, width(), dockHeight(), kBarBg);
+    box(0, top, width(), 1.0f, kTrack);
+    region(0, top, width(), dockHeight(), nullptr, [this](float notches) {
+        dockScroll = std::clamp(dockScroll - notches * kSeqRowH / 2.0f, 0.0f, dockMaxScroll());
+    });
+
+    // Header: title, + Sequence, Stop all.
+    label(kPad, top + kDockHeadH / 2, "Sources", 13.0f, kDim);
+    const float stopX = width() - kPad - 80.0f, addX = stopX - 8.0f - 110.0f;
+    button(addX, top + 3.0f, 110.0f, 22.0f, "+ Sequence", false, true, kAccent);
+    region(addX, top + 3.0f, 110.0f, 22.0f, [this, addX, top](const Press&) {
+        Menu m;
+        m.x     = addX;
+        m.y     = top + kDockHeadH;
+        m.w     = 220.0f;
+        m.title = "New sequence";
+        m.items.push_back(MenuItem{"MIDI 2.0 (EDO pitches)", [this] { controller.addSequence(MidiProtocol::Midi2); }});
+        m.items.push_back(MenuItem{"MIDI 1.0 (note numbers)", [this] { controller.addSequence(MidiProtocol::Midi1); }});
+        openMenu(std::move(m));
+    });
+    button(stopX, top + 3.0f, 80.0f, 22.0f, "Stop all", false, !view.sequences.empty(), kAccent);
+    region(stopX, top + 3.0f, 80.0f, 22.0f, [this](const Press&) { controller.stopAllSequences(); });
+
+    // Inputs: one chip per open input, lit by its messages.
+    const float iy = top + kDockHeadH;
+    label(kPad, iy + kInputsH / 2, "Inputs", 12.0f, kDim);
+    float x = kPad + 56.0f;
+    save();
+    scissor(0, iy, width() - kPad, kInputsH);
+    for (const InputChipModel& chip : view.inputs) {
+        const std::string text = chip.label;
+        const float       w    = labelWidth(text, 12.0f) + 30.0f;
+        box(x, iy + 6.0f, w, 22.0f, kTrack, 11.0f);
+        beginPath();
+        circle(x + 11.0f, iy + 17.0f, 4.0f);
+        fill(chip.active ? kGreen : kBarBg);
+        NanoVG::fill();
+        label(x + 21.0f, iy + 17.0f, text, 12.0f, kText);
+        x += w + 8.0f;
+    }
+    if (view.inputs.empty()) label(x, iy + kInputsH / 2, "no MIDI inputs open", 12.0f, kDim);
+    restore();
+
+    // Sequence rows, scrolled if there are more than fit.
+    const float rowsTop = iy + kInputsH, rowsH = dockHeight() - kDockHeadH - kInputsH;
+    dockScroll          = std::clamp(dockScroll, 0.0f, dockMaxScroll());
+    save();
+    scissor(0, rowsTop, width(), rowsH);
+    for (std::size_t i = 0; i < view.sequences.size(); ++i) {
+        const float y = rowsTop + static_cast<float>(i) * kSeqRowH - dockScroll;
+        if (y + kSeqRowH < rowsTop || y > rowsTop + rowsH) continue;
+        drawSequenceRow(view.sequences[i], y);
+    }
+    restore();
+    if (view.sequences.empty() && rowsH >= kSeqRowH / 2)
+        label(kPad + 56.0f, rowsTop + kSeqRowH / 2, "No sequences yet. Add one with + Sequence.", 12.0f, kDim);
+}
+
+void RackWidget::drawSequenceRow(const SequenceRowModel& seq, float y) {
+    box(0, y, width(), 1.0f, kLine);
+
+    // Play/Stop: a triangle or a square; a pending start or stop blinks.
+    const bool pending = seq.state == SequenceState::Starting || seq.state == SequenceState::Stopping;
+    const bool running = seq.state == SequenceState::Playing || seq.state == SequenceState::Stopping;
+    const bool blinkOn = std::fmod(nowSeconds(), 0.5) < 0.25;
+    box(kPad, y + 8.0f, 32.0f, 28.0f, pending ? (blinkOn ? kAmber : kTrack) : running ? kGreen : kTrack, 4.0f);
+    beginPath();
+    if (running) {
+        rect(kPad + 10.0f, y + 16.0f, 12.0f, 12.0f);
+    } else {
+        moveTo(kPad + 11.0f, y + 15.0f);
+        lineTo(kPad + 23.0f, y + 22.0f);
+        lineTo(kPad + 11.0f, y + 29.0f);
+        closePath();
+    }
+    fill(running || pending ? kBarBg : kText);
+    NanoVG::fill();
+    region(kPad, y + 8.0f, 32.0f, 28.0f, [this, id = seq.id](const Press&) { controller.togglePlay(id); });
+
+    // Name, and what it is and who plays it.
+    const float nameX = kPad + 44.0f, mapX = 262.0f, mapW = 240.0f;
+    save();
+    scissor(nameX, y, mapX - nameX - 10.0f, kSeqRowH);
+    label(nameX, y + 16.0f, seq.name, 14.0f, kText);
+    std::string detail = seq.protocol == MidiProtocol::Midi2 ? "MIDI 2.0, " + std::to_string(seq.edo) + "-EDO"
+                                                             : std::string("MIDI 1.0");
+    detail += ", " + std::to_string(seq.noteCount) + (seq.noteCount == 1 ? " note" : " notes");
+    if (!seq.usedBy.empty()) {
+        detail += "  >";
+        for (std::size_t i = 0; i < seq.usedBy.size(); ++i) detail += (i ? ", " : " ") + seq.usedBy[i];
+    }
+    label(nameX, y + 33.0f, detail, 11.0f, seq.usedBy.empty() ? kAmber : kDim);
+    restore();
+
+    // Mini-map: beats, note starts, the playhead.
+    box(mapX, y + 10.0f, mapW, 24.0f, kRowA, 3.0f);
+    const float  unitW        = mapW / static_cast<float>(seq.length);
+    const double unitsPerBeat = seq.rate.unitsPerBeat();
+    if (unitsPerBeat >= 1.0)
+        for (double u = 0.0; u < seq.length; u += unitsPerBeat)
+            box(mapX + static_cast<float>(u) * unitW, y + 10.0f, 1.0f, 24.0f, kTrack);
+    for (const std::uint32_t start : seq.noteStarts)
+        box(mapX + static_cast<float>(start) * unitW, y + 16.0f, std::max(2.0f, unitW - 1.0f), 12.0f, kAccent, 1.0f);
+    if (running)
+        box(mapX + static_cast<float>(seq.position) * unitW - 1.0f, y + 8.0f, 2.0f, 28.0f, kAmber);
+
+    // Rate, length, launch, Repeat, the row menu.
+    float x = mapX + mapW + 12.0f;
+    const std::string rate = seq.rate.denominator == 1
+                                 ? std::to_string(seq.rate.numerator)
+                                 : std::to_string(seq.rate.numerator) + "/" + std::to_string(seq.rate.denominator);
+    button(x, y + 10.0f, 70.0f, 24.0f, "Rate " + rate, false, true, kAccent);
+    region(x, y + 10.0f, 70.0f, 24.0f, [this, id = seq.id, x, y, current = seq.rate](const Press&) {
+        Menu m;
+        m.x     = x;
+        m.y     = y + 36.0f;
+        m.w     = 190.0f;
+        m.title = "Units per beat";
+        for (const auto [n, d] : {std::pair{1, 4}, {1, 3}, {1, 2}, {1, 1}, {2, 1}, {3, 1}, {4, 1}, {8, 1}, {16, 1}}) {
+            const std::string text = d == 1 ? std::to_string(n) : std::to_string(n) + "/" + std::to_string(d);
+            const auto        r    = SequenceRate{static_cast<std::uint16_t>(n), static_cast<std::uint16_t>(d)};
+            m.items.push_back(MenuItem{text + (n == 4 && d == 1 ? "   (sixteenths)" : ""),
+                                       [this, id, r] { controller.setSequenceRate(id, r); },
+                                       current.numerator == r.numerator && current.denominator == r.denominator});
+        }
+        openMenu(std::move(m));
+    });
+    x += 78.0f;
+    stepper(x, y + 11.0f, std::to_string(seq.length) + " units", [this, id = seq.id](int dir, bool big) {
+        for (const SequenceRowModel& now : controller.view().sequences)
+            if (now.id == id)
+                controller.setSequenceLength(id, static_cast<std::uint32_t>(
+                                                     std::max(1, static_cast<int>(now.length) + dir * (big ? 4 : 1))));
+    });
+    x += 148.0f;
+    const char* launch = seq.launch == LaunchQuantize::Bar ? "Bar" : seq.launch == LaunchQuantize::Beat ? "Beat" : "Now";
+    button(x, y + 10.0f, 56.0f, 24.0f, launch, false, true, kAccent);
+    region(x, y + 10.0f, 56.0f, 24.0f, [this, id = seq.id, x, y, current = seq.launch](const Press&) {
+        Menu m;
+        m.x     = x;
+        m.y     = y + 36.0f;
+        m.w     = 200.0f;
+        m.title = "Play and Stop take effect at";
+        for (const auto [q, text] : {std::pair{LaunchQuantize::Bar, "The next bar"},
+                                     {LaunchQuantize::Beat, "The next beat"},
+                                     {LaunchQuantize::Immediate, "Immediately"}})
+            m.items.push_back(MenuItem{text, [this, id, q = q] { controller.setSequenceLaunch(id, q); }, current == q});
+        openMenu(std::move(m));
+    });
+    x += 62.0f;
+    button(x, y + 10.0f, 64.0f, 24.0f, "Repeat", seq.repeat, true, kAccent);
+    region(x, y + 10.0f, 64.0f, 24.0f,
+           [this, id = seq.id, repeat = seq.repeat](const Press&) { controller.setSequenceRepeat(id, !repeat); });
+    x += 70.0f;
+    box(x, y + 10.0f, 26.0f, 24.0f, kTrack, 4.0f);
+    for (int i = -1; i <= 1; ++i) {
+        beginPath();
+        circle(x + 13.0f + static_cast<float>(i) * 6.0f, y + 22.0f, 2.0f);
+        fill(kText);
+        NanoVG::fill();
+    }
+    region(x, y + 10.0f, 26.0f, 24.0f, [this, seq, x, y](const Press&) { openSequenceMenu(seq, x, y + 36.0f); });
+}
+
+void RackWidget::openSequenceMenu(const SequenceRowModel& seq, float x, float y) {
+    Menu m;
+    m.x     = x;
+    m.y     = y;
+    m.w     = 230.0f;
+    m.title = seq.name;
+    m.items.push_back(MenuItem{"Edit notes (the editor comes next)", {}});
+    m.items.push_back(MenuItem{"Remove...", [this, id = seq.id, name = seq.name, x, y] {
+                                   Menu confirm;
+                                   confirm.x     = x;
+                                   confirm.y     = y;
+                                   confirm.w     = 230.0f;
+                                   confirm.title = "Remove " + name + "?";
+                                   confirm.items.push_back(
+                                       MenuItem{"Remove", [this, id] { controller.removeSequence(id); }, false, true});
+                                   confirm.items.push_back(MenuItem{"Cancel", [] {}});
+                                   openMenu(std::move(confirm));
+                               },
+                               false, true});
+    openMenu(std::move(m));
 }
 
 // --- menus ---------------------------------------------------------------------------
@@ -809,15 +1018,14 @@ bool RackWidget::onScroll(const ScrollEvent& ev) {
     const float sf = scaleFactor();
     const float x = static_cast<float>(ev.pos.getX()) / sf, y = static_cast<float>(ev.pos.getY()) / sf;
     const float notches = static_cast<float>(ev.delta.getY());
+    // The topmost region under the pointer that takes the wheel (a fader, a
+    // value, a menu, the dock) gets it; otherwise it scrolls the rack.
     for (auto r = regions.rbegin(); r != regions.rend(); ++r) {
-        if (x < r->x || x >= r->x + r->w || y < r->y || y >= r->y + r->h) continue;
-        if (r->wheel) {
-            const auto wheel = r->wheel;
-            wheel(notches);
-            repaint();
-            return true;
-        }
-        break;   // the topmost region takes no wheel: scroll the rack
+        if (x < r->x || x >= r->x + r->w || y < r->y || y >= r->y + r->h || !r->wheel) continue;
+        const auto wheel = r->wheel;
+        wheel(notches);
+        repaint();
+        return true;
     }
     if (menu || !filterId.empty()) return true;
     scrollY = std::clamp(scrollY - notches * kRowH / 2.0f, 0.0f, maxScroll());

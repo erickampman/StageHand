@@ -34,6 +34,13 @@ public:
     // hardware), so rack sources resolve to it instead of opening it twice.
     void addOpenSource(const MidiSourceRef& ref, MidiSourceHandle handle);
 
+    // The MIDI inputs open now, in the order they were opened (the dock's chips).
+    struct OpenInput {
+        MidiSourceRef    ref;
+        MidiSourceHandle handle = kInvalidMidiSource;
+    };
+    const std::vector<OpenInput>& openInputs() const noexcept { return inputs; }
+
     struct LoadReport {
         std::vector<std::string> warnings;   // missing plugins, unconnected devices, ...
     };
@@ -162,6 +169,7 @@ private:
     std::string                             name;
     std::vector<Slot>                       loaded;
     std::map<std::string, MidiSourceHandle> openSources;   // "device:<id>" / "virtual:<name>"
+    std::vector<OpenInput>                  inputs;        // the same, in order
     double                                  sampleRate     = 0.0;
     double                                  tempo          = 120.0;
     int                                     sigNumerator   = 4;

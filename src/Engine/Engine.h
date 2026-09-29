@@ -102,6 +102,10 @@ public:
     // block. False if the command queue is full (try again next tick).
     bool sendSequenceCommand(MidiSourceHandle source, SequenceCommand command) noexcept;
 
+    // Messages received from one MIDI input so far (0 if none yet): the sources
+    // dock's activity lights compare it between ticks. Any thread.
+    std::uint32_t sourceActivity(MidiSourceHandle source) const noexcept;
+
     // --- transport (docs/sequences.md, section 1) ---
     // A free-running beat clock: it starts at beat 0 and always advances. Tempo
     // and time signature are read once per block, so a change lands at the next
@@ -205,6 +209,15 @@ private:
     SequenceEvent                 sequenceEvents[kMaxSequenceEvents];
     std::size_t                   sequenceEventCount = 0;
     std::atomic<std::uint64_t>    sequenceEventsFull{0};
+
+    // Per-input message counts (audio writes, main reads). A slot is claimed by
+    // the audio thread the first time a source is heard; 32 is plenty of inputs.
+    struct SourceCount {
+        std::atomic<MidiSourceHandle> source{kInvalidMidiSource};
+        std::atomic<std::uint32_t>    count{0};
+    };
+    SourceCount sourceCounts[32];
+    void        countSource(MidiSourceHandle source) noexcept;
 
     // Transport. Tempo and signature: main writes, audio reads per block. The
     // beat clock itself is audio-thread state, published after each block.

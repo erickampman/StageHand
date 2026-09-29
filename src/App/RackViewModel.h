@@ -6,6 +6,8 @@
 
 #include "Core/MidiFilter.h"
 #include "Core/MidiMessage.h"
+#include "Core/Sequence.h"
+#include "Engine/SequenceSet.h"   // SequenceState
 #include "Plugin/PortLayout.h"
 #include "Session/Rack.h"
 
@@ -87,12 +89,41 @@ struct TransportModel {
     bool   onBeat       = false; // the first part of a beat: the light is lit
 };
 
+// One sequence in the sources dock (docs/sequences.md, section 4).
+struct SequenceRowModel {
+    std::string              id;
+    std::string              name;
+    MidiProtocol             protocol = MidiProtocol::Midi2;
+    int                      edo      = 12;
+    SequenceRate             rate;
+    std::uint32_t            length   = 16;
+    LaunchQuantize           launch   = LaunchQuantize::Bar;
+    bool                     repeat   = true;
+    double                   noteOffOffsetMs = 0.0;
+    std::size_t              noteCount = 0;
+    std::vector<std::uint32_t> noteStarts;   // distinct start units, for the dock's mini-map
+    std::uint32_t            lastNoteEnd = 0;  // the length can't go below this
+    SequenceState            state    = SequenceState::Stopped;
+    double                   position = 0.0;  // units into the loop
+    std::vector<std::string> usedBy;          // names of the rows that play it
+};
+
+// One open MIDI input in the dock's inputs row.
+struct InputChipModel {
+    std::string    label;
+    bool           isVirtual = false;
+    SourceProtocol protocol  = SourceProtocol::Mixed;
+    bool           active    = false;   // messages arrived a moment ago
+};
+
 struct RackViewModel {
     std::string               rackName;
     bool                      modified = false;
     TransportModel            transport;
     std::vector<RowModel>     rows;
-    std::vector<SourceChoice> sources;   // for the source menu: All, virtual inputs, devices
+    std::vector<SourceChoice> sources;   // for the source menu: All, virtual inputs, devices, sequences
+    std::vector<InputChipModel>   inputs;      // the dock's inputs row
+    std::vector<SequenceRowModel> sequences;   // the dock's sequence rows
     StatusModel               status;
 };
 

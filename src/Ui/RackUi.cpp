@@ -38,16 +38,18 @@ std::unique_ptr<RackUi> RackUi::open(RackController& controller) {
         impl->widget = std::make_unique<RackWidget>(impl->window, controller);
     }
 
-    // Logical sizes, as RackWidget lays out: 990 wide, room for 3 to 10 rows.
+    // Logical sizes, as RackWidget lays out: 990 wide, room for 3 to 10 rows,
+    // plus the sources dock (its header, inputs row, and up to 3 sequences).
     const double sf   = impl->window.getScaleFactor();
     const auto   rows = static_cast<double>(std::clamp<std::size_t>(controller.view().rows.size(), 3, 10));
+    const double dock = 28.0 + 34.0 + 44.0 * static_cast<double>(std::clamp<std::size_t>(controller.view().sequences.size(), 1, 3));
     const auto   px   = [sf](double logical) { return static_cast<unsigned>(std::lround(logical * sf)); };
     const std::string title =
         "StageHand - " + (controller.view().rackName.empty() ? std::string("Untitled rack") : controller.view().rackName);
     impl->window.setTitle(title.c_str());
     impl->window.setResizable(true);
-    impl->window.setGeometryConstraints(px(930.0), px(44.0 + 64.0 * 2.0 + 30.0));
-    impl->window.setSize(px(990.0), px(44.0 + 64.0 * rows + 30.0));
+    impl->window.setGeometryConstraints(px(930.0), px(44.0 + 64.0 * 2.0 + 28.0 + 34.0 + 44.0 + 30.0));
+    impl->window.setSize(px(990.0), px(44.0 + 64.0 * rows + dock + 30.0));
     impl->window.show();
     return std::unique_ptr<RackUi>(new RackUi(std::move(impl)));
 }

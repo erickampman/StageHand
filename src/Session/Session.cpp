@@ -29,7 +29,10 @@ Session::Session(PluginFactory& pluginFactory, HostServices& hostServices, MidiI
     : factory(pluginFactory), host(hostServices), midi(midiInput), engine(runningEngine) {}
 
 void Session::addOpenSource(const MidiSourceRef& ref, MidiSourceHandle handle) {
-    if (ref.kind != MidiSourceRef::Kind::All && handle != kInvalidMidiSource) openSources[keyOf(ref)] = handle;
+    if (ref.kind == MidiSourceRef::Kind::All || ref.kind == MidiSourceRef::Kind::Sequence ||
+        handle == kInvalidMidiSource)
+        return;
+    if (openSources.emplace(keyOf(ref), handle).second) inputs.push_back(OpenInput{ref, handle});
 }
 
 bool Session::load(const Rack& rack, double rate, LoadReport& report) {
@@ -384,7 +387,7 @@ MidiSourceHandle Session::resolve(const MidiSourceRef& ref, std::string& problem
     if (const auto it = openSources.find(key); it != openSources.end()) return it->second;
     if (ref.kind == MidiSourceRef::Kind::Device) {
         if (const MidiSourceHandle handle = midi.open(ref.name); handle != kInvalidMidiSource) {
-            openSources[key] = handle;
+            addOpenSource(ref, handle);
             return handle;
         }
         problem = "MIDI device '" + ref.name + "' isn't connected";

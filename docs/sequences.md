@@ -150,6 +150,27 @@ Details settled in the code:
   held, or is transposed by the lowest held key), and launching a sequence with
   a rack switch.
 
+Implemented 2026-09-29 (milestone 3), the sources dock at the bottom of the
+main window:
+- **Header:** "+ Sequence" (MIDI 2.0 with EDO pitches, or MIDI 1.0) and Stop all.
+- **Inputs row:** a chip per open MIDI input, lit by its messages. The engine
+  now counts messages per input (`Engine::sourceActivity()`).
+- **Sequence rows:**
+  - Play/Stop: a triangle or a square, blinking amber while a quantized start
+    or stop is pending.
+  - Name, protocol and EDO, note count, and the rows that play it (amber when
+    none do).
+  - A mini-map with beat lines, note starts and the playhead.
+  - A rate menu (1/4 to 16) and a length stepper. The stepper won't go below
+    the last note's end and says why; notes are deleted in the editor, never
+    by the length control.
+  - A launch menu, a Repeat toggle, and a "•••" menu with Remove (confirmed).
+- **Rows' source menus** list the sequences after the devices.
+- **Size:** the dock grows with its sequences up to a little over half the
+  window, then scrolls with the wheel.
+- **Not yet:** mapping Play/Stop to MIDI (milestone 5), and setting the note-off
+  offset or renaming (the editor, milestone 4).
+
 ## 5. The editor window
 
 A second DGL window (the Application supports several), opened from the dock

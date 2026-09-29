@@ -269,6 +269,85 @@ void testTransport() {
     CHECK(view.modified);
 }
 
+void testDock() {
+    Rig rig;
+    rig.session->addOpenSource(MidiSourceRef{MidiSourceRef::Kind::Virtual, "MIDI 2.0 In"}, 7);
+    Rack     rack;
+    Sequence arp;
+    arp.id       = "arp";
+    arp.name     = "Arp";
+    arp.protocol = MidiProtocol::Midi1;
+    arp.launch   = LaunchQuantize::Immediate;
+    arp.length   = 8;
+    arp.notes    = {{0, 1, 60, 100}, {4, 2, 64, 100}, {4, 1, 67, 100}};
+    rack.sequences = {arp};
+    RackSlot lead  = slot("lead", "synth", "/clap/Synth.clap");
+    lead.name      = "Lead";
+    lead.source    = MidiSourceRef{MidiSourceRef::Kind::Sequence, "arp"};
+    rack.slots     = {lead};
+    Session::LoadReport report;
+    rig.session->load(rack, 48000.0, report);
+    RackController controller(*rig.session, *rig.engine, rig.midi, rig.factory, rig.config());
+    const RackViewModel& view = controller.view();
+
+    // The sequence row: settings, the mini-map's starts, who plays it.
+    CHECK(view.sequences.size() == 1);
+    if (view.sequences.empty()) return;
+    const SequenceRowModel& row = view.sequences[0];
+    CHECK(row.name == "Arp" && row.protocol == MidiProtocol::Midi1 && row.length == 8 && row.noteCount == 3);
+    CHECK((row.noteStarts == std::vector<std::uint32_t>{0, 4}) && row.lastNoteEnd == 6);
+    CHECK(row.usedBy == std::vector<std::string>{"Lead"} && row.state == SequenceState::Stopped);
+    CHECK(view.rows[0].sourceLabel == "Arp" && view.rows[0].sourceProtocol == SourceProtocol::Midi1);
+
+    // It's in the source menu, after the devices.
+    CHECK(!view.sources.empty() && view.sources.back().ref.kind == MidiSourceRef::Kind::Sequence &&
+          view.sources.back().label == "Sequence: Arp");
+
+    // Play/Stop toggles; the state follows the engine.
+    controller.togglePlay("arp");
+    runBlock(*rig.engine);
+    controller.tick(1.0);
+    CHECK(view.sequences[0].state == SequenceState::Playing && view.sequences[0].position > 0.0);
+    controller.togglePlay("arp");   // Immediate: stops at once
+    runBlock(*rig.engine);
+    controller.tick(1.1);
+    CHECK(view.sequences[0].state == SequenceState::Stopped);
+
+    // Settings; the length can't cut notes off.
+    controller.setSequenceRate("arp", SequenceRate{1, 2});
+    controller.setSequenceLaunch("arp", LaunchQuantize::Beat);
+    controller.setSequenceRepeat("arp", false);
+    controller.setSequenceLength("arp", 5);   // notes reach unit 6: refused
+    const std::vector<std::string> notices = controller.takeNotices();
+    CHECK(notices.size() == 1 && notices[0].find("unit 6") != std::string::npos);
+    controller.setSequenceLength("arp", 6);
+    controller.tick(1.2);
+    CHECK(view.sequences[0].rate.denominator == 2 && view.sequences[0].launch == LaunchQuantize::Beat);
+    CHECK(!view.sequences[0].repeat && view.sequences[0].length == 6);
+
+    // Adding and removing.
+    const std::string id = controller.addSequence(MidiProtocol::Midi2);
+    controller.tick(1.3);
+    CHECK(id == "seq" && view.sequences.size() == 2 && view.sequences[1].protocol == MidiProtocol::Midi2);
+    controller.removeSequence("arp");
+    controller.tick(1.4);
+    CHECK(view.sequences.size() == 1 && !view.rows[0].sourceConnected);
+
+    // The inputs row: one chip per open input, lit briefly by its messages.
+    CHECK(view.inputs.size() == 1 && view.inputs[0].label == "MIDI 2.0 In" && view.inputs[0].isVirtual);
+    CHECK(!view.inputs[0].active);
+    TimedMidiMessage m;
+    m.captureTime       = 1'000'000'000 - 1'000'000;
+    m.message.words[0]  = 0x20903C64;
+    m.message.wordCount = 1;
+    rig.engine->onMidi(7, m);
+    runBlock(*rig.engine);
+    controller.tick(1.5);
+    CHECK(view.inputs[0].active);
+    controller.tick(1.8);
+    CHECK(!view.inputs[0].active);
+}
+
 void testSave() {
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "stagehand-controller-test";
     std::filesystem::remove_all(dir);
@@ -309,5 +388,6 @@ int main() {
     testAddPlugin();
     testSave();
     testTransport();
+    testDock();
     return test::finish("RackController");
 }
