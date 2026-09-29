@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include "Core/Ump.h"
 #include "Session/RackFile.h"
 
 namespace stagehand {
@@ -36,6 +37,7 @@ void RackController::service() {
 }
 
 void RackController::tick(double now) {
+    if (Engine::Learned learned; !learningId.empty() && engine.takeLearned(learned)) finishLearn(learned);
     session.flush();
 
     for (auto it = editors.begin(); it != editors.end();)
@@ -201,6 +203,15 @@ void RackController::buildDock(double now) {
         for (const Session::Slot& slot : session.slots())
             if (slot.saved.source.kind == MidiSourceRef::Kind::Sequence && slot.saved.source.name == seq.id)
                 row.usedBy.push_back(slot.saved.name);
+        for (std::size_t i = 0; i < seq.triggers.size(); ++i) {
+            std::string text = triggerText(seq.triggers[i]);
+            if (i < entry.triggerSources.size() && entry.triggerSources[i] == kInvalidMidiSource &&
+                seq.triggers[i].source.kind != MidiSourceRef::Kind::All)
+                text += " (not connected)";
+            row.triggers.push_back(std::move(text));
+        }
+        row.learning       = learningId == seq.id;
+        row.learningAction = learningAction;
         model.sequences.push_back(std::move(row));
     }
 }
@@ -414,6 +425,7 @@ std::string RackController::addSequence(MidiProtocol protocol) {
 }
 
 void RackController::removeSequence(const std::string& id) {
+    if (id == learningId) cancelLearn();
     if (session.removeSequence(id)) refreshSources();
 }
 
@@ -482,6 +494,64 @@ void RackController::setSequenceGroup(const std::string& id, int group) {
 
 void RackController::setSequenceNoteOffOffset(const std::string& id, double ms) {
     editSequence(id, [ms](Sequence& seq) { seq.noteOffOffsetMs = std::clamp(ms, -1000.0, 1000.0); });
+}
+
+void RackController::learnTrigger(const std::string& id, SequenceTrigger::Action action) {
+    if (session.sequence(id) == nullptr) return;
+    learningId     = id;
+    learningAction = action;
+    engine.armLearn();
+}
+
+void RackController::cancelLearn() {
+    if (learningId.empty()) return;
+    engine.cancelLearn();
+    learningId.clear();
+}
+
+void RackController::removeTrigger(const std::string& id, std::size_t index) {
+    editSequence(id, [index](Sequence& seq) {
+        if (index < seq.triggers.size()) seq.triggers.erase(seq.triggers.begin() + static_cast<std::ptrdiff_t>(index));
+    });
+}
+
+// The control MIDI learn heard becomes the sequence's trigger for the action.
+void RackController::finishLearn(const Engine::Learned& learned) {
+    const std::string id = std::exchange(learningId, {});
+    const Session::SequenceEntry* entry = session.sequence(id);
+    if (entry == nullptr) return;   // removed meanwhile
+    const auto input = std::find_if(session.openInputs().begin(), session.openInputs().end(),
+                                    [&](const Session::OpenInput& in) { return in.handle == learned.source; });
+    if (input == session.openInputs().end()) {
+        notice(entry->sequence.name + ": couldn't tell which input that came from; try again");
+        return;
+    }
+    SequenceTrigger t;
+    t.action  = learningAction;
+    t.source  = input->ref;
+    t.control = ump::isNoteOn(learned.message) ? SequenceTrigger::Control::Note : SequenceTrigger::Control::Controller;
+    t.group   = ump::group(learned.message);
+    t.channel = ump::channel(learned.message);
+    t.number  = static_cast<std::uint8_t>((learned.message.words[0] >> 8) & 0x7F);   // note or controller
+    editSequence(id, [&t](Sequence& seq) {
+        std::erase_if(seq.triggers, [&t](const SequenceTrigger& old) { return old.action == t.action || old.sameControl(t); });
+        seq.triggers.push_back(t);
+    });
+    notice(entry->sequence.name + ": " + triggerText(t));
+}
+
+std::string RackController::triggerText(const SequenceTrigger& t) const {
+    static const char* const names[] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+    std::string text = t.action == SequenceTrigger::Action::Start  ? "Start: "
+                       : t.action == SequenceTrigger::Action::Stop ? "Stop: "
+                                                                   : "Play/Stop: ";
+    text += sourceLabel(t.source) + ", ";
+    text += t.control == SequenceTrigger::Control::Note
+                ? "note " + std::string(names[t.number % 12]) + std::to_string(t.number / 12 - 1)
+                : "CC " + std::to_string(t.number);
+    text += ", ch " + std::to_string(t.channel + 1);
+    if (t.group != 0) text += " g" + std::to_string(t.group + 1);
+    return text;
 }
 
 // --- saving and quitting -----------------------------------------------------------

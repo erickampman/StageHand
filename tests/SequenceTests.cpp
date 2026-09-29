@@ -52,9 +52,20 @@ struct Rig {
         engine->collect();
     }
 
-    void set(const Sequence& seq) {
+    void set(const Sequence& seq, std::vector<CompiledSequence::Trigger> triggers = {}) {
         std::vector<CompiledSequence> list{CompiledSequence::compile(seq, kSeq, runtime)};
+        list[0].triggers = std::move(triggers);
         engine->commitSequences(std::make_unique<SequenceSet>(std::move(list)));
+    }
+
+    // Queue `m` from input `source` so it lands `offset` frames into the next
+    // block of `block` frames (run() stamps every block's start at 1 s).
+    void midi(MidiSourceHandle source, const MidiMessage& m, std::uint32_t offset, std::uint32_t block = 4800) {
+        TimedMidiMessage t;
+        t.message     = m;
+        t.captureTime = 1'000'000'000 - (std::int64_t{block} * 1'000'000'000 + 47999) / 48000 +
+                        (std::int64_t{offset} * 1'000'000'000 + 47999) / 48000;
+        engine->onMidi(source, t);
     }
 
     // Run `total` frames in blocks of `block`.
@@ -95,6 +106,25 @@ Sequence midi1(std::vector<SequenceNote> notes, std::uint32_t length = 4) {
     s.length   = length;
     s.notes    = std::move(notes);
     return s;
+}
+
+MidiMessage midi1Message(std::uint8_t status, std::uint8_t channel, std::uint8_t data1, std::uint8_t data2) {
+    MidiMessage m;
+    m.words[0]  = 0x20000000u | (std::uint32_t(status | channel) << 16) | (std::uint32_t{data1} << 8) | data2;
+    m.wordCount = 1;
+    return m;
+}
+
+CompiledSequence::Trigger trigger(SequenceTrigger::Control control, std::uint8_t channel, std::uint8_t number,
+                                  SequenceTrigger::Action action = SequenceTrigger::Action::Toggle,
+                                  MidiSourceHandle source = 1) {
+    CompiledSequence::Trigger t;
+    t.source  = source;
+    t.action  = action;
+    t.control = control;
+    t.channel = channel;
+    t.number  = number;
+    return t;
 }
 
 bool at(const Heard* h, std::int64_t frame) {
@@ -296,6 +326,122 @@ void testRouting() {
     CHECK(at(slow.find(true, 62), 12000));
 }
 
+// A pad (note 36 on channel 10) toggles a sequence at the frame it arrives.
+void testNoteTrigger() {
+    Rig rig;
+    rig.set(midi1({{0, 1, 60, 100}}), {trigger(SequenceTrigger::Control::Note, 9, 36)});
+    rig.run(4800);
+    rig.midi(1, midi1Message(0x90, 9, 36, 100), 1000);
+    rig.run(4800);
+    CHECK(at(rig.find(true, 60), 5800));                 // Immediate: at the pad's own frame
+    rig.midi(1, midi1Message(0x80, 9, 36, 0), 10);       // its note-off does nothing
+    rig.midi(1, midi1Message(0x90, 0, 36, 100), 20);     // another channel: not the trigger
+    rig.midi(1, midi1Message(0x90, 9, 36, 100), 200);    // again: stop, ending the sounding note
+    rig.run(4800 * 6);
+    CHECK(rig.runtime->state.load() == SequenceState::Stopped);
+    CHECK(at(rig.find(false, 60), 9800));
+    CHECK(rig.find(true, 60, 5801) == nullptr);
+
+    // Start does nothing to a playing sequence; Stop stops it.
+    Rig two;
+    two.set(midi1({{0, 1, 60, 100}}), {trigger(SequenceTrigger::Control::Note, 0, 40, SequenceTrigger::Action::Start),
+                                       trigger(SequenceTrigger::Control::Note, 0, 41, SequenceTrigger::Action::Stop)});
+    two.run(4800);
+    two.midi(1, midi1Message(0x90, 0, 40, 100), 0);
+    two.run(4800);
+    two.midi(1, midi1Message(0x90, 0, 40, 100), 0);
+    two.run(4800);
+    CHECK(two.runtime->state.load() == SequenceState::Playing);
+    two.midi(1, midi1Message(0x90, 0, 41, 100), 0);
+    two.run(4800);
+    CHECK(two.runtime->state.load() == SequenceState::Stopped);
+    two.midi(2, midi1Message(0x90, 0, 40, 100), 0);      // another input: not the trigger
+    two.run(4800);
+    CHECK(two.runtime->state.load() == SequenceState::Stopped);
+}
+
+// A trigger that arrives just before a bar line starts the sequence on that
+// bar, not the next one: triggers act before the block's notes are generated.
+void testTriggerQuantize() {
+    Rig      rig;
+    Sequence s = midi1({{0, 1, 60, 100}});
+    s.launch   = LaunchQuantize::Bar;
+    rig.set(s, {trigger(SequenceTrigger::Control::Note, 0, 36)});
+    rig.run(95000, 5000);                                // the block 95000-100000 holds bar 1 (96000)
+    rig.midi(1, midi1Message(0x90, 0, 36, 100), 100, 5000);
+    rig.run(10000, 5000);
+    CHECK(at(rig.find(true, 60), 96000));
+}
+
+// A controller acts when it rises to 64 or more, once per press.
+void testControllerTrigger() {
+    Rig rig;
+    rig.set(midi1({{0, 1, 60, 100}}), {trigger(SequenceTrigger::Control::Controller, 0, 64)});
+    rig.run(4800);
+    auto cc = [&](std::uint8_t value) {
+        rig.midi(1, midi1Message(0xB0, 0, 64, value), 0);
+        rig.run(4800);
+        return rig.runtime->state.load();
+    };
+    CHECK(cc(127) == SequenceState::Playing);
+    CHECK(cc(100) == SequenceState::Playing);   // still down
+    CHECK(cc(0) == SequenceState::Playing);     // released
+    CHECK(cc(127) == SequenceState::Stopped);   // pressed again
+
+    // A held controller survives an edit without acting again.
+    rig.set(midi1({{0, 2, 60, 100}}), {trigger(SequenceTrigger::Control::Controller, 0, 64)});
+    rig.run(4800);
+    CHECK(cc(120) == SequenceState::Stopped);
+
+    // MIDI 2.0: the top half of the 32-bit value is "pressed".
+    MidiMessage m2;
+    m2.words[0]  = 0x40B04000u;
+    m2.words[1]  = 0x80000000u;
+    m2.wordCount = 2;
+    rig.midi(1, midi1Message(0xB0, 0, 64, 0), 0);
+    rig.midi(1, m2, 10);
+    rig.run(4800);
+    CHECK(rig.runtime->state.load() == SequenceState::Playing);
+}
+
+// Trigger messages go nowhere else; everything else is routed as usual. A
+// trigger with no source listens to every input.
+void testTriggerConsumesAndLearn() {
+    Rig rig(true);   // the plugin hears all inputs
+    rig.set(midi1({{0, 1, 60, 100}}),
+            {trigger(SequenceTrigger::Control::Note, 9, 36, SequenceTrigger::Action::Toggle, kInvalidMidiSource)});
+    rig.run(4800);
+    rig.midi(3, midi1Message(0x90, 9, 36, 100), 0);
+    rig.midi(3, midi1Message(0x90, 9, 37, 100), 10);
+    rig.midi(3, midi1Message(0x80, 9, 36, 0), 20);
+    rig.run(4800);
+    CHECK(rig.find(true, 36) == nullptr && rig.find(false, 36) == nullptr);
+    CHECK(rig.find(true, 37) != nullptr);
+    CHECK(rig.runtime->state.load() == SequenceState::Playing);
+
+    // Learn captures the next press only, and it goes nowhere else.
+    Engine::Learned learned;
+    rig.engine->armLearn();
+    rig.midi(5, midi1Message(0xB0, 2, 7, 10), 0);   // a low controller value: not a press
+    rig.midi(5, midi1Message(0x90, 2, 50, 90), 10);
+    rig.midi(5, midi1Message(0x90, 2, 51, 90), 20);
+    rig.run(4800);
+    CHECK(rig.engine->takeLearned(learned));
+    CHECK(learned.source == 5 && ump::isNoteOn(learned.message) && ump::noteNumber(learned.message) == 50 &&
+          ump::channel(learned.message) == 2);
+    CHECK(!rig.engine->takeLearned(learned));
+    CHECK(rig.find(true, 50) == nullptr);
+    CHECK(rig.find(true, 51) != nullptr);
+
+    // Cancelled: nothing is captured.
+    rig.engine->armLearn();
+    rig.engine->cancelLearn();
+    rig.midi(5, midi1Message(0x90, 2, 52, 90), 0);
+    rig.run(4800);
+    CHECK(!rig.engine->takeLearned(learned));
+    CHECK(rig.find(true, 52) != nullptr);
+}
+
 } // namespace
 
 int main() {
@@ -307,5 +453,9 @@ int main() {
     testEdoPitches();
     testEditsWhilePlaying();
     testRouting();
+    testNoteTrigger();
+    testTriggerQuantize();
+    testControllerTrigger();
+    testTriggerConsumesAndLearn();
     return test::finish("Sequence");
 }

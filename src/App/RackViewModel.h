@@ -106,6 +106,11 @@ struct SequenceRowModel {
     SequenceState            state    = SequenceState::Stopped;
     double                   position = 0.0;  // units into the loop
     std::vector<std::string> usedBy;          // names of the rows that play it
+    // MIDI triggers, described ("Play/Stop: KeyLab 88, note C1, ch 10"), in
+    // Sequence::triggers order; `learning` while MIDI learn waits for one.
+    std::vector<std::string> triggers;
+    bool                     learning = false;
+    SequenceTrigger::Action  learningAction = SequenceTrigger::Action::Toggle;
 };
 
 // One open MIDI input in the dock's inputs row.

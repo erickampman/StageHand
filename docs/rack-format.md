@@ -208,10 +208,33 @@ slot's filter applies to it as to any source. They're kept separate from
 | `repeat` | `true` | Off: plays once from its start, then stops |
 | `noteOffOffsetMs` | `0` | Moves every note-off by this much (-1000 to 1000): positive for legato, negative for staccato |
 | `notes` | `[]` | `[start, length, pitch, velocity]`: start and length in units, within `length`; pitch is a note number (1.0) or an EDO step relative to `referenceNote` (2.0, may be negative); velocity 1-127 (1.0) or 1-65535 (2.0) |
+| `triggers` | `[]` | MIDI controls that start or stop it; see "Triggers" |
 
 A slot naming a sequence the rack doesn't have is an error, not a silent
 slot: the file is inconsistent. Removing a sequence in the UI leaves its slots
 hearing nothing, with a reason shown.
+
+### Triggers
+
+A note or controller that starts or stops a sequence (docs/sequences.md,
+section 4). Usually made with MIDI learn in the dock.
+
+```json
+"triggers": [
+  {"action": "toggle", "source": "device:Pads:Pads MIDI 1", "note": 36, "channel": 10, "group": 1},
+  {"action": "stop", "source": "all", "controller": 64, "channel": 1, "group": 1}
+]
+```
+
+| Field | Default | Meaning |
+|---|---|---|
+| `action` | `"toggle"` | `"toggle"` (Play/Stop), `"start"` or `"stop"`; quantized by the sequence's `launch` |
+| `source` | `"all"` | The input: `"all"`, `"device:<id>"` or `"virtual:<name>"`, as for a slot. Not a sequence |
+| `note` or `controller` | required, one of them | 0-127. A note acts on its note-on; a controller when its value rises to 64 or more |
+| `channel`, `group` | `1`, `1` | 1-16 |
+
+Messages that match a trigger go only to it. A trigger whose device isn't
+connected is kept and does nothing, with a warning at load.
 
 ## Versioning
 

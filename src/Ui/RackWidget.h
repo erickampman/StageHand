@@ -58,6 +58,7 @@ private:
 
     // --- actions
     void openSequenceMenu(const SequenceRowModel& seq, float x, float y);
+    void openTriggerMenu(const SequenceRowModel& seq, float x, float y);
     void openSourceMenu(const RowModel& row, float x, float y);
     void openRowMenu(const RowModel& row, float x, float y);
     void openAddMenu(float x, float y);

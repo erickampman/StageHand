@@ -114,12 +114,16 @@ public:
         Sequence                         sequence;
         MidiSourceHandle                 source = kInvalidMidiSource;   // never reused in a session
         std::shared_ptr<SequenceRuntime> runtime;
+        // sequence.triggers' inputs, resolved when they change; invalid for one
+        // that isn't connected (it hears nothing) or listens to any input.
+        std::vector<MidiSourceHandle>    triggerSources;
     };
     const std::vector<SequenceEntry>& sequences() const noexcept { return sequenceList; }
     const SequenceEntry*              sequence(const std::string& id) const noexcept;
     // A new, empty sequence (MIDI 2.0 in 12-EDO unless told otherwise); returns its id.
     std::string addSequence(MidiProtocol protocol = MidiProtocol::Midi2);
-    // Replace a sequence's content and settings (matched by id). Refused, with
+    // Replace a sequence's content and settings (matched by id). New triggers
+    // open their devices if needed; one that isn't connected hears nothing. Refused, with
     // `problem` set, if it would change the protocol of a sequence that has
     // notes: that's a conversion, not an edit.
     bool setSequence(const Sequence& sequence, std::string& problem);
@@ -156,6 +160,8 @@ private:
     // `problem` set) if it can't be found.
     MidiSourceHandle resolve(const MidiSourceRef& ref, std::string& problem);
     void             resolveSource(Slot& slot);
+    // Fills entry.triggerSources; returns why triggers didn't resolve, if any.
+    std::vector<std::string> resolveTriggers(SequenceEntry& entry);
     void             commitGraph();
     void             commitSequences();
     SequenceEntry*   findSequence(const std::string& id) noexcept;

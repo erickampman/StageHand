@@ -42,8 +42,11 @@ bool Session::load(const Rack& rack, double rate, LoadReport& report) {
 
     // Sequences first: slots resolve "sequence:<id>" sources against them.
     sequenceList.clear();
-    for (const Sequence& seq : rack.sequences)
-        sequenceList.push_back(SequenceEntry{seq, nextSequenceSource++, std::make_shared<SequenceRuntime>()});
+    for (const Sequence& seq : rack.sequences) {
+        sequenceList.push_back(SequenceEntry{seq, nextSequenceSource++, std::make_shared<SequenceRuntime>(), {}});
+        for (const std::string& problem : resolveTriggers(sequenceList.back()))
+            report.warnings.push_back("sequence '" + seq.id + "': a MIDI trigger won't act: " + problem);
+    }
 
     for (const RackSlot& saved : rack.slots) {
         Slot slot;
@@ -264,7 +267,7 @@ std::string Session::addSequence(MidiProtocol protocol) {
     for (int n = 2; findSequence(seq.id) != nullptr; ++n) seq.id = "seq-" + std::to_string(n);
     seq.name     = "Sequence " + std::to_string(sequenceList.size() + 1);
     seq.protocol = protocol;
-    sequenceList.push_back(SequenceEntry{seq, nextSequenceSource++, std::make_shared<SequenceRuntime>()});
+    sequenceList.push_back(SequenceEntry{seq, nextSequenceSource++, std::make_shared<SequenceRuntime>(), {}});
     sequencesDirty = dirty = true;
     return seq.id;
 }
@@ -279,7 +282,9 @@ bool Session::setSequence(const Sequence& updated, std::string& problem) {
         problem = "a sequence's MIDI protocol can change only while it has no notes";
         return false;
     }
-    entry->sequence = updated;
+    const bool newTriggers = updated.triggers != entry->sequence.triggers;
+    entry->sequence        = updated;
+    if (newTriggers) resolveTriggers(*entry);
     sequencesDirty = dirty = true;
     return true;
 }
@@ -327,8 +332,16 @@ double Session::sequencePosition(const std::string& id) const noexcept {
 void Session::commitSequences() {
     std::vector<CompiledSequence> compiled;
     compiled.reserve(sequenceList.size());
-    for (const SequenceEntry& entry : sequenceList)
-        compiled.push_back(CompiledSequence::compile(entry.sequence, entry.source, entry.runtime));
+    for (const SequenceEntry& entry : sequenceList) {
+        CompiledSequence c = CompiledSequence::compile(entry.sequence, entry.source, entry.runtime);
+        for (std::size_t i = 0; i < entry.sequence.triggers.size() && i < entry.triggerSources.size(); ++i) {
+            const SequenceTrigger& t      = entry.sequence.triggers[i];
+            const MidiSourceHandle source = entry.triggerSources[i];
+            if (source == kInvalidMidiSource && t.source.kind != MidiSourceRef::Kind::All) continue;   // hears nothing
+            c.triggers.push_back(CompiledSequence::Trigger{source, t.action, t.control, t.group, t.channel, t.number});
+        }
+        compiled.push_back(std::move(c));
+    }
     engine.commitSequences(std::make_unique<SequenceSet>(std::move(compiled)));
     sequencesDirty = false;
 }
@@ -375,6 +388,23 @@ std::shared_ptr<HostedPlugin> Session::createPlugin(const RackSlot& saved, std::
 
     problem = "plugin '" + saved.plugin.id + "' isn't installed or failed to load";
     return nullptr;
+}
+
+std::vector<std::string> Session::resolveTriggers(SequenceEntry& entry) {
+    std::vector<std::string> problems;
+    entry.triggerSources.clear();
+    for (const SequenceTrigger& t : entry.sequence.triggers) {
+        MidiSourceHandle handle = kInvalidMidiSource;   // All: any input
+        if (t.source.kind == MidiSourceRef::Kind::Sequence) {
+            problems.push_back("a sequence can't trigger one");
+        } else if (t.source.kind != MidiSourceRef::Kind::All) {
+            std::string problem;
+            handle = resolve(t.source, problem);
+            if (handle == kInvalidMidiSource) problems.push_back(problem);
+        }
+        entry.triggerSources.push_back(handle);
+    }
+    return problems;
 }
 
 MidiSourceHandle Session::resolve(const MidiSourceRef& ref, std::string& problem) {

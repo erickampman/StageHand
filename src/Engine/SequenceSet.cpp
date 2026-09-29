@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cmath>
 
+#include "Core/Ump.h"
+
 namespace stagehand {
 
 namespace {
@@ -188,44 +190,100 @@ std::size_t SequenceSet::adoptFrom(const SequenceSet* previous, const Block& b, 
         }
         rt.unitsPerBeat = s.unitsPerBeat;
         rt.length       = s.length;
+
+        // A controller held down through an edit doesn't act again.
+        if (const CompiledSequence* old = previous ? find(previous->all, s.source) : nullptr)
+            for (CompiledSequence::Trigger& t : s.triggers)
+                for (const CompiledSequence::Trigger& o : old->triggers)
+                    if (o.source == t.source && o.control == t.control && o.group == t.group &&
+                        o.channel == t.channel && o.number == t.number)
+                        t.high = o.high;
     }
     return count;
 }
 
+SequenceSet::Block SequenceSet::Block::from(std::uint32_t frame) const noexcept {
+    Block b  = *this;
+    frame    = std::min(frame, frames);
+    b.beat  += frame * beatsPerFrame;
+    b.frames = frames - frame;
+    while (barBeats > 0.0 && b.beat - b.barStartBeats >= barBeats - kEps) b.barStartBeats += barBeats;
+    return b;
+}
+
 void SequenceSet::command(MidiSourceHandle source, SequenceCommand command, const Block& b) noexcept {
+    for (CompiledSequence& s : all)
+        if (source == kInvalidMidiSource || s.source == source) apply(s, command, b);
+}
+
+bool SequenceSet::trigger(MidiSourceHandle source, const MidiMessage& m, const Block& b) noexcept {
+    if (!ump::isChannelVoice(m) || isSequenceSource(source)) return false;
+    const ump::Status status = ump::status(m);
+    const bool        note   = status == ump::Status::NoteOn || status == ump::Status::NoteOff;
+    if (!note && status != ump::Status::ControlChange) return false;
+    const std::uint8_t group = ump::group(m), channel = ump::channel(m);
+    const std::uint8_t number = static_cast<std::uint8_t>((m.words[0] >> 8) & 0x7F);   // note or controller
+    const bool         high   = ump::messageType(m) == ump::MessageType::Midi2ChannelVoice
+                                    ? m.words[1] >= 0x80000000u
+                                    : (m.words[0] & 0x7F) >= 64;
+
+    bool matched = false;
     for (CompiledSequence& s : all) {
-        if (source != kInvalidMidiSource && s.source != source) continue;
-        SequenceRuntime& rt   = *s.runtime;
-        const double     once = s.length / s.unitsPerBeat;   // one pass, in beats
-        switch (command) {
-            case SequenceCommand::Start:
-                if (rt.current == SequenceState::Stopping) {   // un-stop
-                    rt.current  = SequenceState::Playing;
-                    rt.stopBeat = s.repeat ? std::numeric_limits<double>::infinity() : rt.stopBeat;
-                } else if (rt.current == SequenceState::Stopped) {
-                    rt.anchorBeat = boundary(s.launch, b);
-                    rt.current    = SequenceState::Starting;
-                    rt.stopBeat   = s.repeat ? std::numeric_limits<double>::infinity() : rt.anchorBeat + once;
-                }
-                break;
-            case SequenceCommand::Stop:
-                if (rt.current == SequenceState::Starting) {
-                    rt.current  = SequenceState::Stopped;
-                    rt.stopBeat = std::numeric_limits<double>::infinity();
-                } else if (rt.current == SequenceState::Playing) {
-                    rt.current  = SequenceState::Stopping;
-                    rt.stopBeat = std::min(rt.stopBeat, boundary(s.launch, b));
-                }
-                break;
-            case SequenceCommand::StopNow:
-                if (rt.current != SequenceState::Stopped) {
-                    rt.current  = SequenceState::Stopping;
-                    rt.stopBeat = b.beat;
-                }
-                break;
+        for (CompiledSequence::Trigger& t : s.triggers) {
+            if ((t.source != kInvalidMidiSource && t.source != source) || t.group != group ||
+                t.channel != channel || t.number != number ||
+                (t.control == SequenceTrigger::Control::Note) != note)
+                continue;
+            matched     = true;
+            const bool acts = note ? ump::isNoteOn(m) : high && !t.high;
+            if (!note) t.high = high;
+            if (!acts) continue;
+            switch (t.action) {
+                case SequenceTrigger::Action::Toggle: apply(s, SequenceCommand::Toggle, b); break;
+                case SequenceTrigger::Action::Start:  apply(s, SequenceCommand::Start, b); break;
+                case SequenceTrigger::Action::Stop:   apply(s, SequenceCommand::Stop, b); break;
+            }
         }
-        rt.state.store(rt.current, std::memory_order_relaxed);
     }
+    return matched;
+}
+
+void SequenceSet::apply(CompiledSequence& s, SequenceCommand command, const Block& b) noexcept {
+    SequenceRuntime& rt   = *s.runtime;
+    const double     once = s.length / s.unitsPerBeat;   // one pass, in beats
+    if (command == SequenceCommand::Toggle)
+        command = rt.current == SequenceState::Stopped || rt.current == SequenceState::Stopping
+                      ? SequenceCommand::Start
+                      : SequenceCommand::Stop;
+    switch (command) {
+        case SequenceCommand::Start:
+            if (rt.current == SequenceState::Stopping) {   // un-stop
+                rt.current  = SequenceState::Playing;
+                rt.stopBeat = s.repeat ? std::numeric_limits<double>::infinity() : rt.stopBeat;
+            } else if (rt.current == SequenceState::Stopped) {
+                rt.anchorBeat = boundary(s.launch, b);
+                rt.current    = SequenceState::Starting;
+                rt.stopBeat   = s.repeat ? std::numeric_limits<double>::infinity() : rt.anchorBeat + once;
+            }
+            break;
+        case SequenceCommand::Stop:
+            if (rt.current == SequenceState::Starting) {
+                rt.current  = SequenceState::Stopped;
+                rt.stopBeat = std::numeric_limits<double>::infinity();
+            } else if (rt.current == SequenceState::Playing) {
+                rt.current  = SequenceState::Stopping;
+                rt.stopBeat = std::min(rt.stopBeat, boundary(s.launch, b));
+            }
+            break;
+        case SequenceCommand::StopNow:
+            if (rt.current != SequenceState::Stopped) {
+                rt.current  = SequenceState::Stopping;
+                rt.stopBeat = b.beat;
+            }
+            break;
+        case SequenceCommand::Toggle: break;   // resolved above
+    }
+    rt.state.store(rt.current, std::memory_order_relaxed);
 }
 
 std::size_t SequenceSet::generate(const Block& b, SequenceEvent* out, std::size_t capacity) noexcept {

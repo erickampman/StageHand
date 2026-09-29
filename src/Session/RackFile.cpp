@@ -150,6 +150,38 @@ const char* launchText(LaunchQuantize launch) {
     return launch == LaunchQuantize::Beat ? "beat" : launch == LaunchQuantize::Immediate ? "immediate" : "bar";
 }
 
+// {"action": "toggle", "source": "device:<id>", "note": 36, "channel": 10, "group": 1},
+// or "controller": 64 instead of "note".
+SequenceTrigger parseTrigger(const Json& j) {
+    if (!j.is_object()) fail("each trigger is an object");
+    SequenceTrigger t;
+    const std::string action = j.value("action", std::string("toggle"));
+    if (action == "toggle") t.action = SequenceTrigger::Action::Toggle;
+    else if (action == "start") t.action = SequenceTrigger::Action::Start;
+    else if (action == "stop") t.action = SequenceTrigger::Action::Stop;
+    else fail("trigger action must be \"toggle\", \"start\" or \"stop\"");
+    t.source = parseSource(j.value("source", std::string("all")));
+    if (t.source.kind == MidiSourceRef::Kind::Sequence) fail("a trigger's source must be an input, not a sequence");
+    if (j.contains("note") == j.contains("controller")) fail("a trigger has a \"note\" or a \"controller\"");
+    t.control = j.contains("note") ? SequenceTrigger::Control::Note : SequenceTrigger::Control::Controller;
+    t.number  = static_cast<std::uint8_t>(intIn(j, j.contains("note") ? "note" : "controller", 0, 0, 127));
+    t.channel = static_cast<std::uint8_t>(intIn(j, "channel", 1, 1, 16) - 1);
+    t.group   = static_cast<std::uint8_t>(intIn(j, "group", 1, 1, 16) - 1);
+    return t;
+}
+
+Json triggerJson(const SequenceTrigger& t) {
+    Json j;
+    j["action"] = t.action == SequenceTrigger::Action::Start  ? "start"
+                  : t.action == SequenceTrigger::Action::Stop ? "stop"
+                                                              : "toggle";
+    j["source"] = sourceText(t.source);
+    j[t.control == SequenceTrigger::Control::Note ? "note" : "controller"] = t.number;
+    j["channel"] = t.channel + 1;
+    j["group"]   = t.group + 1;
+    return j;
+}
+
 Sequence parseSequence(const Json& s) {
     Sequence seq;
     seq.id = s.at("id").get<std::string>();
@@ -194,6 +226,10 @@ Sequence parseSequence(const Json& s) {
             seq.notes.push_back(note);
         }
     }
+    if (s.contains("triggers")) {
+        if (!s.at("triggers").is_array()) fail("triggers should be a list");
+        for (const Json& t : s.at("triggers")) seq.triggers.push_back(parseTrigger(t));
+    }
     return seq;
 }
 
@@ -216,6 +252,11 @@ Json sequenceJson(const Sequence& seq) {
     Json notes           = Json::array();
     for (const SequenceNote& n : seq.notes) notes.push_back(Json::array({n.start, n.length, n.pitch, n.velocity}));
     s["notes"] = notes;
+    if (!seq.triggers.empty()) {
+        Json triggers = Json::array();
+        for (const SequenceTrigger& t : seq.triggers) triggers.push_back(triggerJson(t));
+        s["triggers"] = triggers;
+    }
     return s;
 }
 

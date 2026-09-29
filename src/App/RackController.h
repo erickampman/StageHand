@@ -122,6 +122,14 @@ public:
     void setSequenceChannel(const std::string& id, int channel);   // 0-based
     void setSequenceGroup(const std::string& id, int group);       // 0-based
     void setSequenceNoteOffOffset(const std::string& id, double ms);
+    // MIDI learn (docs/sequences.md, section 4): the next note-on or controller
+    // press from any input becomes a trigger that does `action` to the
+    // sequence. It replaces the sequence's trigger for that action and any
+    // other use of that control on the same sequence. One learn at a time; a
+    // new one replaces it.
+    void learnTrigger(const std::string& id, SequenceTrigger::Action action);
+    void cancelLearn();
+    void removeTrigger(const std::string& id, std::size_t index);   // index into Sequence::triggers
 
     // Refresh the source menu (MidiInput::enumerate()); call when it opens.
     void refreshSources();
@@ -164,6 +172,8 @@ private:
     template <typename Change>
     void           editSequence(const std::string& id, Change change);
     void           buildDock(double now);
+    void           finishLearn(const Engine::Learned& learned);
+    std::string    triggerText(const SequenceTrigger& trigger) const;
 
     Session&       session;
     Engine&        engine;
@@ -179,6 +189,8 @@ private:
     std::vector<PluginDescriptor>                         available;
     std::vector<double>                                   taps;      // tap-tempo times
     std::map<MidiSourceHandle, std::pair<std::uint32_t, double>> inputActivity;   // last count, lit until
+    std::string                                           learningId;   // the sequence being learned for
+    SequenceTrigger::Action                               learningAction = SequenceTrigger::Action::Toggle;
     bool                                                  scanned  = false;
     double                                                lastTick = -1.0;
     std::vector<std::string>                              notices;

@@ -325,6 +325,54 @@ void testSequences() {
     engine->collect();
 }
 
+// A trigger's device is opened when the rack loads; one that isn't connected
+// is kept and warned about, and hears nothing.
+void testSequenceTriggers() {
+    FakeFactory   factory;
+    FakeMidiInput midi;
+    NullHost      host;
+    auto          engine = std::make_unique<Engine>();
+    Session       session(factory, host, midi, *engine);
+
+    Sequence seq;
+    seq.id       = "s";
+    seq.protocol = MidiProtocol::Midi1;
+    seq.launch   = LaunchQuantize::Immediate;
+    SequenceTrigger keys;
+    keys.source  = MidiSourceRef{MidiSourceRef::Kind::Device, "Keys:Keys MIDI 1"};
+    keys.number  = 36;
+    SequenceTrigger gone = keys;
+    gone.source.name     = "Pads:Pads MIDI 1";
+    gone.number          = 37;
+    seq.triggers         = {keys, gone};
+    Rack rack;
+    rack.sequences = {seq};
+    Session::LoadReport report;
+    session.load(rack, 48000.0, report);
+    CHECK(midi.opened == std::vector<std::string>{"Keys:Keys MIDI 1"});
+    CHECK(report.warnings.size() == 1 && report.warnings[0].find("Pads") != std::string::npos);
+    CHECK((session.sequence("s")->triggerSources == std::vector<MidiSourceHandle>{42, kInvalidMidiSource}));
+    runBlock(*engine);
+
+    auto press = [&](std::uint8_t note) {
+        TimedMidiMessage m;
+        m.captureTime       = 1'000'000'000 - 1'000'000;
+        m.message.words[0]  = 0x20900064u | (std::uint32_t{note} << 8);
+        m.message.wordCount = 1;
+        engine->onMidi(42, m);
+        runBlock(*engine);
+    };
+    press(37);   // the unconnected device's trigger: nothing
+    CHECK(session.sequenceState("s") == SequenceState::Stopped);
+    press(36);
+    CHECK(session.sequenceState("s") == SequenceState::Playing);
+    CHECK(session.capture().sequences[0].triggers.size() == 2);   // both kept
+
+    session.unload();
+    runBlock(*engine);
+    engine->collect();
+}
+
 void testAddRemove() {
     FakeFactory factory;
     factory.installed = {installedPlugin("synth", "/clap/Synth.clap")};
@@ -375,5 +423,6 @@ int main() {
     testAddRemove();
     testTransport();
     testSequences();
+    testSequenceTriggers();
     return test::finish("Session");
 }

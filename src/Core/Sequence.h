@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "Core/MidiMessage.h"
+#include "Core/MidiSourceRef.h"
 
 namespace stagehand {
 
@@ -34,6 +35,29 @@ struct SequenceRate {
 
 enum class LaunchQuantize { Bar, Beat, Immediate };
 
+// A MIDI control that starts or stops a sequence (docs/sequences.md, section
+// 4): a note (its note-on acts) or a controller (acts when its value rises
+// to 64 or more, so a pedal or pad acts once per press). Messages that match
+// are the trigger's alone: no row hears them, note-offs included.
+struct SequenceTrigger {
+    enum class Action : std::uint8_t { Toggle, Start, Stop };
+    enum class Control : std::uint8_t { Note, Controller };
+
+    Action        action  = Action::Toggle;
+    MidiSourceRef source;                    // Device or Virtual; All = any input
+    Control       control = Control::Note;
+    std::uint8_t  group   = 0;               // 0-based
+    std::uint8_t  channel = 0;               // 0-based
+    std::uint8_t  number  = 0;               // note or controller number
+
+    // The same control, whatever it does.
+    bool sameControl(const SequenceTrigger& o) const noexcept {
+        return source == o.source && control == o.control && group == o.group && channel == o.channel &&
+               number == o.number;
+    }
+    bool operator==(const SequenceTrigger&) const = default;
+};
+
 struct Sequence {
     std::string  id;     // unique in the rack; a slot plays it as source "sequence:<id>"
     std::string  name;
@@ -48,6 +72,7 @@ struct Sequence {
     bool            repeat          = true;             // off: play once, then stop
     double          noteOffOffsetMs = 0.0;              // moves every note-off (+ legato, - staccato)
     std::vector<SequenceNote> notes;
+    std::vector<SequenceTrigger> triggers;              // MIDI controls that start or stop it
 };
 
 // A sequence's MidiSourceHandle lives above the range MIDI inputs use, so the

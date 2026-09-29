@@ -348,6 +348,68 @@ void testDock() {
     CHECK(!view.inputs[0].active);
 }
 
+// MIDI learn: the next press becomes the sequence's trigger for the action.
+void testLearn() {
+    Rig rig;
+    rig.session->addOpenSource(MidiSourceRef{MidiSourceRef::Kind::Virtual, "MIDI 2.0 In"}, 7);
+    Rack     rack;
+    Sequence arp;
+    arp.id       = "arp";
+    arp.name     = "Arp";
+    arp.protocol = MidiProtocol::Midi1;
+    arp.launch   = LaunchQuantize::Immediate;
+    rack.sequences = {arp};
+    Session::LoadReport report;
+    rig.session->load(rack, 48000.0, report);
+    RackController controller(*rig.session, *rig.engine, rig.midi, rig.factory, rig.config());
+    const RackViewModel& view = controller.view();
+
+    auto send = [&](std::uint32_t word) {
+        TimedMidiMessage m;
+        m.captureTime       = 1'000'000'000 - 1'000'000;
+        m.message.words[0]  = word;
+        m.message.wordCount = 1;
+        rig.engine->onMidi(7, m);
+        runBlock(*rig.engine);
+    };
+
+    controller.learnTrigger("arp", SequenceTrigger::Action::Toggle);
+    controller.tick(1.0);
+    CHECK(view.sequences[0].learning && view.sequences[0].triggers.empty());
+    send(0x20993064);   // note 48 (C3) on channel 10
+    controller.tick(1.1);
+    CHECK(!view.sequences[0].learning);
+    CHECK(view.sequences[0].triggers == std::vector<std::string>{"Play/Stop: MIDI 2.0 In, note C3, ch 10"});
+    const std::vector<SequenceTrigger>& triggers = controller.sequence("arp")->triggers;
+    CHECK(triggers.size() == 1 && triggers[0].source == (MidiSourceRef{MidiSourceRef::Kind::Virtual, "MIDI 2.0 In"}));
+    CHECK(controller.takeNotices().size() == 1 && rig.session->modified());
+
+    // The new trigger works at once.
+    runBlock(*rig.engine);
+    send(0x20993064);
+    CHECK(rig.session->sequenceState("arp") == SequenceState::Playing);
+
+    // A Stop learned on the same pad replaces its Play/Stop; a controller press
+    // (value 127) is learned as a controller.
+    controller.learnTrigger("arp", SequenceTrigger::Action::Stop);
+    send(0x20993064);
+    controller.tick(1.2);
+    controller.learnTrigger("arp", SequenceTrigger::Action::Start);
+    send(0x20B0407F);
+    controller.tick(1.3);
+    CHECK((view.sequences[0].triggers ==
+           std::vector<std::string>{"Stop: MIDI 2.0 In, note C3, ch 10", "Start: MIDI 2.0 In, CC 64, ch 1"}));
+
+    // Removing one, and cancelling a learn.
+    controller.removeTrigger("arp", 0);
+    controller.learnTrigger("arp", SequenceTrigger::Action::Toggle);
+    controller.cancelLearn();
+    send(0x20903C64);
+    controller.tick(1.4);
+    CHECK(!view.sequences[0].learning &&
+          view.sequences[0].triggers == std::vector<std::string>{"Start: MIDI 2.0 In, CC 64, ch 1"});
+}
+
 void testSave() {
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "stagehand-controller-test";
     std::filesystem::remove_all(dir);
@@ -389,5 +451,6 @@ int main() {
     testSave();
     testTransport();
     testDock();
+    testLearn();
     return test::finish("RackController");
 }

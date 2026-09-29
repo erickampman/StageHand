@@ -8,23 +8,11 @@
 #include <vector>
 
 #include "Core/MidiFilter.h"
+#include "Core/MidiSourceRef.h"
 #include "Core/Sequence.h"
 #include "Plugin/PluginDescriptor.h"
 
 namespace stagehand {
-
-// Where a slot's MIDI comes from, as saved in a Rack. Resolved to a live
-// MidiSourceHandle when the Rack loads (docs/rack-format.md, "Sources").
-struct MidiSourceRef {
-    enum class Kind {
-        All,       // every open input
-        Device,    // one device, by its MidiSourceInfo id
-        Virtual,   // one of StageHand's virtual inputs, by name
-        Sequence,  // one of the rack's sequences, by id (docs/sequences.md)
-    };
-    Kind        kind = Kind::All;
-    std::string name;   // Device: "KeyLab 88:KeyLab 88 MIDI 1"; Virtual: "MIDI 2.0 In"; Sequence: its id
-};
 
 // One plugin slot as saved: the plugin's identity, its opaque state, and the
 // host-owned settings (docs/domain-model.md, Save / restore). Enabled or not,

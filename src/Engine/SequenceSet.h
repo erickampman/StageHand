@@ -29,6 +29,7 @@ enum class SequenceCommand : std::uint8_t {
     Start,     // at the next launch boundary (bar, beat, or now)
     Stop,      // at the next launch boundary
     StopNow,   // this block, with note-offs at its start
+    Toggle,    // Start if stopped or stopping, else Stop
 };
 
 // A generated message, positioned in the block.
@@ -86,6 +87,18 @@ struct CompiledSequence {
     };
     std::vector<Note> notes;              // sorted by start, then pitch
 
+    // The sequence's MIDI triggers with their inputs resolved. compile() leaves
+    // this empty: the Session fills it, leaving out triggers whose input isn't
+    // open (they hear nothing, like an unresolved slot).
+    struct Trigger {
+        MidiSourceHandle         source  = kInvalidMidiSource;   // invalid: any input
+        SequenceTrigger::Action  action  = SequenceTrigger::Action::Toggle;
+        SequenceTrigger::Control control = SequenceTrigger::Control::Note;
+        std::uint8_t             group = 0, channel = 0, number = 0;
+        bool                     high  = false;   // audio thread: a controller's last value was >= 64
+    };
+    std::vector<Trigger> triggers;
+
     static CompiledSequence compile(const Sequence& sequence, MidiSourceHandle source,
                                     std::shared_ptr<SequenceRuntime> runtime);
 };
@@ -104,6 +117,10 @@ public:
         std::uint32_t frames        = 0;
         double        barStartBeats = 0.0;   // of the bar containing `beat`
         double        barBeats      = 4.0;
+
+        // The rest of the block from `frame` on: where something that happens
+        // at that frame (a trigger) takes effect.
+        Block from(std::uint32_t frame) const noexcept;
     };
 
     // Replace `previous` (null for the first set). Sounding notes whose note was
@@ -116,12 +133,20 @@ public:
     // Apply a command (source kInvalidMidiSource = every sequence).
     void command(MidiSourceHandle source, SequenceCommand command, const Block& block) noexcept;
 
+    // A MIDI message from an input: if it matches a trigger, act on it (a
+    // note-on or a controller's rise to 64) and return true, meaning the
+    // message is the trigger's and goes nowhere else. `block` starts at the
+    // message's frame. Call before generate().
+    bool trigger(MidiSourceHandle source, const MidiMessage& message, const Block& block) noexcept;
+
     // This block's events for every sequence, appended to `out`; returns how
     // many were written. The caller sorts the whole block's events by
     // (offset, order).
     std::size_t generate(const Block& block, SequenceEvent* out, std::size_t capacity) noexcept;
 
 private:
+    void apply(CompiledSequence& s, SequenceCommand command, const Block& block) noexcept;
+
     std::vector<CompiledSequence> all;
 };
 

@@ -171,6 +171,36 @@ main window:
 - **Not yet:** mapping Play/Stop to MIDI (milestone 5), and setting the note-off
   offset or renaming (the editor, milestone 4).
 
+Implemented 2026-09-29 (milestone 5), MIDI-mapped launch:
+- **Triggers:** each sequence has a list of triggers, saved in the rack
+  (rack-format.md, "Triggers"). A trigger is an input, a channel and group,
+  and a note or a controller number, with an action: Play/Stop (toggle),
+  Start, or Stop. Start and Stop are quantized by the sequence's launch
+  setting, just like the dock's button.
+  - A note acts on its note-on. A controller acts when its value rises to 64
+    or more (a MIDI 2.0 controller: the top half of its range), once per
+    press, so a pedal or a pad that sends 127 then 0 acts once.
+  - Messages that match a trigger go nowhere else: no row hears the pad,
+    note-offs included.
+  - One control can drive several sequences (a pad that starts the drums and
+    the bass together).
+- **On the audio thread:** the engine now takes a block's input MIDI before
+  the sequences generate, so a trigger acts at its own frame. A trigger just
+  before a bar line catches that bar, and "immediately" means at the pad's
+  sample.
+- **Learn:** the dock row's **MIDI** button opens a menu: Learn Play/Stop,
+  Learn Start, Learn Stop, and Remove for each trigger. While learning, the
+  button blinks amber, and the next note-on or controller press from any input
+  is captured (and not played). Escape or "Stop learning" cancels. A learned
+  trigger replaces the sequence's trigger for that action and any other use
+  of the same control on that sequence.
+- **Inputs:** a trigger remembers the input it was learned from. If that
+  device isn't connected when the rack loads, the trigger is kept, does
+  nothing, is shown as "(not connected)", and the load warns.
+- tests/SequenceTests.cpp checks trigger timing (including the bar-line case),
+  controller edges, consuming, and learn; the Session, rack-file and
+  controller tests cover the rest.
+
 ## 5. The editor window
 
 A second DGL window (the Application supports several), opened from the dock

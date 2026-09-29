@@ -26,17 +26,21 @@ namespace stagehand {
 //   1. Adopt the pending graph, if any and the retire queue has room: call
 //      stopProcessing() on plugins the new graph no longer contains, and retire
 //      the old graph.
-//   2. Drain the MIDI captured before this block started, one period behind:
+//   2. Adopt a new sequence snapshot and apply Play/Stop commands.
+//   3. Take the MIDI captured before this block started, one period behind:
 //      offset = floor((t - (blockStart - frames/rate)) * rate), clamped to
-//      [0, frames). Messages stamped at or after blockStart stay queued. Each
-//      message goes to every slot whose filter accepts it, in the message's
+//      [0, frames). Messages stamped at or after blockStart stay queued. A
+//      message that matches a sequence trigger acts on it (at its offset) and
+//      goes no further; one captured by MIDI learn goes no further either.
+//   4. Generate the sequences' events, and merge them with the input in offset
+//      order. Each message goes to every slot whose filter accepts it, in the message's
 //      own protocol if the slot's note port takes it, otherwise translated
 //      (MIDI 2.0 downconverted for MIDI 1.0 ports; MIDI 1.0 upconverted for
 //      MIDI-2.0-only ports, with per-source state). A note-off goes wherever
 //      its note-on went, at the note number each plugin actually got, even if
 //      filters or transposes changed in between (the held-note table). The
 //      queue is in capture order, so each slot's events come out sorted.
-//   3. Split the block into chunks of at most kMaxPluginBlockFrames. For each
+//   5. Split the block into chunks of at most kMaxPluginBlockFrames. For each
 //      chunk, run every slot with its share of the events, then sum the slot
 //      outputs into the backend outputs, times the slot's gain. A change of
 //      gain (SlotRuntime::targetGain) ramps linearly over kGainRampSeconds, per
@@ -101,6 +105,18 @@ public:
     // Start or stop one sequence (kInvalidMidiSource = all of them) at the next
     // block. False if the command queue is full (try again next tick).
     bool sendSequenceCommand(MidiSourceHandle source, SequenceCommand command) noexcept;
+
+    // --- MIDI learn (docs/sequences.md, section 4). Main thread.
+    // Arm: the next note-on, or controller press (a value of 64 or more), from
+    // any input is captured instead of reaching rows or triggers.
+    void armLearn() noexcept;
+    void cancelLearn() noexcept;
+    struct Learned {
+        MidiSourceHandle source = kInvalidMidiSource;
+        MidiMessage      message;
+    };
+    // True once per capture, with what was captured; learning is then over.
+    bool takeLearned(Learned& learned) noexcept;
 
     // Messages received from one MIDI input so far (0 if none yet): the sources
     // dock's activity lights compare it between ticks. Any thread.
@@ -167,7 +183,10 @@ private:
     };
 
     void adoptPendingGraph() noexcept;
-    void gatherMidi(const AudioCallbackContext& ctx) noexcept;
+    void adoptSequences(const AudioCallbackContext& ctx) noexcept;
+    void takeMidi(const AudioCallbackContext& ctx) noexcept;
+    void generateSequences() noexcept;
+    void routeMidi(std::uint32_t frames) noexcept;
     void route(const QueuedMidi& item, std::uint32_t offset) noexcept;
     bool deliver(std::size_t slot, const MidiMessage& original, const MidiMessage* upconverted,
                  std::size_t upconvertedCount, std::uint32_t offset, int noteOverride,
@@ -179,7 +198,6 @@ private:
     HeldNote*            claimHeld(MidiSourceHandle source, const MidiMessage& m) noexcept;
     void                 runSlots(const AudioCallbackContext& ctx) noexcept;
     void                 advanceTransport(const AudioCallbackContext& ctx) noexcept;
-    void                 runSequences(const AudioCallbackContext& ctx) noexcept;
     TimeInfo             timeAt(const AudioCallbackContext& ctx, std::uint32_t frame) const noexcept;
     const float*         advanceGain(SlotRuntime& runtime, std::uint32_t frames, double sampleRate,
                                      float& constantGain) noexcept;
@@ -209,6 +227,23 @@ private:
     SequenceEvent                 sequenceEvents[kMaxSequenceEvents];
     std::size_t                   sequenceEventCount = 0;
     std::atomic<std::uint64_t>    sequenceEventsFull{0};
+    SequenceSet::Block            sequenceBlock;   // this block, for the sequences
+
+    // This block's input MIDI, taken from the queue before the sequences run
+    // (a trigger must act before they generate). As large as the queue.
+    struct StagedMidi {
+        QueuedMidi    item;
+        std::uint32_t offset = 0;
+    };
+    static constexpr std::size_t kMaxStagedMidi = 4096;
+    StagedMidi                    staged[kMaxStagedMidi];
+    std::size_t                   stagedCount = 0;
+
+    // MIDI learn: main arms (Idle/Captured -> Armed); audio fills `learned`,
+    // then Armed -> Captured; main reads it and goes back to Idle.
+    enum : int { kLearnIdle, kLearnArmed, kLearnCaptured };
+    std::atomic<int>              learnState{kLearnIdle};
+    Learned                       learned;
 
     // Per-input message counts (audio writes, main reads). A slot is claimed by
     // the audio thread the first time a source is heard; 32 is plenty of inputs.

@@ -54,6 +54,15 @@ Rack sampleRack() {
     arp.repeat          = false;
     arp.noteOffOffsetMs = -5.0;
     arp.notes           = {{0, 2, -3, 40000}, {4, 4, 10, 65535}};
+    SequenceTrigger anyPad;   // defaults: toggle, any input, note 0 on channel 1
+    SequenceTrigger pedal;
+    pedal.action  = SequenceTrigger::Action::Stop;
+    pedal.source  = MidiSourceRef{MidiSourceRef::Kind::Device, "Keys:Keys MIDI 1"};
+    pedal.control = SequenceTrigger::Control::Controller;
+    pedal.channel = 9;
+    pedal.group   = 2;
+    pedal.number  = 64;
+    arp.triggers  = {anyPad, pedal};
     Sequence line;
     line.id       = "bass-line";
     line.protocol = MidiProtocol::Midi1;
@@ -115,12 +124,18 @@ void testRoundTrip(const fs::path& dir) {
         CHECK(a.referenceNote == 62 && a.channel == 2 && a.group == 1 && a.length == 8);
         CHECK(a.rate.numerator == 1 && a.rate.denominator == 2 && a.launch == LaunchQuantize::Beat);
         CHECK(!a.repeat && a.noteOffOffsetMs == -5.0 && a.notes.size() == 2);
+        CHECK(a.triggers.size() == 2 && a.triggers[0] == SequenceTrigger{});
+        if (a.triggers.size() == 2)
+            CHECK(a.triggers[1].action == SequenceTrigger::Action::Stop && a.triggers[1].channel == 9 &&
+                  a.triggers[1].group == 2 && a.triggers[1].number == 64 &&
+                  a.triggers[1].control == SequenceTrigger::Control::Controller &&
+                  a.triggers[1].source == (MidiSourceRef{MidiSourceRef::Kind::Device, "Keys:Keys MIDI 1"}));
         if (a.notes.size() == 2)
             CHECK(a.notes[0].pitch == -3 && a.notes[0].velocity == 40000 && a.notes[1].start == 4 &&
                   a.notes[1].length == 4 && a.notes[1].velocity == 65535);
         const Sequence& b = loaded.sequences[1];
         CHECK(b.id == "bass-line" && b.protocol == MidiProtocol::Midi1 && b.rate.numerator == 4);
-        CHECK(b.launch == LaunchQuantize::Bar && b.repeat && b.notes.size() == 1);
+        CHECK(b.launch == LaunchQuantize::Bar && b.repeat && b.notes.size() == 1 && b.triggers.empty());
     }
     if (loaded.slots.size() != 2) return;
 
@@ -218,6 +233,18 @@ void testFailures(const fs::path& dir) {
                   R"({"format":"stagehand-rack","version":1,"slots":[],
                       "sequences":[{"id":"s","protocol":1,"notes":[[0,1,60,200]]}]})",
                   "1-127");
+    expectFailure(dir, "TwoControls.rack",
+                  R"({"format":"stagehand-rack","version":1,"slots":[],
+                      "sequences":[{"id":"s","triggers":[{"note":36,"controller":64}]}]})",
+                  "\"note\" or a \"controller\"");
+    expectFailure(dir, "SeqTrigger.rack",
+                  R"({"format":"stagehand-rack","version":1,"slots":[],
+                      "sequences":[{"id":"s","triggers":[{"source":"sequence:s","note":36}]}]})",
+                  "an input");
+    expectFailure(dir, "BadAction.rack",
+                  R"({"format":"stagehand-rack","version":1,"slots":[],
+                      "sequences":[{"id":"s","triggers":[{"action":"pause","note":36}]}]})",
+                  "toggle");
     expectFailure(dir, "Fast.rack", R"({"format":"stagehand-rack","version":1,"tempo":500,"slots":[]})",
                   "20-400 BPM");
     expectFailure(dir, "Sig.rack",

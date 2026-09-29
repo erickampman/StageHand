@@ -91,6 +91,14 @@ bool acceptsMidi1(NoteDialectMask dialects) noexcept {
     return (dialects & (NoteDialect::Midi | NoteDialect::MidiMpe)) != 0;
 }
 
+// What MIDI learn captures: a note-on, or a controller at 64 or more (a press).
+bool isPress(const MidiMessage& m) noexcept {
+    if (ump::isNoteOn(m)) return true;
+    if (!ump::isChannelVoice(m) || ump::status(m) != ump::Status::ControlChange) return false;
+    return ump::messageType(m) == ump::MessageType::Midi2ChannelVoice ? m.words[1] >= 0x80000000u
+                                                                        : (m.words[0] & 0x7F) >= 64;
+}
+
 } // namespace
 
 Engine::Engine() = default;
@@ -132,6 +140,21 @@ std::size_t Engine::collect() {
 void Engine::commitSequences(std::unique_ptr<SequenceSet> sequences) {
     if (!sequences) sequences = std::make_unique<SequenceSet>(std::vector<CompiledSequence>{});
     delete pendingSequences.exchange(sequences.release(), std::memory_order_acq_rel);   // superseded, never ran
+}
+
+void Engine::armLearn() noexcept {
+    learnState.store(kLearnArmed, std::memory_order_release);
+}
+
+void Engine::cancelLearn() noexcept {
+    learnState.store(kLearnIdle, std::memory_order_release);
+}
+
+bool Engine::takeLearned(Learned& out) noexcept {
+    if (learnState.load(std::memory_order_acquire) != kLearnCaptured) return false;
+    out = learned;
+    learnState.store(kLearnIdle, std::memory_order_release);
+    return true;
 }
 
 std::uint32_t Engine::sourceActivity(MidiSourceHandle source) const noexcept {
@@ -207,8 +230,10 @@ void Engine::onMidi(MidiSourceHandle source, const TimedMidiMessage& msg) noexce
 void Engine::process(const AudioCallbackContext& ctx) noexcept {
     adoptPendingGraph();
     advanceTransport(ctx);
-    runSequences(ctx);
-    gatherMidi(ctx);
+    adoptSequences(ctx);
+    takeMidi(ctx);
+    generateSequences();
+    routeMidi(ctx.frameCount);
     runSlots(ctx);
 
     clock.beat += static_cast<double>(ctx.frameCount) * clock.beatsPerFrame;
@@ -253,12 +278,11 @@ TimeInfo Engine::timeAt(const AudioCallbackContext& ctx, std::uint32_t frame) co
     return t;
 }
 
-// This block's sequence events: adopt a new snapshot, apply commands, generate,
-// and sort by (offset, order) for gatherMidi() to merge with incoming MIDI.
-void Engine::runSequences(const AudioCallbackContext& ctx) noexcept {
+// Adopt a new sequence snapshot, if any, and apply the dock's Play/Stop commands.
+void Engine::adoptSequences(const AudioCallbackContext& ctx) noexcept {
     sequenceEventCount = 0;
     const TimeInfo     now = timeAt(ctx, 0);
-    SequenceSet::Block block;
+    SequenceSet::Block& block = sequenceBlock;
     block.beat          = now.beatPosition;
     block.beatsPerFrame = clock.beatsPerFrame;
     block.tempoBpm      = clock.tempoBpm;
@@ -278,9 +302,14 @@ void Engine::runSequences(const AudioCallbackContext& ctx) noexcept {
 
     QueuedCommand queued;
     while (sequenceCommands.pop(queued)) currentSequences->command(queued.source, queued.command, block);
+}
 
+// This block's sequence events, sorted by (offset, order) for routeMidi() to
+// merge with the input.
+void Engine::generateSequences() noexcept {
+    if (currentSequences == nullptr) return;
     const std::size_t room = kMaxSequenceEvents - sequenceEventCount;
-    const std::size_t made = currentSequences->generate(block, sequenceEvents + sequenceEventCount, room);
+    const std::size_t made = currentSequences->generate(sequenceBlock, sequenceEvents + sequenceEventCount, room);
     if (made == room) sequenceEventsFull.fetch_add(1, std::memory_order_relaxed);   // may have dropped some
     sequenceEventCount += made;
 
@@ -312,50 +341,69 @@ void Engine::adoptPendingGraph() noexcept {
     adoptedSequence.store(next->sequence, std::memory_order_release);
 }
 
-void Engine::gatherMidi(const AudioCallbackContext& ctx) noexcept {
-    if (currentGraph != nullptr)
-        for (EngineGraph::SlotState& state : currentGraph->states) state.eventCount = 0;
-
+// Take the MIDI captured before this block started, placed one period behind
+// (domain-model.md, sample-accurate alignment). MIDI learn and sequence
+// triggers see it first; what they don't claim is staged for routeMidi().
+void Engine::takeMidi(const AudioCallbackContext& ctx) noexcept {
+    stagedCount = 0;
     const double        rate   = ctx.time.sampleRate;
     const std::uint32_t frames = ctx.frameCount;
     if (rate <= 0.0 || frames == 0) return;
 
-    // Sequence events are merged in offset order with the captured MIDI (whose
-    // offsets never decrease: the queue is in capture order).
-    std::size_t nextSequenceEvent = 0;
-    auto routeSequencesUpTo = [&](std::uint32_t offset) {
-        for (; nextSequenceEvent < sequenceEventCount && sequenceEvents[nextSequenceEvent].offset <= offset;
-             ++nextSequenceEvent) {
-            if (currentGraph == nullptr) continue;
-            const SequenceEvent& e = sequenceEvents[nextSequenceEvent];
-            QueuedMidi           item;
-            item.source            = e.source;
-            item.message.message   = e.message;
-            route(item, e.offset);
-        }
-    };
-
-    // Map the previous cycle's window onto this block, one period behind
-    // (domain-model.md, sample-accurate alignment).
     const Nanoseconds blockStart  = ctx.blockStartTime;
     const Nanoseconds windowStart = blockStart - std::llround(frames * 1e9 / rate);
 
-    QueuedMidi item;
-    while (const QueuedMidi* next = midiQueue.peek()) {
-        if (next->message.captureTime >= blockStart) break;   // belongs to the next block
-        midiQueue.pop(item);
-        countSource(item.source);
+    while (stagedCount < kMaxStagedMidi) {
+        const QueuedMidi* next = midiQueue.peek();
+        if (next == nullptr || next->message.captureTime >= blockStart) break;   // later: the next block's
+        StagedMidi& entry = staged[stagedCount];
+        midiQueue.pop(entry.item);
+        countSource(entry.item.source);
 
-        const Nanoseconds sinceWindow = item.message.captureTime - windowStart;
-        std::uint32_t     offset      = 0;
+        const Nanoseconds sinceWindow = entry.item.message.captureTime - windowStart;
+        entry.offset                  = 0;
         if (sinceWindow < 0) {
             lateMidi.fetch_add(1, std::memory_order_relaxed);
         } else {
             const auto frame = static_cast<std::uint64_t>(static_cast<double>(sinceWindow) * rate / 1e9);
-            offset = static_cast<std::uint32_t>(std::min<std::uint64_t>(frame, frames - 1));
+            entry.offset     = static_cast<std::uint32_t>(std::min<std::uint64_t>(frame, frames - 1));
         }
-        routeSequencesUpTo(offset);
-        if (currentGraph != nullptr) route(item, offset);
+
+        const MidiMessage& m = entry.item.message.message;
+        if (isPress(m) && learnState.load(std::memory_order_acquire) == kLearnArmed) {
+            learned.source  = entry.item.source;
+            learned.message = m;
+            int armed       = kLearnArmed;   // unless the main thread cancelled meanwhile
+            learnState.compare_exchange_strong(armed, kLearnCaptured, std::memory_order_acq_rel);
+            continue;
+        }
+        if (currentSequences != nullptr &&
+            currentSequences->trigger(entry.item.source, m, sequenceBlock.from(entry.offset)))
+            continue;
+        ++stagedCount;
+    }
+}
+
+// Route the staged input and the sequences' events, merged in offset order
+// (the input's offsets never decrease: the queue is in capture order).
+void Engine::routeMidi(std::uint32_t frames) noexcept {
+    if (currentGraph == nullptr) return;
+    for (EngineGraph::SlotState& state : currentGraph->states) state.eventCount = 0;
+
+    std::size_t nextSequenceEvent = 0;
+    auto routeSequencesUpTo = [&](std::uint32_t offset) {
+        for (; nextSequenceEvent < sequenceEventCount && sequenceEvents[nextSequenceEvent].offset <= offset;
+             ++nextSequenceEvent) {
+            const SequenceEvent& e = sequenceEvents[nextSequenceEvent];
+            QueuedMidi           item;
+            item.source          = e.source;
+            item.message.message = e.message;
+            route(item, e.offset);
+        }
+    };
+    for (std::size_t i = 0; i < stagedCount; ++i) {
+        routeSequencesUpTo(staged[i].offset);
+        route(staged[i].item, staged[i].offset);
     }
     routeSequencesUpTo(frames);
 }

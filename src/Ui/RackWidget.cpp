@@ -599,6 +599,11 @@ void RackWidget::drawSequenceRow(const SequenceRowModel& seq, float y) {
     region(x, y + 10.0f, 64.0f, 24.0f,
            [this, id = seq.id, repeat = seq.repeat](const Press&) { controller.setSequenceRepeat(id, !repeat); });
     x += 70.0f;
+    // MIDI triggers: lit when it has some, blinking amber while learning one.
+    button(x, y + 10.0f, 50.0f, 24.0f, "MIDI", seq.learning ? blinkOn : !seq.triggers.empty(), true,
+           seq.learning ? kAmber : kAccent);
+    region(x, y + 10.0f, 50.0f, 24.0f, [this, seq, x, y](const Press&) { openTriggerMenu(seq, x, y + 36.0f); });
+    x += 56.0f;
     box(x, y + 10.0f, 26.0f, 24.0f, kTrack, 4.0f);
     for (int i = -1; i <= 1; ++i) {
         beginPath();
@@ -630,6 +635,25 @@ void RackWidget::openSequenceMenu(const SequenceRowModel& seq, float x, float y)
                                    openMenu(std::move(confirm));
                                },
                                false, true});
+    openMenu(std::move(m));
+}
+
+// Learn a trigger (the next pad, key or pedal pressed), or remove one.
+void RackWidget::openTriggerMenu(const SequenceRowModel& seq, float x, float y) {
+    Menu m;
+    m.x     = x;
+    m.y     = y;
+    m.w     = 340.0f;
+    m.title = seq.learning ? "Press a pad, key or pedal..." : "MIDI control of " + seq.name;
+    if (seq.learning) m.items.push_back(MenuItem{"Stop learning", [this] { controller.cancelLearn(); }});
+    for (const auto [action, text] : {std::pair{SequenceTrigger::Action::Toggle, "Learn Play/Stop"},
+                                      {SequenceTrigger::Action::Start, "Learn Start"},
+                                      {SequenceTrigger::Action::Stop, "Learn Stop"}})
+        m.items.push_back(MenuItem{text, [this, id = seq.id, a = action] { controller.learnTrigger(id, a); },
+                                   seq.learning && seq.learningAction == action});
+    for (std::size_t i = 0; i < seq.triggers.size(); ++i)
+        m.items.push_back(MenuItem{"Remove " + seq.triggers[i],
+                                   [this, id = seq.id, i] { controller.removeTrigger(id, i); }, false, true});
     openMenu(std::move(m));
 }
 
@@ -863,6 +887,7 @@ void RackWidget::wheelUnclaimed(float, float, float notches, std::uint32_t) {
 bool RackWidget::onKeyboard(const KeyboardEvent& ev) {
     if (!ev.press) return false;
     if (ev.key == dgl::kKeyEscape) {
+        controller.cancelLearn();
         closeMenu();
         dismissOverlays();
         repaint();
