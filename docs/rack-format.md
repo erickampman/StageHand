@@ -117,7 +117,7 @@ get a **layer**.
 | `tempo` | no | The host tempo in BPM (quarter notes), 20-400; default 120. Plugins get it through CLAP's transport, and sequences follow it |
 | `timeSignature` | no | `[numerator, denominator]`: 1-32 over 1, 2, 4, 8, 16 or 32; default `[4, 4]` |
 | `slots` | yes | Plugin slots, in order |
-| `sequences` | reserved | See "Reserved: sequences" |
+| `sequences` | no | The rack's step sequences; see "Sequences" |
 
 ### Slot
 
@@ -153,7 +153,7 @@ round-trip them).
 | `"all"` | Every open input: all hardware by default, plus the virtual inputs |
 | `"device:<id>"` | One MIDI device, by its `--list-midi` id, e.g. `device:KeyLab 88:KeyLab 88 MIDI 1` |
 | `"virtual:<name>"` | One of StageHand's virtual inputs: `virtual:MIDI 2.0 In`, `virtual:MIDI 1.0 In` |
-| `"sequence:<id>"` | **Reserved** for sequences (see below) |
+| `"sequence:<id>"` | One of the rack's sequences, by id (see "Sequences"). A slot set to `"all"` never hears sequences |
 
 If a named device isn't connected when the rack loads, the slot still loads,
 hears nothing from that source, and StageHand warns loudly at startup. It
@@ -167,18 +167,51 @@ If a slot's plugin can't be found or fails to load, the slot is kept as a
 slot and its original state back unchanged. Installing the plugin later recovers
 the slot exactly.
 
-## Reserved: sequences
+## Sequences
 
-Sequences aren't designed yet, but the format leaves room for them:
+Step sequences the rack owns (docs/sequences.md). A sequence is a MIDI
+*source*: it doesn't make sound, it feeds the slots that choose it with
+`"source": "sequence:<id>"`. One sequence can feed several slots, and each
+slot's filter applies to it as to any source. They're kept separate from
+`slots` in the file, and live in a sources dock below the rack in the UI.
 
-- A future top-level `sequences` array holds them, **separate from `slots`**. A
-  sequence is a MIDI *source* the rack owns. It doesn't make sound; it feeds
-  slots.
-- A slot selects one as its input with `"source": "sequence:<id>"`, just as it
-  selects a device.
-- That separation is a data-model choice. The UI matches it: sequences live in
-  a sources dock below the rack, not as rack rows, and slots show them as
-  their input (architecture.md, "Sequencer UI").
+```json
+"sequences": [
+  {
+    "id": "arp",
+    "name": "Arp",
+    "protocol": 2,
+    "edo": 31,
+    "referenceNote": 60,
+    "channel": 1,
+    "group": 1,
+    "rate": "4",
+    "length": 16,
+    "launch": "bar",
+    "repeat": true,
+    "noteOffOffsetMs": 0,
+    "notes": [[0, 2, 0, 50000], [4, 1, 10, 50000]]
+  }
+]
+```
+
+| Field | Default | Meaning |
+|---|---|---|
+| `id` | required | Unique among the sequences; letters, digits, `-`, `_` |
+| `name` | `id` | Display name |
+| `protocol` | `2` | `1` (notes are note numbers) or `2` (notes are EDO steps, sent with pitch 7.9) |
+| `edo`, `referenceNote` | `12`, `60` | MIDI 2.0: steps per octave, and the MIDI note step 0 sounds at |
+| `channel`, `group` | `1`, `1` | What it sends on (1-16) |
+| `rate` | `"4"` | Units per beat: `"4"` is sixteenths, `"1/2"` a unit every two beats, `"3"` triplet eighths |
+| `length` | `16` | Loop length in units (1-4096) |
+| `launch` | `"bar"` | Where Play and Stop take effect: `"bar"`, `"beat"` or `"immediate"` |
+| `repeat` | `true` | Off: plays once from its start, then stops |
+| `noteOffOffsetMs` | `0` | Moves every note-off by this much (-1000 to 1000): positive for legato, negative for staccato |
+| `notes` | `[]` | `[start, length, pitch, velocity]`: start and length in units, within `length`; pitch is a note number (1.0) or an EDO step relative to `referenceNote` (2.0, may be negative); velocity 1-127 (1.0) or 1-65535 (2.0) |
+
+A slot naming a sequence the rack doesn't have is an error, not a silent
+slot: the file is inconsistent. Removing a sequence in the UI leaves its slots
+hearing nothing, with a reason shown.
 
 ## Versioning
 

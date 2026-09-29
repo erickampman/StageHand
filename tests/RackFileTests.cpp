@@ -40,6 +40,26 @@ Rack sampleRack() {
     rack.timeSigNumerator   = 7;
     rack.timeSigDenominator = 8;
 
+    Sequence arp;
+    arp.id              = "arp";
+    arp.name            = "Arp";
+    arp.protocol        = MidiProtocol::Midi2;
+    arp.edo             = 31;
+    arp.referenceNote   = 62;
+    arp.channel         = 2;
+    arp.group           = 1;
+    arp.rate            = SequenceRate{1, 2};
+    arp.length          = 8;
+    arp.launch          = LaunchQuantize::Beat;
+    arp.repeat          = false;
+    arp.noteOffOffsetMs = -5.0;
+    arp.notes           = {{0, 2, -3, 40000}, {4, 4, 10, 65535}};
+    Sequence line;
+    line.id       = "bass-line";
+    line.protocol = MidiProtocol::Midi1;
+    line.notes    = {{0, 1, 36, 100}};
+    rack.sequences = {arp, line};
+
     RackSlot bass;
     bass.id                  = "bass";
     bass.name                = "Bass";
@@ -88,6 +108,20 @@ void testRoundTrip(const fs::path& dir) {
     CHECK(result.ok && result.warnings.empty());
     CHECK(loaded.name == "Split" && loaded.slots.size() == 2);
     CHECK(loaded.tempoBpm == 97.5 && loaded.timeSigNumerator == 7 && loaded.timeSigDenominator == 8);
+    CHECK(loaded.sequences.size() == 2);
+    if (loaded.sequences.size() == 2) {
+        const Sequence& a = loaded.sequences[0];
+        CHECK(a.id == "arp" && a.name == "Arp" && a.protocol == MidiProtocol::Midi2 && a.edo == 31);
+        CHECK(a.referenceNote == 62 && a.channel == 2 && a.group == 1 && a.length == 8);
+        CHECK(a.rate.numerator == 1 && a.rate.denominator == 2 && a.launch == LaunchQuantize::Beat);
+        CHECK(!a.repeat && a.noteOffOffsetMs == -5.0 && a.notes.size() == 2);
+        if (a.notes.size() == 2)
+            CHECK(a.notes[0].pitch == -3 && a.notes[0].velocity == 40000 && a.notes[1].start == 4 &&
+                  a.notes[1].length == 4 && a.notes[1].velocity == 65535);
+        const Sequence& b = loaded.sequences[1];
+        CHECK(b.id == "bass-line" && b.protocol == MidiProtocol::Midi1 && b.rate.numerator == 4);
+        CHECK(b.launch == LaunchQuantize::Bar && b.repeat && b.notes.size() == 1);
+    }
     if (loaded.slots.size() != 2) return;
 
     const RackSlot& b = loaded.slots[0];
@@ -164,7 +198,7 @@ void testFailures(const fs::path& dir) {
     expectFailure(dir, "Sequence.rack",
                   R"({"format":"stagehand-rack","version":1,"slots":[
                       {"id":"a","plugin":{"format":"clap","id":"x"},"midi":{"source":"sequence:arp"}}]})",
-                  "sequence sources");
+                  "no sequence 'arp'");
     expectFailure(dir, "BadNotes.rack",
                   R"({"format":"stagehand-rack","version":1,"slots":[
                       {"id":"a","plugin":{"format":"clap","id":"x"},"midi":{"notes":[80,20]}}]})",
@@ -173,6 +207,17 @@ void testFailures(const fs::path& dir) {
                   R"({"format":"stagehand-rack","version":1,"slots":[
                       {"id":"a","plugin":{"format":"clap","id":"x"},"midi":{"channels":[17]}}]})",
                   "1-16");
+    expectFailure(dir, "BadRate.rack",
+                  R"({"format":"stagehand-rack","version":1,"slots":[],"sequences":[{"id":"s","rate":"0"}]})",
+                  "units per beat");
+    expectFailure(dir, "LongNote.rack",
+                  R"({"format":"stagehand-rack","version":1,"slots":[],
+                      "sequences":[{"id":"s","length":4,"notes":[[2,3,0,100]]}]})",
+                  "within the sequence");
+    expectFailure(dir, "LoudNote.rack",
+                  R"({"format":"stagehand-rack","version":1,"slots":[],
+                      "sequences":[{"id":"s","protocol":1,"notes":[[0,1,60,200]]}]})",
+                  "1-127");
     expectFailure(dir, "Fast.rack", R"({"format":"stagehand-rack","version":1,"tempo":500,"slots":[]})",
                   "20-400 BPM");
     expectFailure(dir, "Sig.rack",

@@ -122,6 +122,20 @@ Sequence
 - **Tempo changes** need nothing special: position is derived from the beat
   clock.
 
+Implemented 2026-09-29 (milestone 2): `Core/Sequence.h` (the model),
+`Engine/SequenceSet.h` (compiled snapshots, `SequenceRuntime`, per-block
+generation), `Engine::commitSequences()` / `sendSequenceCommand()`, Session
+sequence edits, and the rack-file format (rack-format.md, "Sequences").
+Details settled in the code:
+- Sequence sources have handles from `kSequenceSourceBase` up, never reused,
+  and a slot listening to "all inputs" doesn't hear them.
+- Changing a sequence's channel, group or protocol while it plays releases its
+  sounding notes on the old ones first, so nothing sticks.
+- At most 64 notes sound at once per sequence, and 1024 sequence events are
+  generated per block. Beyond those, notes are skipped. Event overflow is
+  counted in the engine's stats (`sequenceEventsFull`); the 64-note cap isn't.
+- tests/SequenceTests.cpp checks exact sample positions for all of the above.
+
 ## 4. Starting and stopping (was TBD)
 
 **Proposed:**

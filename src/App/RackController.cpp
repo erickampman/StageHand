@@ -190,6 +190,9 @@ std::string RackController::sourceLabel(const MidiSourceRef& ref) const {
     switch (ref.kind) {
         case MidiSourceRef::Kind::All:     return "All inputs";
         case MidiSourceRef::Kind::Virtual: return ref.name;
+        case MidiSourceRef::Kind::Sequence:
+            if (const Session::SequenceEntry* entry = session.sequence(ref.name)) return entry->sequence.name;
+            return ref.name;
         case MidiSourceRef::Kind::Device:
             for (const MidiSourceInfo& info : enumerated)
                 if (info.id == ref.name && !info.name.empty()) return info.name;
@@ -199,10 +202,16 @@ std::string RackController::sourceLabel(const MidiSourceRef& ref) const {
 }
 
 SourceProtocol RackController::sourceProtocolOf(const MidiSourceRef& ref) const {
-    // With the preference off, every source arrives as MIDI 1.0 (MidiInput).
+    // A sequence sends in its own protocol; the input preference doesn't apply.
+    if (ref.kind == MidiSourceRef::Kind::Sequence) {
+        const Session::SequenceEntry* entry = session.sequence(ref.name);
+        return entry == nullptr ? SourceProtocol::Mixed : toSourceProtocol(entry->sequence.protocol);
+    }
+    // With the preference off, every input arrives as MIDI 1.0 (MidiInput).
     if (config.protocolPreference == MidiProtocol::Midi1) return SourceProtocol::Midi1;
     switch (ref.kind) {
-        case MidiSourceRef::Kind::All: return SourceProtocol::Mixed;
+        case MidiSourceRef::Kind::All:
+        case MidiSourceRef::Kind::Sequence: return SourceProtocol::Mixed;
         case MidiSourceRef::Kind::Virtual:
             for (const auto& [name, protocol] : config.virtualInputs)
                 if (name == ref.name) return toSourceProtocol(protocol);

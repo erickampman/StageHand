@@ -16,7 +16,9 @@ namespace {
 // group, and channel alone. (M5 adds the held-note table, so a note-off always
 // follows its note-on even if a filter changed in between.)
 bool accepts(const MidiFilter& filter, MidiSourceHandle source, const MidiMessage& m) noexcept {
-    if (!filter.allSources && filter.source != source) return false;
+    // "All" means every MIDI input, not every sequence: a sequence plays only
+    // where it's chosen.
+    if (filter.allSources ? isSequenceSource(source) : filter.source != source) return false;
 
     const ump::MessageType type = ump::messageType(m);
     if (type == ump::MessageType::Utility || type == ump::MessageType::Stream ||
@@ -95,8 +97,10 @@ Engine::Engine() = default;
 
 Engine::~Engine() {
     delete pendingGraph.exchange(nullptr);   // never adopted
+    delete pendingSequences.exchange(nullptr);
     collect();
     delete currentGraph;                     // the audio thread has stopped calling process()
+    delete currentSequences;
 }
 
 // --- main thread -----------------------------------------------------------------
@@ -120,7 +124,18 @@ std::size_t Engine::collect() {
         delete retired;   // may drop the last reference to a removed plugin
         ++count;
     }
+    SequenceSet* sequences = nullptr;
+    while (retiredSequences.pop(sequences)) delete sequences;   // not counted: graphs only
     return count;
+}
+
+void Engine::commitSequences(std::unique_ptr<SequenceSet> sequences) {
+    if (!sequences) sequences = std::make_unique<SequenceSet>(std::vector<CompiledSequence>{});
+    delete pendingSequences.exchange(sequences.release(), std::memory_order_acq_rel);   // superseded, never ran
+}
+
+bool Engine::sendSequenceCommand(MidiSourceHandle source, SequenceCommand command) noexcept {
+    return sequenceCommands.push(QueuedCommand{source, command});
 }
 
 Engine::Stats Engine::stats() const noexcept {
@@ -130,6 +145,7 @@ Engine::Stats Engine::stats() const noexcept {
     s.slotEventsFull     = slotEventsFull.load(std::memory_order_relaxed);
     s.unsupportedDialect = unsupportedDialect.load(std::memory_order_relaxed);
     s.lateMidi           = lateMidi.load(std::memory_order_relaxed);
+    s.sequenceEventsFull = sequenceEventsFull.load(std::memory_order_relaxed);
     return s;
 }
 
@@ -170,6 +186,7 @@ void Engine::onMidi(MidiSourceHandle source, const TimedMidiMessage& msg) noexce
 void Engine::process(const AudioCallbackContext& ctx) noexcept {
     adoptPendingGraph();
     advanceTransport(ctx);
+    runSequences(ctx);
     gatherMidi(ctx);
     runSlots(ctx);
 
@@ -215,6 +232,49 @@ TimeInfo Engine::timeAt(const AudioCallbackContext& ctx, std::uint32_t frame) co
     return t;
 }
 
+// This block's sequence events: adopt a new snapshot, apply commands, generate,
+// and sort by (offset, order) for gatherMidi() to merge with incoming MIDI.
+void Engine::runSequences(const AudioCallbackContext& ctx) noexcept {
+    sequenceEventCount = 0;
+    const TimeInfo     now = timeAt(ctx, 0);
+    SequenceSet::Block block;
+    block.beat          = now.beatPosition;
+    block.beatsPerFrame = clock.beatsPerFrame;
+    block.tempoBpm      = clock.tempoBpm;
+    block.frames        = ctx.frameCount;
+    block.barStartBeats = now.barStartBeats;
+    block.barBeats      = clock.numerator * 4.0 / clock.denominator;
+
+    if (pendingSequences.load(std::memory_order_acquire) != nullptr &&
+        (currentSequences == nullptr || retiredSequences.canPush())) {
+        if (SequenceSet* next = pendingSequences.exchange(nullptr, std::memory_order_acq_rel)) {
+            sequenceEventCount += next->adoptFrom(currentSequences, block, sequenceEvents, kMaxSequenceEvents);
+            if (currentSequences != nullptr) retiredSequences.push(currentSequences);   // room checked above
+            currentSequences = next;
+        }
+    }
+    if (currentSequences == nullptr) return;
+
+    QueuedCommand queued;
+    while (sequenceCommands.pop(queued)) currentSequences->command(queued.source, queued.command, block);
+
+    const std::size_t room = kMaxSequenceEvents - sequenceEventCount;
+    const std::size_t made = currentSequences->generate(block, sequenceEvents + sequenceEventCount, room);
+    if (made == room) sequenceEventsFull.fetch_add(1, std::memory_order_relaxed);   // may have dropped some
+    sequenceEventCount += made;
+
+    // Insertion sort, stable: a block has few events, and most arrive in order.
+    for (std::size_t i = 1; i < sequenceEventCount; ++i) {
+        const SequenceEvent e = sequenceEvents[i];
+        std::size_t         j = i;
+        for (; j > 0 && (sequenceEvents[j - 1].offset > e.offset ||
+                         (sequenceEvents[j - 1].offset == e.offset && sequenceEvents[j - 1].order > e.order));
+             --j)
+            sequenceEvents[j] = sequenceEvents[j - 1];
+        sequenceEvents[j] = e;
+    }
+}
+
 void Engine::adoptPendingGraph() noexcept {
     if (pendingGraph.load(std::memory_order_acquire) == nullptr) return;
     if (currentGraph != nullptr && !retiredGraphs.canPush()) return;   // main hasn't collected yet
@@ -239,6 +299,21 @@ void Engine::gatherMidi(const AudioCallbackContext& ctx) noexcept {
     const std::uint32_t frames = ctx.frameCount;
     if (rate <= 0.0 || frames == 0) return;
 
+    // Sequence events are merged in offset order with the captured MIDI (whose
+    // offsets never decrease: the queue is in capture order).
+    std::size_t nextSequenceEvent = 0;
+    auto routeSequencesUpTo = [&](std::uint32_t offset) {
+        for (; nextSequenceEvent < sequenceEventCount && sequenceEvents[nextSequenceEvent].offset <= offset;
+             ++nextSequenceEvent) {
+            if (currentGraph == nullptr) continue;
+            const SequenceEvent& e = sequenceEvents[nextSequenceEvent];
+            QueuedMidi           item;
+            item.source            = e.source;
+            item.message.message   = e.message;
+            route(item, e.offset);
+        }
+    };
+
     // Map the previous cycle's window onto this block, one period behind
     // (domain-model.md, sample-accurate alignment).
     const Nanoseconds blockStart  = ctx.blockStartTime;
@@ -257,8 +332,10 @@ void Engine::gatherMidi(const AudioCallbackContext& ctx) noexcept {
             const auto frame = static_cast<std::uint64_t>(static_cast<double>(sinceWindow) * rate / 1e9);
             offset = static_cast<std::uint32_t>(std::min<std::uint64_t>(frame, frames - 1));
         }
+        routeSequencesUpTo(offset);
         if (currentGraph != nullptr) route(item, offset);
     }
+    routeSequencesUpTo(frames);
 }
 
 void Engine::route(const QueuedMidi& item, std::uint32_t offset) noexcept {

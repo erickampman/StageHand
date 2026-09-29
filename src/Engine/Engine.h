@@ -9,6 +9,7 @@
 #include "Core/SpscQueue.h"
 #include "Core/Ump.h"
 #include "Engine/EngineGraph.h"
+#include "Engine/SequenceSet.h"
 #include "Midi/MidiInput.h"
 
 namespace stagehand {
@@ -87,8 +88,19 @@ public:
         std::uint64_t slotEventsFull     = 0;   // dropped: a slot's per-block buffer full
         std::uint64_t unsupportedDialect = 0;   // dropped: no form the slot takes (CLAP-only port, SysEx)
         std::uint64_t lateMidi           = 0;   // older than the window; placed at offset 0
+        std::uint64_t sequenceEventsFull = 0;   // dropped: too many sequence events in one block
     };
     Stats stats() const noexcept;   // any thread
+
+    // --- sequences (docs/sequences.md, section 3) ---
+    // Publish a new snapshot of every sequence (null = none). Adopted at the next
+    // block like a graph: playback continues through edits, and the old snapshot
+    // is destroyed in collect(). Sequences are MIDI sources: rows hear one only
+    // if they select it (never through "all inputs").
+    void commitSequences(std::unique_ptr<SequenceSet> sequences);
+    // Start or stop one sequence (kInvalidMidiSource = all of them) at the next
+    // block. False if the command queue is full (try again next tick).
+    bool sendSequenceCommand(MidiSourceHandle source, SequenceCommand command) noexcept;
 
     // --- transport (docs/sequences.md, section 1) ---
     // A free-running beat clock: it starts at beat 0 and always advances. Tempo
@@ -163,6 +175,7 @@ private:
     HeldNote*            claimHeld(MidiSourceHandle source, const MidiMessage& m) noexcept;
     void                 runSlots(const AudioCallbackContext& ctx) noexcept;
     void                 advanceTransport(const AudioCallbackContext& ctx) noexcept;
+    void                 runSequences(const AudioCallbackContext& ctx) noexcept;
     TimeInfo             timeAt(const AudioCallbackContext& ctx, std::uint32_t frame) const noexcept;
     const float*         advanceGain(SlotRuntime& runtime, std::uint32_t frames, double sampleRate,
                                      float& constantGain) noexcept;
@@ -177,6 +190,21 @@ private:
     SpscQueue<EngineGraph*, 16>   retiredGraphs;            // audio -> main
     EngineGraph*                  currentGraph = nullptr;   // audio thread only
     LevelMeter                    outputLevels;
+
+    // Sequences: snapshots main -> audio -> main like graphs, commands main ->
+    // audio, and this block's generated events (sorted by offset).
+    struct QueuedCommand {
+        MidiSourceHandle source  = kInvalidMidiSource;
+        SequenceCommand  command = SequenceCommand::Stop;
+    };
+    static constexpr std::size_t kMaxSequenceEvents = 1024;
+    std::atomic<SequenceSet*>     pendingSequences{nullptr};
+    SpscQueue<SequenceSet*, 16>   retiredSequences;
+    SequenceSet*                  currentSequences = nullptr;   // audio thread only
+    SpscQueue<QueuedCommand, 64>  sequenceCommands;
+    SequenceEvent                 sequenceEvents[kMaxSequenceEvents];
+    std::size_t                   sequenceEventCount = 0;
+    std::atomic<std::uint64_t>    sequenceEventsFull{0};
 
     // Transport. Tempo and signature: main writes, audio reads per block. The
     // beat clock itself is audio-thread state, published after each block.

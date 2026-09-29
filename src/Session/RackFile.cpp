@@ -101,8 +101,12 @@ MidiSourceRef parseSource(const std::string& text) {
         ref.name = text.substr(8);
         return ref;
     }
-    if (text.rfind("sequence:", 0) == 0) fail("sequence sources aren't supported yet");
-    fail("midi.source '" + text + "' should be \"all\", \"device:<id>\" or \"virtual:<name>\"");
+    if (text.rfind("sequence:", 0) == 0 && text.size() > 9) {
+        ref.kind = MidiSourceRef::Kind::Sequence;
+        ref.name = text.substr(9);
+        return ref;
+    }
+    fail("midi.source '" + text + "' should be \"all\", \"device:<id>\", \"virtual:<name>\" or \"sequence:<id>\"");
 }
 
 std::string sourceText(const MidiSourceRef& ref) {
@@ -110,8 +114,109 @@ std::string sourceText(const MidiSourceRef& ref) {
         case MidiSourceRef::Kind::All:     return "all";
         case MidiSourceRef::Kind::Device:  return "device:" + ref.name;
         case MidiSourceRef::Kind::Virtual: return "virtual:" + ref.name;
+        case MidiSourceRef::Kind::Sequence: return "sequence:" + ref.name;
     }
     return "all";
+}
+
+// --- sequences (docs/sequences.md, section 2) ------------------------------------
+
+int intIn(const Json& s, const char* field, int fallback, int low, int high) {
+    const int value = s.value(field, fallback);
+    if (value < low || value > high)
+        fail(std::string(field) + " must be within " + std::to_string(low) + "-" + std::to_string(high));
+    return value;
+}
+
+// "4", "1/2", "3/2": units per beat.
+SequenceRate parseRate(const Json& value) {
+    const std::string text = value.is_number() ? std::to_string(value.get<int>()) : value.get<std::string>();
+    const auto        slash = text.find('/');
+    char*             end   = nullptr;
+    const long        num   = std::strtol(text.c_str(), &end, 10);
+    long              den   = 1;
+    if (slash != std::string::npos) den = std::strtol(text.c_str() + slash + 1, &end, 10);
+    if (end == nullptr || *end != '\0' || num < 1 || num > 64 || den < 1 || den > 64)
+        fail("rate '" + text + "' should be units per beat, like \"4\" or \"1/2\" (1-64 each side)");
+    return SequenceRate{static_cast<std::uint16_t>(num), static_cast<std::uint16_t>(den)};
+}
+
+std::string rateText(const SequenceRate& rate) {
+    return rate.denominator == 1 ? std::to_string(rate.numerator)
+                                 : std::to_string(rate.numerator) + "/" + std::to_string(rate.denominator);
+}
+
+const char* launchText(LaunchQuantize launch) {
+    return launch == LaunchQuantize::Beat ? "beat" : launch == LaunchQuantize::Immediate ? "immediate" : "bar";
+}
+
+Sequence parseSequence(const Json& s) {
+    Sequence seq;
+    seq.id = s.at("id").get<std::string>();
+    if (!validSlotId(seq.id)) fail("sequence id '" + seq.id + "' may use only letters, digits, '-' and '_'");
+    seq.name     = s.value("name", seq.id);
+    const int protocol = s.value("protocol", 2);
+    if (protocol != 1 && protocol != 2) fail("protocol must be 1 or 2");
+    seq.protocol      = protocol == 1 ? MidiProtocol::Midi1 : MidiProtocol::Midi2;
+    seq.edo           = intIn(s, "edo", 12, 1, 128);
+    seq.referenceNote = intIn(s, "referenceNote", 60, 0, 127);
+    seq.channel       = static_cast<std::uint8_t>(intIn(s, "channel", 1, 1, 16) - 1);
+    seq.group         = static_cast<std::uint8_t>(intIn(s, "group", 1, 1, 16) - 1);
+    if (s.contains("rate")) seq.rate = parseRate(s.at("rate"));
+    seq.length = static_cast<std::uint32_t>(intIn(s, "length", 16, 1, 4096));
+    const std::string launch = s.value("launch", std::string("bar"));
+    if (launch == "bar") seq.launch = LaunchQuantize::Bar;
+    else if (launch == "beat") seq.launch = LaunchQuantize::Beat;
+    else if (launch == "immediate") seq.launch = LaunchQuantize::Immediate;
+    else fail("launch must be \"bar\", \"beat\" or \"immediate\"");
+    seq.repeat          = s.value("repeat", true);
+    seq.noteOffOffsetMs = s.value("noteOffOffsetMs", 0.0);
+    if (seq.noteOffOffsetMs < -1000.0 || seq.noteOffOffsetMs > 1000.0) fail("noteOffOffsetMs must be within +-1000");
+
+    const bool midi1       = seq.protocol == MidiProtocol::Midi1;
+    const int  maxVelocity = midi1 ? 127 : 65535;
+    if (s.contains("notes")) {
+        for (const Json& n : s.at("notes")) {
+            if (!n.is_array() || n.size() != 4) fail("each note is [start, length, pitch, velocity]");
+            SequenceNote note;
+            const long start = n[0].get<long>(), length = n[1].get<long>(), velocity = n[3].get<long>();
+            note.pitch       = n[2].get<int>();
+            if (start < 0 || length < 1 || start + length > static_cast<long>(seq.length))
+                fail("note at " + std::to_string(start) + ": it must lie within the sequence (length " +
+                     std::to_string(seq.length) + ")");
+            if (velocity < 1 || velocity > maxVelocity)
+                fail("note velocity must be within 1-" + std::to_string(maxVelocity));
+            const double semitones = midi1 ? note.pitch : seq.referenceNote + note.pitch * 12.0 / seq.edo;
+            if (semitones < 0.0 || semitones >= 128.0) fail("note pitch " + std::to_string(note.pitch) + " is out of range");
+            note.start    = static_cast<std::uint32_t>(start);
+            note.length   = static_cast<std::uint32_t>(length);
+            note.velocity = static_cast<std::uint16_t>(velocity);
+            seq.notes.push_back(note);
+        }
+    }
+    return seq;
+}
+
+Json sequenceJson(const Sequence& seq) {
+    Json s;
+    s["id"]       = seq.id;
+    s["name"]     = seq.name;
+    s["protocol"] = seq.protocol == MidiProtocol::Midi1 ? 1 : 2;
+    if (seq.protocol == MidiProtocol::Midi2) {
+        s["edo"]           = seq.edo;
+        s["referenceNote"] = seq.referenceNote;
+    }
+    s["channel"]         = seq.channel + 1;
+    s["group"]           = seq.group + 1;
+    s["rate"]            = rateText(seq.rate);
+    s["length"]          = seq.length;
+    s["launch"]          = launchText(seq.launch);
+    s["repeat"]          = seq.repeat;
+    s["noteOffOffsetMs"] = seq.noteOffOffsetMs;
+    Json notes           = Json::array();
+    for (const SequenceNote& n : seq.notes) notes.push_back(Json::array({n.start, n.length, n.pitch, n.velocity}));
+    s["notes"] = notes;
+    return s;
 }
 
 // "all", or a list of numbers 1-16, as a bit mask.
@@ -259,6 +364,21 @@ RackFileResult loadRack(const std::string& bundlePath, Rack& rack) {
             loaded.timeSigDenominator = d;
         }
 
+        std::set<std::string> sequenceIds;
+        if (doc.contains("sequences")) {
+            std::size_t sequenceIndex = 0;
+            for (const Json& s : doc.at("sequences")) {
+                ++sequenceIndex;
+                try {
+                    Sequence seq = parseSequence(s);
+                    if (!sequenceIds.insert(seq.id).second) fail("duplicate sequence id '" + seq.id + "'");
+                    loaded.sequences.push_back(std::move(seq));
+                } catch (const std::exception& e) {
+                    fail("sequence " + std::to_string(sequenceIndex) + ": " + e.what());
+                }
+            }
+        }
+
         std::set<std::string> ids;
         std::size_t           index = 0;
         for (const Json& s : doc.at("slots")) {
@@ -266,6 +386,8 @@ RackFileResult loadRack(const std::string& bundlePath, Rack& rack) {
             try {
                 RackSlot slot = parseSlot(s, bundle, result.warnings);
                 if (!ids.insert(slot.id).second) fail("duplicate slot id '" + slot.id + "'");
+                if (slot.source.kind == MidiSourceRef::Kind::Sequence && sequenceIds.count(slot.source.name) == 0)
+                    fail("there's no sequence '" + slot.source.name + "' in this rack");
                 loaded.slots.push_back(std::move(slot));
             } catch (const std::exception& e) {
                 fail("slot " + std::to_string(index) + ": " + e.what());
@@ -306,6 +428,16 @@ RackFileResult saveRack(const std::string& bundlePath, const Rack& rack) {
             slots.push_back(slotJson(slot, !slot.state.empty()));
         }
         doc["slots"] = slots;
+        if (!rack.sequences.empty()) {
+            Json sequences = Json::array();
+            std::set<std::string> sequenceIds;
+            for (const Sequence& seq : rack.sequences) {
+                if (!validSlotId(seq.id) || !sequenceIds.insert(seq.id).second)
+                    fail("invalid or duplicate sequence id '" + seq.id + "'");
+                sequences.push_back(sequenceJson(seq));
+            }
+            doc["sequences"] = sequences;
+        }
         {
             std::ofstream out(temp / "rack.json", std::ios::trunc);
             out << doc.dump(2) << '\n';

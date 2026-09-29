@@ -13,6 +13,7 @@ std::string keyOf(const MidiSourceRef& ref) {
         case MidiSourceRef::Kind::All:     return "all";
         case MidiSourceRef::Kind::Device:  return "device:" + ref.name;
         case MidiSourceRef::Kind::Virtual: return "virtual:" + ref.name;
+        case MidiSourceRef::Kind::Sequence: return "sequence:" + ref.name;
     }
     return "all";
 }
@@ -35,6 +36,11 @@ bool Session::load(const Rack& rack, double rate, LoadReport& report) {
     std::vector<Slot>             next;
     std::vector<PluginDescriptor> scanned;
     bool                          haveScan = false;
+
+    // Sequences first: slots resolve "sequence:<id>" sources against them.
+    sequenceList.clear();
+    for (const Sequence& seq : rack.sequences)
+        sequenceList.push_back(SequenceEntry{seq, nextSequenceSource++, std::make_shared<SequenceRuntime>()});
 
     for (const RackSlot& saved : rack.slots) {
         Slot slot;
@@ -75,6 +81,7 @@ bool Session::load(const Rack& rack, double rate, LoadReport& report) {
     if (!setTimeSignature(rack.timeSigNumerator, rack.timeSigDenominator)) setTimeSignature(4, 4);
     sampleRate = rate;
     dirty      = false;
+    commitSequences();
     commitGraph();
     return std::any_of(loaded.begin(), loaded.end(),
                        [](const Slot& s) { return s.plugin && s.saved.enabled; });
@@ -86,6 +93,7 @@ Rack Session::capture() const {
     rack.tempoBpm           = tempo;
     rack.timeSigNumerator   = sigNumerator;
     rack.timeSigDenominator = sigDenominator;
+    for (const SequenceEntry& entry : sequenceList) rack.sequences.push_back(entry.sequence);
     for (const Slot& slot : loaded) {
         RackSlot saved = slot.saved;
         if (slot.plugin) {
@@ -225,12 +233,101 @@ bool Session::removeSlot(const std::string& id) {
 }
 
 void Session::flush() {
+    if (sequencesDirty) commitSequences();
     if (graphDirty) commitGraph();
 }
 
 void Session::unload() {
+    engine.commitSequences(nullptr);   // releases any sounding sequence notes
     engine.commit(nullptr);
-    graphDirty = false;
+    graphDirty = sequencesDirty = false;
+}
+
+// --- sequences ---------------------------------------------------------------------
+
+const Session::SequenceEntry* Session::sequence(const std::string& id) const noexcept {
+    for (const SequenceEntry& entry : sequenceList)
+        if (entry.sequence.id == id) return &entry;
+    return nullptr;
+}
+
+Session::SequenceEntry* Session::findSequence(const std::string& id) noexcept {
+    return const_cast<SequenceEntry*>(std::as_const(*this).sequence(id));
+}
+
+std::string Session::addSequence(MidiProtocol protocol) {
+    Sequence seq;
+    seq.id = "seq";
+    for (int n = 2; findSequence(seq.id) != nullptr; ++n) seq.id = "seq-" + std::to_string(n);
+    seq.name     = "Sequence " + std::to_string(sequenceList.size() + 1);
+    seq.protocol = protocol;
+    sequenceList.push_back(SequenceEntry{seq, nextSequenceSource++, std::make_shared<SequenceRuntime>()});
+    sequencesDirty = dirty = true;
+    return seq.id;
+}
+
+bool Session::setSequence(const Sequence& updated, std::string& problem) {
+    SequenceEntry* entry = findSequence(updated.id);
+    if (entry == nullptr) {
+        problem = "there's no sequence '" + updated.id + "'";
+        return false;
+    }
+    if (updated.protocol != entry->sequence.protocol && !entry->sequence.notes.empty()) {
+        problem = "a sequence's MIDI protocol can change only while it has no notes";
+        return false;
+    }
+    entry->sequence = updated;
+    sequencesDirty = dirty = true;
+    return true;
+}
+
+bool Session::removeSequence(const std::string& id) {
+    const auto it = std::find_if(sequenceList.begin(), sequenceList.end(),
+                                 [&](const SequenceEntry& e) { return e.sequence.id == id; });
+    if (it == sequenceList.end()) return false;
+    sequenceList.erase(it);   // the engine releases its notes when it adopts the new set
+    for (Slot& slot : loaded)
+        if (slot.saved.source.kind == MidiSourceRef::Kind::Sequence && slot.saved.source.name == id) {
+            resolveSource(slot);   // now unresolved: hears nothing, with the reason
+            graphDirty = true;
+        }
+    sequencesDirty = dirty = true;
+    return true;
+}
+
+bool Session::startSequence(const std::string& id) {
+    const SequenceEntry* entry = sequence(id);
+    if (entry == nullptr) return false;
+    flush();   // a sequence added or edited this tick must be in the engine first
+    return engine.sendSequenceCommand(entry->source, SequenceCommand::Start);
+}
+
+bool Session::stopSequence(const std::string& id) {
+    const SequenceEntry* entry = sequence(id);
+    return entry != nullptr && engine.sendSequenceCommand(entry->source, SequenceCommand::Stop);
+}
+
+void Session::stopAllSequences() {
+    engine.sendSequenceCommand(kInvalidMidiSource, SequenceCommand::StopNow);
+}
+
+SequenceState Session::sequenceState(const std::string& id) const noexcept {
+    const SequenceEntry* entry = sequence(id);
+    return entry != nullptr ? entry->runtime->state.load(std::memory_order_relaxed) : SequenceState::Stopped;
+}
+
+double Session::sequencePosition(const std::string& id) const noexcept {
+    const SequenceEntry* entry = sequence(id);
+    return entry != nullptr ? entry->runtime->position.load(std::memory_order_relaxed) : 0.0;
+}
+
+void Session::commitSequences() {
+    std::vector<CompiledSequence> compiled;
+    compiled.reserve(sequenceList.size());
+    for (const SequenceEntry& entry : sequenceList)
+        compiled.push_back(CompiledSequence::compile(entry.sequence, entry.source, entry.runtime));
+    engine.commitSequences(std::make_unique<SequenceSet>(std::move(compiled)));
+    sequencesDirty = false;
 }
 
 // --- helpers -----------------------------------------------------------------------
@@ -278,6 +375,11 @@ std::shared_ptr<HostedPlugin> Session::createPlugin(const RackSlot& saved, std::
 }
 
 MidiSourceHandle Session::resolve(const MidiSourceRef& ref, std::string& problem) {
+    if (ref.kind == MidiSourceRef::Kind::Sequence) {
+        if (const SequenceEntry* entry = sequence(ref.name)) return entry->source;
+        problem = "there's no sequence '" + ref.name + "'";
+        return kInvalidMidiSource;
+    }
     const std::string key = keyOf(ref);
     if (const auto it = openSources.find(key); it != openSources.end()) return it->second;
     if (ref.kind == MidiSourceRef::Kind::Device) {

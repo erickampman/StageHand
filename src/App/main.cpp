@@ -422,6 +422,7 @@ std::string sourceLabel(const MidiSourceRef& ref) {
         case MidiSourceRef::Kind::All:     return "all inputs";
         case MidiSourceRef::Kind::Device:  return ref.name;
         case MidiSourceRef::Kind::Virtual: return "virtual " + ref.name;
+        case MidiSourceRef::Kind::Sequence: return "sequence " + ref.name;
     }
     return "?";
 }

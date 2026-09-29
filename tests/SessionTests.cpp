@@ -263,6 +263,68 @@ void testTransport() {
     engine->collect();
 }
 
+void testSequences() {
+    FakeFactory factory;
+    factory.installed = {installedPlugin("synth", "/clap/Synth.clap")};
+    FakeMidiInput midi;
+    NullHost      host;
+    auto          engine = std::make_unique<Engine>();
+    Session       session(factory, host, midi, *engine);
+
+    Rack     rack;
+    Sequence arp;
+    arp.id       = "arp";
+    arp.protocol = MidiProtocol::Midi1;
+    arp.launch   = LaunchQuantize::Immediate;
+    arp.notes    = {{0, 1, 60, 100}};
+    rack.sequences = {arp};
+    RackSlot a     = slot("a", "synth", "/clap/Synth.clap");
+    a.source       = MidiSourceRef{MidiSourceRef::Kind::Sequence, "arp"};
+    RackSlot b     = slot("b", "synth", "/clap/Synth.clap");   // "all inputs": doesn't hear it
+    rack.slots     = {a, b};
+    Session::LoadReport report;
+    CHECK(session.load(rack, 48000.0, report) && report.warnings.empty());
+    CHECK(session.sequences().size() == 1 && isSequenceSource(session.sequences()[0].source));
+    CHECK(session.slot("a")->source == session.sequences()[0].source);
+
+    // Started through the Session, it plays into the row that chose it.
+    CHECK(session.startSequence("arp"));
+    runBlock(*engine);
+    auto* fa = dynamic_cast<FakePlugin*>(session.slot("a")->plugin.get());
+    auto* fb = dynamic_cast<FakePlugin*>(session.slot("b")->plugin.get());
+    CHECK(fa != nullptr && fa->calls.size() == 1 && fa->calls[0].events.size() == 1);
+    CHECK(fb != nullptr && fb->calls.size() == 1 && fb->calls[0].events.empty());
+    CHECK(session.sequenceState("arp") == SequenceState::Playing);
+
+    // The protocol changes only while there are no notes.
+    Sequence edit = session.sequence("arp")->sequence;
+    edit.protocol = MidiProtocol::Midi2;
+    std::string problem;
+    CHECK(!session.setSequence(edit, problem) && !problem.empty());
+    edit.notes.clear();
+    edit.protocol = MidiProtocol::Midi1;
+    CHECK(session.setSequence(edit, problem));   // cleared first...
+    edit.protocol = MidiProtocol::Midi2;
+    CHECK(session.setSequence(edit, problem));   // ...then the toggle works
+    CHECK(session.flushPending() && session.modified());
+    session.flush();
+
+    CHECK(session.addSequence() == "seq" && session.addSequence(MidiProtocol::Midi1) == "seq-2");
+    const Rack captured = session.capture();
+    CHECK(captured.sequences.size() == 3 && captured.sequences[0].protocol == MidiProtocol::Midi2);
+    CHECK(captured.slots[0].source.kind == MidiSourceRef::Kind::Sequence);
+
+    // Removing a sequence leaves its rows hearing nothing, with a reason.
+    CHECK(session.removeSequence("arp"));
+    CHECK(!session.slot("a")->sourceProblem.empty() && session.slot("a")->source == kInvalidMidiSource);
+    session.flush();
+    CHECK(session.sequences().size() == 2);
+
+    session.unload();
+    runBlock(*engine);
+    engine->collect();
+}
+
 void testAddRemove() {
     FakeFactory factory;
     factory.installed = {installedPlugin("synth", "/clap/Synth.clap")};
@@ -312,5 +374,6 @@ int main() {
     testStructuralEdits();
     testAddRemove();
     testTransport();
+    testSequences();
     return test::finish("Session");
 }

@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "Core/MidiFilter.h"
+#include "Core/Sequence.h"
 #include "Plugin/PluginDescriptor.h"
 
 namespace stagehand {
@@ -19,10 +20,10 @@ struct MidiSourceRef {
         All,       // every open input
         Device,    // one device, by its MidiSourceInfo id
         Virtual,   // one of StageHand's virtual inputs, by name
-        // Reserved: Sequence (a MIDI source the rack owns; not designed yet)
+        Sequence,  // one of the rack's sequences, by id (docs/sequences.md)
     };
     Kind        kind = Kind::All;
-    std::string name;   // Device: "KeyLab 88:KeyLab 88 MIDI 1"; Virtual: "MIDI 2.0 In"
+    std::string name;   // Device: "KeyLab 88:KeyLab 88 MIDI 1"; Virtual: "MIDI 2.0 In"; Sequence: its id
 };
 
 // One plugin slot as saved: the plugin's identity, its opaque state, and the
@@ -44,15 +45,15 @@ struct RackSlot {
     MidiFilter             filter;
 };
 
-// A complete setup (docs/rack-format.md). Reserved for later: the rack's own
-// sequences, kept separate from `slots` because a sequence is a MIDI source,
-// not something that makes sound.
+// A complete setup (docs/rack-format.md). Its sequences are kept separate from
+// `slots` because a sequence is a MIDI source, not something that makes sound.
 struct Rack {
     std::string           name;
     double                tempoBpm           = 120.0;   // the host tempo (docs/sequences.md, section 1)
     int                   timeSigNumerator   = 4;
     int                   timeSigDenominator = 4;
     std::vector<RackSlot> slots;
+    std::vector<Sequence> sequences;
 };
 
 // A slot id from a display name: lowercase letters and digits, other runs of

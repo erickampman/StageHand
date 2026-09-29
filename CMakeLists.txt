@@ -56,7 +56,8 @@ target_link_libraries(stagehand-core PRIVATE stagehand-warnings)
 # --- stagehand-engine: the graph runner (no platform or format dependencies) ---
 add_library(stagehand-engine STATIC
     src/Engine/Engine.cpp
-    src/Engine/EngineGraph.cpp)
+    src/Engine/EngineGraph.cpp
+    src/Engine/SequenceSet.cpp)
 target_link_libraries(stagehand-engine
     PUBLIC  stagehand-core
     PRIVATE stagehand-warnings)
@@ -115,6 +116,7 @@ endfunction()
 stagehand_add_test(test-ump    tests/UmpTests.cpp       stagehand-core)
 stagehand_add_test(test-spsc   tests/SpscQueueTests.cpp stagehand-core)
 stagehand_add_test(test-engine tests/EngineTests.cpp    stagehand-engine)
+stagehand_add_test(test-sequence tests/SequenceTests.cpp stagehand-engine)
 stagehand_add_test(test-rackfile tests/RackFileTests.cpp stagehand-session)
 stagehand_add_test(test-session  tests/SessionTests.cpp  stagehand-session)
 stagehand_add_test(test-rackcontroller tests/RackControllerTests.cpp stagehand-app)

@@ -1,0 +1,59 @@
+#pragma once
+
+#include <cstdint>
+#include <string>
+#include <vector>
+
+#include "Core/MidiMessage.h"
+
+namespace stagehand {
+
+// A step sequence as edited and saved (docs/sequences.md, section 2). Plain
+// data: the Session holds these, the rack file saves them, and the engine
+// compiles each into an immutable playback snapshot (Engine/SequenceSet.h).
+
+struct SequenceNote {
+    std::uint32_t start  = 0;   // unit where it begins
+    std::uint32_t length = 1;   // in units, >= 1; start + length <= the sequence's length
+    // MIDI 1.0: a note number, 0-127. MIDI 2.0: an EDO step relative to the
+    // sequence's reference note (negative below it).
+    std::int32_t  pitch    = 0;
+    // MIDI 1.0: 1-127. MIDI 2.0: 1-65535. (0 would be a note-off.)
+    std::uint16_t velocity = 100;
+};
+
+// Units per beat as a ratio: 4/1 = sixteenth notes, 1/2 = a unit every two beats.
+// A beat is the tempo's beat (a quarter note).
+struct SequenceRate {
+    std::uint16_t numerator   = 4;
+    std::uint16_t denominator = 1;
+    double unitsPerBeat() const noexcept { return static_cast<double>(numerator) / denominator; }
+};
+
+enum class LaunchQuantize { Bar, Beat, Immediate };
+
+struct Sequence {
+    std::string  id;     // unique in the rack; a slot plays it as source "sequence:<id>"
+    std::string  name;
+    MidiProtocol protocol      = MidiProtocol::Midi2;   // changeable only while `notes` is empty
+    int          edo           = 12;                    // MIDI 2.0: steps per octave
+    int          referenceNote = 60;                    // MIDI 2.0: the pitch of step 0 (MIDI note)
+    std::uint8_t channel       = 0;                     // 0-based, sent on
+    std::uint8_t group         = 0;                     // 0-based
+    SequenceRate rate;
+    std::uint32_t   length          = 16;               // loop length in units
+    LaunchQuantize  launch          = LaunchQuantize::Bar;
+    bool            repeat          = true;             // off: play once, then stop
+    double          noteOffOffsetMs = 0.0;              // moves every note-off (+ legato, - staccato)
+    std::vector<SequenceNote> notes;
+};
+
+// A sequence's MidiSourceHandle lives above the range MIDI inputs use, so the
+// engine can tell a sequence from a device: a row listening to "all inputs"
+// hears every device but no sequence (a sequence plays only where chosen).
+inline constexpr MidiSourceHandle kSequenceSourceBase = 0x80000000u;
+constexpr bool isSequenceSource(MidiSourceHandle handle) noexcept {
+    return handle >= kSequenceSourceBase;
+}
+
+} // namespace stagehand

@@ -100,9 +100,33 @@ public:
     // once no graph holds it (Engine::collect()).
     bool removeSlot(const std::string& id);
 
+    // --- sequences (docs/sequences.md). A sequence is a MIDI source the rack
+    // owns: a slot plays it with source {Sequence, id}. Edits are committed by
+    // flush(), like structural edits, and playback carries on through them.
+    struct SequenceEntry {
+        Sequence                         sequence;
+        MidiSourceHandle                 source = kInvalidMidiSource;   // never reused in a session
+        std::shared_ptr<SequenceRuntime> runtime;
+    };
+    const std::vector<SequenceEntry>& sequences() const noexcept { return sequenceList; }
+    const SequenceEntry*              sequence(const std::string& id) const noexcept;
+    // A new, empty sequence (MIDI 2.0 in 12-EDO unless told otherwise); returns its id.
+    std::string addSequence(MidiProtocol protocol = MidiProtocol::Midi2);
+    // Replace a sequence's content and settings (matched by id). Refused, with
+    // `problem` set, if it would change the protocol of a sequence that has
+    // notes: that's a conversion, not an edit.
+    bool setSequence(const Sequence& sequence, std::string& problem);
+    // Rows that played it then hear nothing (with a source problem).
+    bool removeSequence(const std::string& id);
+    bool startSequence(const std::string& id);   // at its launch boundary
+    bool stopSequence(const std::string& id);    // at its launch boundary
+    void stopAllSequences();                     // now, with note-offs
+    SequenceState sequenceState(const std::string& id) const noexcept;
+    double        sequencePosition(const std::string& id) const noexcept;   // units into the loop
+
     // Commit the graph if a structural edit is pending. Call once per UI tick.
     void flush();
-    bool flushPending() const noexcept { return graphDirty; }
+    bool flushPending() const noexcept { return graphDirty || sequencesDirty; }
 
     // Unsaved changes: edits here, or a plugin reporting a state change (CLAP
     // state.mark_dirty, via HostServices::stateChanged()).
@@ -126,6 +150,8 @@ private:
     MidiSourceHandle resolve(const MidiSourceRef& ref, std::string& problem);
     void             resolveSource(Slot& slot);
     void             commitGraph();
+    void             commitSequences();
+    SequenceEntry*   findSequence(const std::string& id) noexcept;
     static float     targetGainOf(const RackSlot& saved) noexcept;
 
     PluginFactory& factory;
@@ -140,7 +166,10 @@ private:
     double                                  tempo          = 120.0;
     int                                     sigNumerator   = 4;
     int                                     sigDenominator = 4;
-    bool                                    graphDirty = false;
+    bool                                    graphDirty     = false;
+    bool                                    sequencesDirty = false;
+    std::vector<SequenceEntry>              sequenceList;
+    MidiSourceHandle                        nextSequenceSource = kSequenceSourceBase + 1;
     bool                                    dirty      = false;
 };
 
