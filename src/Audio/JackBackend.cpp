@@ -19,6 +19,11 @@ Nanoseconds monotonicNow() noexcept {
     return static_cast<Nanoseconds>(ts.tv_sec) * 1'000'000'000 + ts.tv_nsec;
 }
 
+void silentJackMessage(const char*) {}
+void printJackMessage(const char* message) {   // what libjack does by default
+    std::fprintf(stderr, "%s\n", message);
+}
+
 // The PIPEWIRE_PROPS value this process set to force a quantum, if any. It stays
 // set after jack_client_open: clearing it while PipeWire's threads are running
 // could race with their getenv(). The next open() — when no client is running —
@@ -54,6 +59,17 @@ JackBackend::JackBackend(std::string jackClientName, bool connectToSystem)
 
 JackBackend::~JackBackend() {
     close();
+}
+
+bool JackBackend::serverAvailable() {
+    jack_set_error_function(&silentJackMessage);
+    jack_set_info_function(&silentJackMessage);
+    jack_status_t        status{};
+    jack_client_t* const probe = jack_client_open("StageHand-probe", JackNoStartServer, &status);
+    if (probe != nullptr) jack_client_close(probe);
+    jack_set_error_function(&printJackMessage);   // as before (there's no getter for the old ones)
+    jack_set_info_function(&printJackMessage);
+    return probe != nullptr;
 }
 
 bool JackBackend::open(const AudioConfig& requested, AudioConfig& negotiated) {

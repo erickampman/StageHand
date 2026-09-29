@@ -35,6 +35,10 @@ public:
     JackBackend(const JackBackend&)            = delete;
     JackBackend& operator=(const JackBackend&) = delete;
 
+    // Is a JACK server reachable from this process (without starting one)?
+    // Opens and closes a throwaway client, with libjack's own messages silenced.
+    static bool serverAvailable();
+
     bool        open(const AudioConfig& requested, AudioConfig& negotiated) override;
     void        setProcessor(AudioProcessor* audioProcessor) override;
     bool        start() override;

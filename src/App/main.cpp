@@ -1,11 +1,13 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <cerrno>
 #include <chrono>
 #include <cmath>
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <map>
 #include <memory>
@@ -13,6 +15,8 @@
 #include <string_view>
 #include <thread>
 #include <vector>
+
+#include <unistd.h>
 
 #include "App/AppHost.h"
 #include "App/EditorWindow.h"
@@ -42,11 +46,14 @@ void handleSignal(int) {
 
 void printUsage() {
     std::puts(
-        "usage: stagehand MODE [options]\n"
+        "usage: stagehand [MODE] [options]\n"
+        "\n"
+        "With no arguments: --play with a new, empty scratch rack (not saved).\n"
         "\n"
         "Modes:\n"
-        "  --play               host plugins: MIDI in, audio out (needs --rack, --plugin,\n"
-        "                       or --save-rack alone to start a new, empty rack)\n"
+        "  --play               host plugins: MIDI in, audio out. Plays --rack or\n"
+        "                       --plugin; with neither, a new, empty rack (saved only\n"
+        "                       with --save-rack)\n"
         "  --list-plugins       list installed CLAP plugins\n"
         "  --list-midi          list MIDI sources (id, protocol, hardware/software/app)\n"
         "  --monitor            print incoming MIDI exactly as it arrives\n"
@@ -93,7 +100,10 @@ void printUsage() {
         "that editor only; StageHand keeps playing.\n"
         "In the terminal, Ctrl-C quits the same way as Ctrl-Q.\n"
         "\n"
-        "Examples (audio goes through PipeWire's JACK layer, hence pw-jack):\n"
+        "Audio goes through PipeWire's JACK layer. Started without pw-jack and with no\n"
+        "JACK server to reach, --play and --tone restart themselves under pw-jack.\n"
+        "\n"
+        "Examples:\n"
         "  pw-jack stagehand --play --rack ~/Racks/Piano.rack\n"
         "  pw-jack stagehand --play --save-rack ~/Racks/New.rack    (build it in the window)\n"
         "  pw-jack stagehand --play --rack ~/Racks/Gig.rack --no-save-rack --quantum 128\n"
@@ -125,6 +135,7 @@ struct Options {
 
 // Returns 0 to run, -1 to exit successfully (help), or a process exit code.
 int parseArguments(int argc, char** argv, Options& options) {
+    if (argc == 1) options.mode = Mode::Play;   // a scratch rack
     for (int i = 1; i < argc; ++i) {
         const std::string_view arg = argv[i];
         if (arg == "--help" || arg == "-h") {
@@ -506,12 +517,6 @@ int runPlay(const Options& options) {
                      options.rack.c_str(), options.plugin.c_str());
         return 2;
     }
-    if (options.plugin.empty() && options.rack.empty() && options.saveRack.empty()) {
-        std::fprintf(stderr,
-                     "--play needs a rack (--rack PATH), a plugin (--plugin PATH|ID), or a new rack to\n"
-                     "build in the rack window (--save-rack PATH)\n");
-        return 2;
-    }
     if (options.noSaveRack && !options.saveRack.empty()) {
         std::fprintf(stderr, "--save-rack and --no-save-rack contradict each other; use one.\n");
         return 2;
@@ -531,8 +536,10 @@ int runPlay(const Options& options) {
         PluginDescriptor desc;
         if (!resolvePlugin(factory, options, desc)) return 1;
         rack = rackForPlugin(desc);
-    } else {   // --save-rack alone: a new, empty rack, named after its file
+    } else if (!options.saveRack.empty()) {   // --save-rack alone: a new, empty rack, named after its file
         rack.name = std::filesystem::path(resolvePath(options.saveRack)).stem().string();
+    } else {   // nothing to play: a scratch rack, not saved
+        rack.name = "Scratch";
     }
 
     // Declaration order matters: destruction runs in reverse, so plugins (held
@@ -604,7 +611,9 @@ int runPlay(const Options& options) {
     config.virtualInputs      = kVirtualInputs;
     config.protocolPreference = options.preference;
     config.saveTarget         = saveTarget;
+    const bool scratch        = options.rack.empty() && options.plugin.empty() && options.saveRack.empty();
     config.noSaveReason       = options.noSaveRack ? "saving is off (--no-save-rack)"
+                                : scratch          ? "this is a scratch rack; start StageHand with --save-rack PATH to keep one"
                                                    : "this session has no rack; start it with --save-rack PATH";
     RackController controller(session, *engine, *input, factory, std::move(config));
     controllerRef = &controller;
@@ -630,6 +639,8 @@ int runPlay(const Options& options) {
                     saveTarget.c_str(), ui ? "StageHand's windows" : "an editor window");
     else if (options.noSaveRack)
         std::puts("Not saving (--no-save-rack).");
+    else if (scratch)
+        std::puts("Scratch rack: not saved. Start StageHand with --save-rack PATH to keep a rack.");
     else
         std::puts("Not saving: this session has no rack. Add --save-rack PATH to keep it.");
     std::printf("Playing %s. Send MIDI to an input above. Ctrl-Q in %s, or Ctrl-C here, stops.\n",
@@ -705,6 +716,8 @@ int runPlay(const Options& options) {
     controller.closeAllEditors();
     const int exitCode = (!saveTarget.empty() && !controller.save()) ? 1 : 0;
     printNotices();
+    if (scratch && !options.noSaveRack && session.modified())
+        std::puts("The scratch rack's changes weren't saved.");
     input.reset();
     host.onStateChanged = nullptr;   // plugins may outlive `session` (in the engine's graphs)
     session.unload();
@@ -716,12 +729,34 @@ int runPlay(const Options& options) {
     return exitCode;
 }
 
+// Started without pw-jack (from a launcher, say) and no JACK server in reach:
+// run again under pw-jack, once. Returns if that isn't needed or didn't work;
+// the backend then reports the missing server as usual.
+void restartUnderPwJackIfNeeded(int argc, char** argv) {
+    constexpr const char* kMarker = "STAGEHAND_PW_JACK";
+    if (std::getenv(kMarker) != nullptr || JackBackend::serverAvailable()) return;
+
+    std::error_code   ec;
+    const std::string self = std::filesystem::read_symlink("/proc/self/exe", ec).string();
+    std::vector<char*> args{const_cast<char*>("pw-jack"), ec ? argv[0] : const_cast<char*>(self.c_str())};
+    for (int i = 1; i < argc; ++i) args.push_back(argv[i]);
+    args.push_back(nullptr);
+
+    std::puts("No JACK server in reach; restarting under pw-jack.");
+    std::fflush(stdout);
+    setenv(kMarker, "1", 1);
+    execvp("pw-jack", args.data());   // returns only on failure
+    std::fprintf(stderr, "Couldn't run pw-jack: %s\n", std::strerror(errno));
+    unsetenv(kMarker);
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
     Options options;
     if (const int result = parseArguments(argc, argv, options); result != 0)
         return result < 0 ? 0 : result;
+    if (options.mode == Mode::Play || options.mode == Mode::Tone) restartUnderPwJackIfNeeded(argc, argv);
 
     std::signal(SIGINT, handleSignal);
     std::signal(SIGTERM, handleSignal);
