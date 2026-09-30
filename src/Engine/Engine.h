@@ -122,10 +122,17 @@ public:
     // dock's activity lights compare it between ticks. Any thread.
     std::uint32_t sourceActivity(MidiSourceHandle source) const noexcept;
 
-    // --- transport (docs/sequences.md, section 1) ---
-    // A free-running beat clock: it starts at beat 0 and always advances. Tempo
-    // and time signature are read once per block, so a change lands at the next
-    // block boundary. Main thread (the values are atomics).
+    // --- transport (docs/sequences.md, sections 1 and 7) ---
+    // A beat clock that starts stopped at beat 0. Start puts beat 0 at the
+    // frame it happens (a block's start from here, a MIDI trigger's own frame),
+    // then it advances; Stop ends every sequence at once and returns to beat 0
+    // after that block. Starting a sequence while stopped starts the transport,
+    // and At Start sequences start with it. Tempo and time signature are read
+    // once per block, so a change lands at the next block boundary. Main
+    // thread (the values are atomics).
+    enum class TransportCommand : std::uint8_t { Start, Stop, Toggle };
+    // At the next block's start. False if the queue is full (try again next tick).
+    bool sendTransportCommand(TransportCommand command) noexcept;
     void setTempo(double bpm) noexcept;                       // clamped to kMinTempo..kMaxTempo
     void setTimeSignature(int numerator, int denominator) noexcept;
     struct Transport {
@@ -135,6 +142,7 @@ public:
         double       beatPosition  = 0.0;   // as of the last block (for display)
         double       barStartBeats = 0.0;
         std::int32_t barNumber     = 0;
+        bool         running       = false;
     };
     Transport transport() const noexcept;   // any thread
     static constexpr double kMinTempo = 20.0;
@@ -198,6 +206,14 @@ private:
     HeldNote*            claimHeld(MidiSourceHandle source, const MidiMessage& m) noexcept;
     void                 runSlots(const AudioCallbackContext& ctx) noexcept;
     void                 advanceTransport(const AudioCallbackContext& ctx) noexcept;
+    void                 makeSequenceBlock(const AudioCallbackContext& ctx) noexcept;
+    void                 startTransport(const AudioCallbackContext& ctx, std::uint32_t frame) noexcept;
+    void                 stopTransport(std::uint32_t frame) noexcept;
+    void                 transportAction(const AudioCallbackContext& ctx, TransportCommand command,
+                                         std::uint32_t frame) noexcept;
+    // A sequence command at `frame`; one that starts a sequence starts a stopped transport first.
+    void                 sequenceCommand(const AudioCallbackContext& ctx, MidiSourceHandle source,
+                                         SequenceCommand command, std::uint32_t frame) noexcept;
     TimeInfo             timeAt(const AudioCallbackContext& ctx, std::uint32_t frame) const noexcept;
     const float*         advanceGain(SlotRuntime& runtime, std::uint32_t frames, double sampleRate,
                                      float& constantGain) noexcept;
@@ -224,6 +240,7 @@ private:
     SpscQueue<SequenceSet*, 16>   retiredSequences;
     SequenceSet*                  currentSequences = nullptr;   // audio thread only
     SpscQueue<QueuedCommand, 64>  sequenceCommands;
+    SpscQueue<TransportCommand, 16> transportCommands;
     SequenceEvent                 sequenceEvents[kMaxSequenceEvents];
     std::size_t                   sequenceEventCount = 0;
     std::atomic<std::uint64_t>    sequenceEventsFull{0};
@@ -266,7 +283,10 @@ private:
         int          denominator   = 4;
         double       barAnchorBeat = 0.0;   // bars count from here (moves when the signature changes)
         std::int32_t barAnchor     = 0;     // the bar number at barAnchorBeat
+        bool         running       = false;
+        bool         stopPending   = false; // stopped in this block: back to beat 0 after it
     } clock;                                // audio thread only
+    std::atomic<bool>         publishedRunning{false};
     std::atomic<double>       publishedBeat{0.0};
     std::atomic<double>       publishedBarStart{0.0};
     std::atomic<std::int32_t> publishedBar{0};

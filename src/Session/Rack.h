@@ -33,6 +33,15 @@ struct RackSlot {
     MidiFilter             filter;
 };
 
+// The transport's MIDI control (docs/sequences.md, section 7).
+struct TransportSettings {
+    std::vector<SequenceTrigger> triggers;            // their actions start and stop the transport
+    bool                         startOnNote = false; // while stopped, a note-on starts it
+    MidiSourceRef                startOnNoteSource;   // from this input; All = any input
+
+    bool operator==(const TransportSettings&) const = default;
+};
+
 // A complete setup (docs/rack-format.md). Its sequences are kept separate from
 // `slots` because a sequence is a MIDI source, not something that makes sound.
 struct Rack {
@@ -42,6 +51,7 @@ struct Rack {
     int                   timeSigDenominator = 4;
     std::vector<RackSlot> slots;
     std::vector<Sequence> sequences;
+    TransportSettings     transport;
 };
 
 // A slot id from a display name: lowercase letters and digits, other runs of

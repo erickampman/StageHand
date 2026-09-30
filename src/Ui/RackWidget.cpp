@@ -4,8 +4,11 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <filesystem>
 
 #include "Core/Ump.h"
+#include "Session/RackFile.h"
 
 namespace stagehand {
 
@@ -22,6 +25,7 @@ constexpr float kToolbarH   = 44.0f;
 constexpr float kRowH       = 64.0f;
 constexpr float kStatusH    = 30.0f;
 constexpr float kInputW     = 330.0f;
+constexpr float kTransportX = 280.0f;   // the toolbar's transport, left of the input column's edge
 constexpr float kPluginW    = 270.0f;
 constexpr float kMinOutputW = 330.0f;
 constexpr float kMinDb      = -60.0f;   // one scale for fader and meters, so they line up
@@ -184,18 +188,17 @@ void RackWidget::drawToolbar() {
 
     const std::string name = view.rackName.empty() ? "Untitled rack" : view.rackName;
     save();
-    scissor(kPad, 0, kInputW - kPad * 2, kToolbarH);
+    scissor(kPad, 0, kTransportX - kPad * 2, kToolbarH);
     label(kPad, kToolbarH / 2 - (view.modified ? 6.0f : 0.0f), name, 18.0f, kText);
     if (view.modified) label(kPad, kToolbarH / 2 + 12.0f, "unsaved changes", 11.0f, kAmber);
     restore();
-    drawTransport(kInputW);
+    drawTransport(kTransportX);
 
-    const bool  canSave = !view.status.saveTarget.empty();
-    const float saveX   = width() - kPad - 70.0f;
-    button(saveX, 8.0f, 70.0f, 28.0f, "Save", false, canSave, kAccent);
-    if (canSave) region(saveX, 8.0f, 70.0f, 28.0f, [this](const Press&) { controller.save(); });
+    const float fileX = width() - kPad - 70.0f;
+    button(fileX, 8.0f, 70.0f, 28.0f, "File", false, true, kAccent);
+    region(fileX, 8.0f, 70.0f, 28.0f, [this, fileX](const Press&) { openFileMenu(fileX - 150.0f, kToolbarH); });
 
-    const float addX = saveX - 10.0f - 118.0f;
+    const float addX = fileX - 10.0f - 118.0f;
     button(addX, 8.0f, 118.0f, 28.0f, "+ Add plugin", false, true, kAccent);
     region(addX, 8.0f, 118.0f, 28.0f, [this, addX](const Press&) { openAddMenu(addX, kToolbarH); });
 }
@@ -229,11 +232,37 @@ void RackWidget::drawTransport(float x) {
     button(x + 110.0f, 8.0f, 48.0f, 28.0f, "Tap", false, true, kAccent);
     region(x + 110.0f, 8.0f, 48.0f, 28.0f, [this](const Press& p) { controller.tapTempo(p.time / 1000.0); });
 
+    // Start/Stop: a triangle or a square, green while running (Space too).
+    const float playX = x + 164.0f;
+    box(playX, 8.0f, 34.0f, 28.0f, t.running ? kGreen : kTrack, 4.0f);
+    beginPath();
+    if (t.running) {
+        rect(playX + 11.0f, 16.0f, 12.0f, 12.0f);
+    } else {
+        moveTo(playX + 12.0f, 15.0f);
+        lineTo(playX + 24.0f, 22.0f);
+        lineTo(playX + 12.0f, 29.0f);
+        closePath();
+    }
+    fill(t.running ? kBarBg : kText);
+    NanoVG::fill();
+    region(playX, 8.0f, 34.0f, 28.0f, [this](const Press&) { controller.toggleTransport(); });
+
+    // Its MIDI control: lit when it has any, amber if start on first note's
+    // input isn't connected, blinking amber while learning.
+    const float midiX   = playX + 40.0f;
+    const bool  blinkOn = std::fmod(ui::nowSeconds(), 0.5) < 0.25;
+    const bool  mapped  = !t.triggers.empty() || !t.startOnNote.empty();
+    button(midiX, 8.0f, 50.0f, 28.0f, "MIDI", t.learning ? blinkOn : mapped, true,
+           t.learning || !t.startOnNoteConnected ? kAmber : kAccent);
+    region(midiX, 8.0f, 50.0f, 28.0f, [this, midiX](const Press&) { openTransportMenu(midiX, kToolbarH); });
+
+    const float sigX = midiX + 56.0f;
     std::snprintf(text, sizeof text, "%d/%d", t.numerator, t.denominator);
-    button(x + 164.0f, 8.0f, 52.0f, 28.0f, text, false, true, kAccent);
-    region(x + 164.0f, 8.0f, 52.0f, 28.0f, [this, x](const Press&) {
+    button(sigX, 8.0f, 52.0f, 28.0f, text, false, true, kAccent);
+    region(sigX, 8.0f, 52.0f, 28.0f, [this, sigX](const Press&) {
         Menu m;
-        m.x     = x + 164.0f;
+        m.x     = sigX;
         m.y     = kToolbarH;
         m.w     = 140.0f;
         m.title = "Time signature";
@@ -245,11 +274,12 @@ void RackWidget::drawTransport(float x) {
         openMenu(std::move(m));
     });
 
-    const int beats = std::clamp(t.beatsInBar, 1, 12);
+    const int   beats   = std::clamp(t.beatsInBar, 1, 12);
+    const float spacing = beats > 8 ? 12.0f : 15.0f;
     for (int b = 0; b < beats; ++b) {
         const bool lit = t.onBeat && b == t.beatInBar;
         beginPath();
-        circle(x + 232.0f + static_cast<float>(b) * 15.0f, kToolbarH / 2, 5.0f);
+        circle(sigX + 68.0f + static_cast<float>(b) * spacing, kToolbarH / 2, 5.0f);
         fill(!lit ? kTrack : b == 0 ? kAmber : kGreen);   // the downbeat stands out
         NanoVG::fill();
     }
@@ -433,7 +463,7 @@ void RackWidget::drawStatus() {
     else if (!s.saveTarget.empty())
         label(tx, y + kStatusH / 2, "Saves to " + s.saveTarget, 12.0f, kDim);
     else
-        label(tx, y + kStatusH / 2, "Not saving: " + s.noSaveReason, 12.0f, kAmber);
+        label(tx, y + kStatusH / 2, s.noSaveReason, 12.0f, kAmber);
     restore();
 }
 
@@ -522,9 +552,9 @@ void RackWidget::drawSequenceRow(const SequenceRowModel& seq, float y) {
     region(kPad, y + 8.0f, 32.0f, 28.0f, [this, id = seq.id](const Press&) { controller.togglePlay(id); });
 
     // Name, and what it is and who plays it.
-    const float nameX = kPad + 44.0f, mapX = 262.0f, mapW = 240.0f;
+    const float nameX = kPad + 44.0f, editX = 262.0f, mapX = 314.0f, mapW = 130.0f;
     save();
-    scissor(nameX, y, mapX - nameX - 10.0f, kSeqRowH);
+    scissor(nameX, y, editX - nameX - 10.0f, kSeqRowH);
     label(nameX, y + 16.0f, seq.name, 14.0f, kText);
     std::string detail = seq.protocol == MidiProtocol::Midi2 ? "MIDI 2.0, " + std::to_string(seq.edo) + "-EDO"
                                                              : std::string("MIDI 1.0");
@@ -535,9 +565,15 @@ void RackWidget::drawSequenceRow(const SequenceRowModel& seq, float y) {
     }
     label(nameX, y + 33.0f, detail, 11.0f, seq.usedBy.empty() ? kAmber : kDim);
     restore();
-    region(nameX, y + 4.0f, mapX - nameX - 10.0f, kSeqRowH - 8.0f, [this, id = seq.id](const Press&) {
-        if (openSequenceEditor) openSequenceEditor(id);   // a click on the name opens its editor
-    });
+    // The editor opens from the Edit button, and from a click on the name or
+    // the mini-map.
+    auto openEditor = [this, id = seq.id](const Press&) {
+        if (openSequenceEditor) openSequenceEditor(id);
+    };
+    region(nameX, y + 4.0f, editX - nameX - 10.0f, kSeqRowH - 8.0f, openEditor);
+    button(editX, y + 10.0f, 44.0f, 24.0f, "Edit", false, true, kAccent);
+    region(editX, y + 10.0f, 44.0f, 24.0f, openEditor);
+    region(mapX, y + 10.0f, mapW, 24.0f, openEditor);
 
     // Mini-map: beats, note starts, the playhead.
     box(mapX, y + 10.0f, mapW, 24.0f, kRowA, 3.0f);
@@ -551,8 +587,12 @@ void RackWidget::drawSequenceRow(const SequenceRowModel& seq, float y) {
     if (running)
         box(mapX + static_cast<float>(seq.position) * unitW - 1.0f, y + 8.0f, 2.0f, 28.0f, kAmber);
 
-    // Rate, length, launch, Repeat, the row menu.
-    float x = mapX + mapW + 12.0f;
+    // At Start (starts with the transport), rate, length, launch, Repeat, the row menu.
+    float x = mapX + mapW + 8.0f;
+    button(x, y + 10.0f, 62.0f, 24.0f, "At Start", seq.atStart, true, kAccent);
+    region(x, y + 10.0f, 62.0f, 24.0f,
+           [this, id = seq.id, on = seq.atStart](const Press&) { controller.setSequenceAtStart(id, !on); });
+    x += 72.0f;
     const std::string rate = seq.rate.denominator == 1
                                  ? std::to_string(seq.rate.numerator)
                                  : std::to_string(seq.rate.numerator) + "/" + std::to_string(seq.rate.denominator);
@@ -655,6 +695,143 @@ void RackWidget::openTriggerMenu(const SequenceRowModel& seq, float x, float y) 
         m.items.push_back(MenuItem{"Remove " + seq.triggers[i],
                                    [this, id = seq.id, i] { controller.removeTrigger(id, i); }, false, true});
     openMenu(std::move(m));
+}
+
+// The transport's MIDI control: learn its triggers, remove them, and start on
+// first note (off, any input, or one input).
+void RackWidget::openTransportMenu(float x, float y) {
+    controller.refreshSources();   // devices come and go
+    const TransportModel& t = controller.view().transport;
+    Menu                  m;
+    m.x     = x;
+    m.y     = y;
+    m.w     = 340.0f;
+    m.title = t.learning ? "Press a pad, key or pedal..." : "Transport: MIDI control";
+    if (t.learning) m.items.push_back(MenuItem{"Stop learning", [this] { controller.cancelLearn(); }});
+    for (const auto [action, text] : {std::pair{SequenceTrigger::Action::Toggle, "Learn Start/Stop"},
+                                      {SequenceTrigger::Action::Start, "Learn Start"},
+                                      {SequenceTrigger::Action::Stop, "Learn Stop"}})
+        m.items.push_back(MenuItem{text, [this, a = action] { controller.learnTransportTrigger(a); },
+                                   t.learning && t.learningAction == action});
+    for (std::size_t i = 0; i < t.triggers.size(); ++i)
+        m.items.push_back(MenuItem{"Remove " + t.triggers[i], [this, i] { controller.removeTransportTrigger(i); },
+                                   false, true});
+    m.items.push_back(MenuItem{"Start on first note: off", [this] { controller.setStartOnNote(false); },
+                               t.startOnNote.empty()});
+    for (const SourceChoice& choice : controller.view().sources) {
+        if (choice.ref.kind == MidiSourceRef::Kind::Sequence) continue;
+        const std::string label = choice.ref.kind == MidiSourceRef::Kind::All ? "any input" : choice.label;
+        m.items.push_back(MenuItem{"Start on first note: " + label,
+                                   [this, ref = choice.ref] { controller.setStartOnNote(true, ref); },
+                                   !t.startOnNote.empty() && t.startOnNote == choice.label});
+    }
+    openMenu(std::move(m));
+}
+
+// --- the rack file: New, Open, Save, Save As, and quitting --------------------------------
+
+void RackWidget::openFileMenu(float x, float y) {
+    const bool savingOff = controller.savingOff();
+    Menu       m;
+    m.x     = x;
+    m.y     = y;
+    m.w     = 220.0f;
+    m.title = controller.rackPath().empty() ? "Untitled rack" : controller.rackPath();
+    m.items.push_back(MenuItem{"New rack          Ctrl-N", [this] { fileAction(FileAction::New); }});
+    m.items.push_back(MenuItem{"Open...           Ctrl-O", [this] { fileAction(FileAction::Open); }});
+    m.items.push_back(MenuItem{"Save              Ctrl-S",
+                               savingOff ? std::function<void()>{} : [this] { fileAction(FileAction::Save); }});
+    m.items.push_back(MenuItem{"Save As...",
+                               savingOff ? std::function<void()>{} : [this] { fileAction(FileAction::SaveAs); }});
+    openMenu(std::move(m));
+}
+
+// New, Open and Quit would lose an untitled rack's changes: ask first.
+void RackWidget::fileAction(FileAction action) {
+    closeMenu();
+    if (action == FileAction::Save && !controller.rackPath().empty()) {
+        controller.save();
+        return;
+    }
+    if (action == FileAction::Save || action == FileAction::SaveAs) {
+        saveAsThen({});
+        return;
+    }
+    if (!controller.unsavedUntitled()) {
+        proceed(action);
+        return;
+    }
+    Menu m;
+    m.x     = width() / 2 - 150.0f;
+    m.y     = kToolbarH + 20.0f;
+    m.w     = 300.0f;
+    m.title = "Keep the changes to " + controller.view().rackName + "?";
+    m.items.push_back(MenuItem{"Save As...", [this, action] { saveAsThen([this, action] { proceed(action); }); }});
+    m.items.push_back(MenuItem{action == FileAction::Quit ? "Quit without saving" : "Discard the changes",
+                               [this, action] { proceed(action); }, false, true});
+    m.items.push_back(MenuItem{"Cancel", [] {}});
+    openMenu(std::move(m));
+}
+
+void RackWidget::proceed(FileAction action) {
+    switch (action) {
+        case FileAction::New: controller.newRack(); break;
+        case FileAction::Open:
+            if (chooseFile)
+                chooseFile(false, "Open a rack (choose its .rack folder)", startFolder(), "",
+                           [this](const std::string& path) { controller.openRack(path); });
+            break;
+        case FileAction::Quit: controller.quit(); break;
+        case FileAction::Save:
+        case FileAction::SaveAs: break;   // handled by fileAction()
+    }
+}
+
+// Save As, then `then` once it's saved. An existing rack is replaced only
+// after asking.
+void RackWidget::saveAsThen(std::function<void()> then) {
+    if (!chooseFile) return;
+    const std::string name = (controller.view().rackName.empty() ? std::string("Untitled") : controller.view().rackName) + ".rack";
+    chooseFile(true, "Save the rack as", startFolder(), name, [this, then](const std::string& path) {
+        const RackController::SaveAsResult result = controller.saveAs(path);
+        if (result == RackController::SaveAsResult::Saved) {
+            if (then) then();
+            return;
+        }
+        if (result != RackController::SaveAsResult::NeedsReplace) return;
+        Menu m;
+        m.x     = width() / 2 - 170.0f;
+        m.y     = kToolbarH + 20.0f;
+        m.w     = 340.0f;
+        m.title = "Replace the existing rack " + std::filesystem::path(saveAsPath(path)).filename().string() + "?";
+        m.items.push_back(MenuItem{"Replace it", [this, path, then] {
+                                       if (controller.saveAs(path, true) == RackController::SaveAsResult::Saved && then)
+                                           then();
+                                   },
+                                   false, true});
+        m.items.push_back(MenuItem{"Cancel", [] {}});
+        openMenu(std::move(m));
+    });
+}
+
+// Where a chooser starts: beside the current rack, else ~/Racks, else home.
+std::string RackWidget::startFolder() const {
+    namespace fs = std::filesystem;
+    if (!controller.rackPath().empty()) return fs::path(controller.rackPath()).parent_path().string();
+    const char* const home = std::getenv("HOME");
+    if (home == nullptr) return "/";
+    std::error_code ec;
+    const fs::path  racks = fs::path(home) / "Racks";
+    return fs::is_directory(racks, ec) ? racks.string() : std::string(home);
+}
+
+// Another rack replaced this one: nothing open refers to it any more.
+void RackWidget::rackReplaced() {
+    closeMenu();
+    dismissOverlays();
+    drag    = nullptr;
+    dragEnd = nullptr;
+    scrollY = dockScroll = 0;
 }
 
 // --- menus ---------------------------------------------------------------------------
@@ -893,19 +1070,24 @@ bool RackWidget::onKeyboard(const KeyboardEvent& ev) {
         repaint();
         return true;
     }
+    if (ev.key == dgl::kKeySpace && (ev.mod & dgl::kModifierControl) == 0 && !menuOpen()) {
+        controller.toggleTransport();   // Start/Stop
+        repaint();
+        return true;
+    }
     if ((ev.mod & dgl::kModifierControl) == 0) return false;
     // With Control held, X11 may report the control character instead of the letter.
-    const bool q = ev.key == 'q' || ev.key == 'Q' || ev.key == 0x11;
-    const bool s = ev.key == 's' || ev.key == 'S' || ev.key == 0x13;
-    if (q) {
-        controller.quit();
-        return true;
-    }
-    if (s && (ev.mod & dgl::kModifierShift) != 0) {
-        controller.save();
-        return true;
-    }
-    return false;
+    auto is = [&ev](char letter) {
+        return ev.key == static_cast<std::uint32_t>(letter) || ev.key == static_cast<std::uint32_t>(letter - 32) ||
+               ev.key == static_cast<std::uint32_t>(letter - 'a' + 1);
+    };
+    if (is('q')) fileAction(FileAction::Quit);
+    else if (is('s')) fileAction(FileAction::Save);   // Ctrl-Shift-S too, as in plugin editors
+    else if (is('n')) fileAction(FileAction::New);
+    else if (is('o')) fileAction(FileAction::Open);
+    else return false;
+    repaint();
+    return true;
 }
 
 } // namespace stagehand

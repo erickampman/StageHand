@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include "App/RackController.h"
@@ -62,7 +63,6 @@ struct Rig {
         c.quit          = [this] { ++quits; };
         c.virtualInputs = {{"MIDI 2.0 In", MidiProtocol::Midi2}, {"MIDI 1.0 In", MidiProtocol::Midi1}};
         c.saveTarget    = saveTarget;
-        c.noSaveReason  = "saving is off";
         return c;
     }
 
@@ -119,7 +119,7 @@ void testViewModel() {
     }
     CHECK(view.status.sampleRate == 48000.0 && view.status.bufferSize == 256 && view.status.xruns == 3);
     CHECK(view.status.outputs == 4);
-    CHECK(view.status.saveTarget.empty() && view.status.noSaveReason == "saving is off");
+    CHECK(view.status.saveTarget.empty() && view.status.noSaveReason == "Untitled: File > Save As keeps it");
 
     // Edits show up in the next model; structural ones are committed by tick().
     MidiFilter lower;
@@ -255,13 +255,18 @@ void testTransport() {
     controller.setTimeSignature(6, 8);
     controller.setTimeSignature(6, 7);                // refused
     controller.tick(1.0);
-    CHECK(view.transport.numerator == 6 && view.transport.denominator == 8 && view.transport.beatsInBar == 3);
-    controller.setTimeSignature(5, 8);                // 2.5 beats: three lights
-    controller.tick(1.1);
-    CHECK(view.transport.beatsInBar == 3);
+    CHECK(view.transport.numerator == 6 && view.transport.denominator == 8 && view.transport.beatsInBar == 2);
+    // Compound meters count dotted beats; others count their notes.
+    for (const auto [n, d, lights] : {std::tuple{7, 8, 7}, {9, 8, 3}, {12, 8, 4}, {3, 8, 3}, {5, 4, 5}, {2, 4, 2}}) {
+        controller.setTimeSignature(n, d);
+        controller.tick(1.1);
+        CHECK(view.transport.beatsInBar == lights);
+    }
+    controller.setTimeSignature(6, 8);
 
     // The beat lights follow the engine's clock: 640 frames at 97.3 BPM is 0.02
     // beats, still the lit start of the first beat.
+    rig.engine->sendTransportCommand(Engine::TransportCommand::Start);
     for (int i = 0; i < 10; ++i) runBlock(*rig.engine);
     controller.tick(1.2);
     CHECK(std::fabs(view.transport.beatPosition - 640.0 * 97.3 / 60.0 / 48000.0) < 1e-9);
@@ -410,6 +415,70 @@ void testLearn() {
           view.sequences[0].triggers == std::vector<std::string>{"Start: MIDI 2.0 In, CC 64, ch 1"});
 }
 
+// The transport's controls: Start/Stop, At Start, its MIDI learn, start on
+// first note, and a rack switch stopping it.
+void testTransportControls() {
+    Rig rig;
+    rig.session->addOpenSource(MidiSourceRef{MidiSourceRef::Kind::Virtual, "MIDI 2.0 In"}, 7);
+    Rack     rack;
+    Sequence arp;
+    arp.id       = "arp";
+    arp.name     = "Arp";
+    arp.protocol = MidiProtocol::Midi1;
+    rack.sequences = {arp};
+    Session::LoadReport report;
+    rig.session->load(rack, 48000.0, report);
+    RackController       controller(*rig.session, *rig.engine, rig.midi, rig.factory, rig.config());
+    const RackViewModel& view = controller.view();
+    CHECK(!view.transport.running && !view.transport.onBeat);   // StageHand starts stopped
+
+    controller.setSequenceAtStart("arp", true);
+    controller.tick(1.0);
+    CHECK(view.sequences[0].atStart);
+    controller.toggleTransport();
+    runBlock(*rig.engine);
+    controller.tick(1.1);
+    CHECK(view.transport.running && view.sequences[0].state == SequenceState::Playing);   // At Start
+    controller.toggleTransport();
+    runBlock(*rig.engine);
+    controller.tick(1.2);
+    CHECK(!view.transport.running && view.sequences[0].state == SequenceState::Stopped);
+
+    // Learn a Start/Stop pad for the transport; it then works.
+    auto send = [&](std::uint32_t word) {
+        TimedMidiMessage m;
+        m.captureTime       = 1'000'000'000 - 1'000'000;
+        m.message.words[0]  = word;
+        m.message.wordCount = 1;
+        rig.engine->onMidi(7, m);
+        runBlock(*rig.engine);
+    };
+    controller.learnTransportTrigger(SequenceTrigger::Action::Toggle);
+    controller.tick(1.3);
+    CHECK(view.transport.learning);
+    send(0x20993064);
+    controller.tick(1.4);
+    CHECK(!view.transport.learning &&
+          view.transport.triggers == std::vector<std::string>{"Play/Stop: MIDI 2.0 In, note C3, ch 10"});
+    runBlock(*rig.engine);
+    send(0x20993064);
+    controller.tick(1.5);
+    CHECK(view.transport.running);
+    controller.removeTransportTrigger(0);
+    controller.tick(1.6);
+    CHECK(view.transport.triggers.empty());
+
+    // Start on first note, from one input; a rack switch stops the transport.
+    controller.setStartOnNote(true, MidiSourceRef{MidiSourceRef::Kind::Virtual, "MIDI 2.0 In"});
+    controller.tick(1.7);
+    CHECK(view.transport.startOnNote == "MIDI 2.0 In" && view.transport.startOnNoteConnected);
+    CHECK(rig.session->capture().transport.startOnNote);
+    controller.newRack();
+    runBlock(*rig.engine);
+    controller.tick(1.8);
+    CHECK(!view.transport.running && view.transport.startOnNote.empty());
+}
+
 void testSave() {
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "stagehand-controller-test";
     std::filesystem::remove_all(dir);
@@ -426,7 +495,7 @@ void testSave() {
         RackController controller(*rig.session, *rig.engine, rig.midi, rig.factory, rig.config());
         CHECK(!controller.save());   // no target
         const std::vector<std::string> notices = controller.takeNotices();
-        CHECK(notices.size() == 1 && notices[0] == "Not saved: saving is off");
+        CHECK(notices.size() == 1 && notices[0] == "Not saved: this rack is untitled; use Save As");
     }
     RackController controller(*rig.session, *rig.engine, rig.midi, rig.factory, rig.config(target));
     controller.setMuted("a", true);
@@ -441,6 +510,88 @@ void testSave() {
     std::filesystem::remove_all(dir);
 }
 
+// New, Open and Save As: switching racks while running, the save-first rule,
+// and what Save As will and won't replace.
+void testFiles() {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "stagehand-files-test";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir / "notes.rack");   // exists, but isn't a rack
+
+    Rack gig;
+    gig.name     = "Gig";
+    gig.slots    = {slot("keys", "synth", "/clap/Synth.clap")};
+    Sequence arp;
+    arp.id       = "arp";
+    gig.sequences = {arp};
+    const std::string gigPath = (dir / "Gig.rack").string();
+    CHECK(saveRack(gigPath, gig).ok);
+
+    Rig                 rig;
+    Session::LoadReport report;
+    Rack                untitled;
+    untitled.name = "Untitled";
+    rig.session->load(untitled, 48000.0, report);
+    RackController       controller(*rig.session, *rig.engine, rig.midi, rig.factory, rig.config());
+    const RackViewModel& view = controller.view();
+    CHECK(controller.rackPath().empty() && !controller.unsavedUntitled());
+
+    // Changes to an untitled rack are what the UI asks about.
+    controller.addPlugin(installedPlugin("bass", "/clap/Bass.clap"), 0);
+    CHECK(controller.unsavedUntitled());
+
+    // Open: by the bundle or its rack.json. Editors close; the generation moves.
+    controller.tick(0.5);
+    controller.openEditor(view.rows[0].id);
+    CHECK(*rig.editorsOpen == 1);
+    const std::uint64_t before = controller.rackGeneration();
+    CHECK(controller.openRack((dir / "Gig.rack" / "rack.json").string()));
+    controller.tick(1.0);
+    CHECK(*rig.editorsOpen == 0 && controller.rackGeneration() == before + 1);
+    CHECK(controller.rackPath() == gigPath && view.rackName == "Gig" && !view.modified);
+    CHECK(view.rows.size() == 1 && view.rows[0].id == "keys" && view.sequences.size() == 1);
+    runBlock(*rig.engine);   // the old plugins go once the engine lets go of them
+    rig.engine->collect();
+
+    // Not a rack: nothing changes.
+    controller.takeNotices();
+    CHECK(!controller.openRack((dir / "notes.rack").string()));
+    CHECK(controller.takeNotices().size() == 1 && controller.rackPath() == gigPath);
+
+    // New saves the titled rack first (as quitting would), then starts over.
+    controller.setMuted("keys", true);
+    CHECK(controller.newRack());
+    controller.tick(1.1);
+    CHECK(controller.rackPath().empty() && view.rows.empty() && view.rackName == "Untitled");
+    Rack reread;
+    CHECK(loadRack(gigPath, reread).ok && reread.slots.size() == 1 && reread.slots[0].muted);
+
+    // Save As: ".rack" added, the name follows the file. An existing rack needs
+    // a yes; something that isn't a rack is never replaced.
+    controller.addPlugin(installedPlugin("synth", "/clap/Synth.clap"), 0);
+    CHECK(controller.saveAs((dir / "notes").string()) == RackController::SaveAsResult::Failed);
+    CHECK(controller.saveAs(gigPath) == RackController::SaveAsResult::NeedsReplace);
+    CHECK(controller.saveAs((dir / "Live").string()) == RackController::SaveAsResult::Saved);
+    controller.tick(1.2);
+    CHECK(controller.rackPath() == (dir / "Live.rack").string() && view.rackName == "Live" && !view.modified);
+    CHECK(!controller.unsavedUntitled());
+    CHECK(controller.saveAs(gigPath, true) == RackController::SaveAsResult::Saved);
+    CHECK(loadRack(gigPath, reread).ok && reread.name == "Gig" && reread.slots.size() == 1 &&
+          reread.slots[0].plugin.id == "synth");
+
+    // Saving off (--no-save-rack): switching doesn't save, Save As refuses.
+    RackController::Config off = rig.config(gigPath);
+    off.savingOff              = true;
+    RackController readOnly(*rig.session, *rig.engine, rig.midi, rig.factory, off);
+    CHECK(readOnly.saveAs((dir / "Other").string()) == RackController::SaveAsResult::Failed);
+    CHECK(readOnly.newRack() && !std::filesystem::exists(dir / "Other.rack"));
+    CHECK(!readOnly.unsavedUntitled());
+
+    rig.session->unload();
+    runBlock(*rig.engine);
+    rig.engine->collect();
+    std::filesystem::remove_all(dir);
+}
+
 } // namespace
 
 int main() {
@@ -449,8 +600,10 @@ int main() {
     testEditorsAndRemove();
     testAddPlugin();
     testSave();
+    testFiles();
     testTransport();
     testDock();
     testLearn();
+    testTransportControls();
     return test::finish("RackController");
 }

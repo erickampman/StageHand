@@ -77,6 +77,7 @@ struct CompiledSequence {
     LaunchQuantize                   launch       = LaunchQuantize::Bar;
     bool                             repeat       = true;
     double                           noteOffOffsetMs = 0.0;
+    bool                             atStart      = false;
 
     struct Note {
         std::uint32_t start = 0, length = 1;
@@ -103,9 +104,18 @@ struct CompiledSequence {
                                     std::shared_ptr<SequenceRuntime> runtime);
 };
 
+// The transport's own MIDI control (docs/sequences.md, section 7), published
+// with the sequences. Its triggers' actions start and stop the transport.
+struct TransportControl {
+    std::vector<CompiledSequence::Trigger> triggers;
+    bool             startOnNote       = false;
+    MidiSourceHandle startOnNoteSource = kInvalidMidiSource;   // invalid: any input
+};
+
 class SequenceSet {
 public:
-    explicit SequenceSet(std::vector<CompiledSequence> sequences) : all(std::move(sequences)) {}
+    explicit SequenceSet(std::vector<CompiledSequence> sequences, TransportControl transportControl = {})
+        : all(std::move(sequences)), transport(std::move(transportControl)) {}
 
     const std::vector<CompiledSequence>& sequences() const noexcept { return all; }
 
@@ -133,11 +143,23 @@ public:
     // Apply a command (source kInvalidMidiSource = every sequence).
     void command(MidiSourceHandle source, SequenceCommand command, const Block& block) noexcept;
 
-    // A MIDI message from an input: if it matches a trigger, act on it (a
-    // note-on or a controller's rise to 64) and return true, meaning the
-    // message is the trigger's and goes nowhere else. `block` starts at the
-    // message's frame. Call before generate().
-    bool trigger(MidiSourceHandle source, const MidiMessage& message, const Block& block) noexcept;
+    // A MIDI message from an input, against every trigger (the sequences' and
+    // the transport's). Each trigger it fires (a note-on, or a controller's
+    // rise to 64) is written to `hits`; the caller acts on them. `matched`:
+    // the message belongs to a trigger and goes nowhere else (note-offs and
+    // releases included). Call before generate().
+    struct TriggerHit {
+        MidiSourceHandle        sequence = kInvalidMidiSource;   // invalid: the transport
+        SequenceTrigger::Action action   = SequenceTrigger::Action::Toggle;
+    };
+    std::size_t matchTriggers(MidiSourceHandle source, const MidiMessage& message, TriggerHit* hits,
+                              std::size_t capacity, bool& matched) noexcept;
+    // Would `command` start this sequence (Start, or Toggle while it's stopped)?
+    bool wouldStart(MidiSourceHandle sequence, SequenceCommand command) const noexcept;
+    // A note-on that start-on-note accepts (from its input, or any).
+    bool startsOnNote(MidiSourceHandle source, const MidiMessage& message) const noexcept;
+    // The transport started at `block.beat`: At Start sequences start there, exactly.
+    void transportStarted(const Block& block) noexcept;
 
     // This block's events for every sequence, appended to `out`; returns how
     // many were written. The caller sorts the whole block's events by
@@ -148,6 +170,7 @@ private:
     void apply(CompiledSequence& s, SequenceCommand command, const Block& block) noexcept;
 
     std::vector<CompiledSequence> all;
+    TransportControl              transport;
 };
 
 } // namespace stagehand

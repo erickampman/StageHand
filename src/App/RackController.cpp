@@ -10,6 +10,9 @@ namespace stagehand {
 
 namespace {
 
+// learningId while learning the transport's trigger: no sequence id can look like it.
+const std::string kTransportLearn = "\x01transport";
+
 SourceProtocol toSourceProtocol(MidiProtocol p) {
     return p == MidiProtocol::Midi2 ? SourceProtocol::Midi2 : SourceProtocol::Midi1;
 }
@@ -20,6 +23,7 @@ RackController::RackController(Session& runningSession, Engine& runningEngine, M
                                PluginFactory& pluginFactory, Config appConfig)
     : session(runningSession), engine(runningEngine), midi(midiInput), factory(pluginFactory),
       config(std::move(appConfig)) {
+    target = config.saveTarget;
     refreshSources();
     tick(0.0);
 }
@@ -55,10 +59,34 @@ void RackController::tick(double now) {
     transport.numerator    = session.timeSigNumerator();
     transport.denominator  = session.timeSigDenominator();
     transport.beatPosition = clock.beatPosition;
-    transport.beatsInBar   = static_cast<int>(std::ceil(transport.numerator * 4.0 / transport.denominator - 1e-9));
-    transport.beatInBar    = std::clamp(static_cast<int>(std::floor(clock.beatPosition - clock.barStartBeats)), 0,
-                                        std::max(0, transport.beatsInBar - 1));
-    transport.onBeat       = clock.beatPosition - std::floor(clock.beatPosition) < 0.15;
+    // The lights show the beats a player counts. Compound meters (6/8, 9/8,
+    // 12/8, and the same over 16) count dotted beats, three notes each; any
+    // other meter counts its notes (7/8: seven). A light stays lit for 0.15 of
+    // a quarter note, or of the beat if that's longer, so a quick eighth still
+    // shows.
+    const bool   compound = transport.denominator >= 8 && transport.numerator > 3 && transport.numerator % 3 == 0;
+    const int    perBeat  = compound ? 3 : 1;
+    const double beatLen  = perBeat * 4.0 / transport.denominator;   // in quarter notes
+    const double intoBar  = std::max(0.0, clock.beatPosition - clock.barStartBeats);
+    const int    beat     = static_cast<int>(std::floor(intoBar / beatLen + 1e-9));
+    transport.beatsInBar  = transport.numerator / perBeat;
+    transport.beatInBar   = std::clamp(beat, 0, std::max(0, transport.beatsInBar - 1));
+    transport.running     = clock.running;
+    transport.onBeat      = clock.running && intoBar - beat * beatLen < 0.15 * std::max(beatLen, 1.0);
+    const TransportSettings& settings = session.transportSettings();
+    transport.triggers.clear();
+    for (std::size_t i = 0; i < settings.triggers.size(); ++i) {
+        std::string text = triggerText(settings.triggers[i]);
+        const auto& handles = session.transportTriggerHandles();
+        if (i < handles.size() && handles[i] == kInvalidMidiSource &&
+            settings.triggers[i].source.kind != MidiSourceRef::Kind::All)
+            text += " (not connected)";
+        transport.triggers.push_back(std::move(text));
+    }
+    transport.learning             = learningId == kTransportLearn;
+    transport.learningAction       = learningAction;
+    transport.startOnNote          = settings.startOnNote ? sourceLabel(settings.startOnNoteSource) : std::string{};
+    transport.startOnNoteConnected = session.startOnNoteIssue().empty();
     model.rows.clear();
     for (const Session::Slot& slot : session.slots()) model.rows.push_back(rowFor(slot, now, dt));
     // Forget rows that are gone.
@@ -78,8 +106,10 @@ void RackController::tick(double now) {
     const Engine::Stats stats = engine.stats();
     status.midiDropped  = stats.midiQueueFull + stats.slotEventsFull + stats.unsupportedDialect;
     status.preference   = config.protocolPreference;
-    status.saveTarget   = config.saveTarget;
-    status.noSaveReason = config.noSaveReason;
+    status.saveTarget   = config.savingOff ? std::string{} : target;
+    status.noSaveReason = config.savingOff ? "Not saving: saving is off (--no-save-rack)"
+                          : target.empty() ? "Untitled: File > Save As keeps it"
+                                           : "";
     const LevelMeter::Reading output = engine.outputMeter().take();
     master.update(output, now, dt);
     for (std::size_t c = 0; c < LevelMeter::kChannels; ++c) status.outputDb[c] = master.displayDb[c];
@@ -190,6 +220,7 @@ void RackController::buildDock(double now) {
         row.length          = seq.length;
         row.launch          = seq.launch;
         row.repeat          = seq.repeat;
+        row.atStart         = seq.atStart;
         row.noteOffOffsetMs = seq.noteOffOffsetMs;
         row.noteCount       = seq.notes.size();
         for (const SequenceNote& note : seq.notes) {
@@ -496,6 +527,45 @@ void RackController::setSequenceNoteOffOffset(const std::string& id, double ms) 
     editSequence(id, [ms](Sequence& seq) { seq.noteOffOffsetMs = std::clamp(ms, -1000.0, 1000.0); });
 }
 
+void RackController::setSequenceAtStart(const std::string& id, bool atStart) {
+    editSequence(id, [atStart](Sequence& seq) { seq.atStart = atStart; });
+}
+
+void RackController::startTransport() {
+    session.startTransport();
+}
+
+void RackController::stopTransport() {
+    session.stopTransport();
+}
+
+void RackController::toggleTransport() {
+    if (session.transportRunning()) stopTransport();
+    else startTransport();
+}
+
+void RackController::learnTransportTrigger(SequenceTrigger::Action action) {
+    learningId     = kTransportLearn;
+    learningAction = action;
+    engine.armLearn();
+}
+
+void RackController::removeTransportTrigger(std::size_t index) {
+    TransportSettings settings = session.transportSettings();
+    if (index >= settings.triggers.size()) return;
+    settings.triggers.erase(settings.triggers.begin() + static_cast<std::ptrdiff_t>(index));
+    session.setTransportSettings(settings);
+}
+
+void RackController::setStartOnNote(bool on, const MidiSourceRef& source) {
+    TransportSettings settings = session.transportSettings();
+    settings.startOnNote       = on;
+    settings.startOnNoteSource = on ? source : MidiSourceRef{};
+    session.setTransportSettings(settings);
+    if (on && !session.startOnNoteIssue().empty())
+        notice("Start on first note: " + session.startOnNoteIssue() + "; it won't start until that's fixed");
+}
+
 void RackController::learnTrigger(const std::string& id, SequenceTrigger::Action action) {
     if (session.sequence(id) == nullptr) return;
     learningId     = id;
@@ -517,13 +587,15 @@ void RackController::removeTrigger(const std::string& id, std::size_t index) {
 
 // The control MIDI learn heard becomes the sequence's trigger for the action.
 void RackController::finishLearn(const Engine::Learned& learned) {
-    const std::string id = std::exchange(learningId, {});
-    const Session::SequenceEntry* entry = session.sequence(id);
-    if (entry == nullptr) return;   // removed meanwhile
+    const std::string id        = std::exchange(learningId, {});
+    const bool        transport = id == kTransportLearn;
+    const Session::SequenceEntry* entry = transport ? nullptr : session.sequence(id);
+    if (!transport && entry == nullptr) return;   // removed meanwhile
+    const std::string who = transport ? std::string("Transport") : entry->sequence.name;
     const auto input = std::find_if(session.openInputs().begin(), session.openInputs().end(),
                                     [&](const Session::OpenInput& in) { return in.handle == learned.source; });
     if (input == session.openInputs().end()) {
-        notice(entry->sequence.name + ": couldn't tell which input that came from; try again");
+        notice(who + ": couldn't tell which input that came from; try again");
         return;
     }
     SequenceTrigger t;
@@ -533,11 +605,18 @@ void RackController::finishLearn(const Engine::Learned& learned) {
     t.group   = ump::group(learned.message);
     t.channel = ump::channel(learned.message);
     t.number  = static_cast<std::uint8_t>((learned.message.words[0] >> 8) & 0x7F);   // note or controller
-    editSequence(id, [&t](Sequence& seq) {
-        std::erase_if(seq.triggers, [&t](const SequenceTrigger& old) { return old.action == t.action || old.sameControl(t); });
-        seq.triggers.push_back(t);
-    });
-    notice(entry->sequence.name + ": " + triggerText(t));
+    auto replace = [&t](std::vector<SequenceTrigger>& triggers) {
+        std::erase_if(triggers, [&t](const SequenceTrigger& old) { return old.action == t.action || old.sameControl(t); });
+        triggers.push_back(t);
+    };
+    if (transport) {
+        TransportSettings settings = session.transportSettings();
+        replace(settings.triggers);
+        session.setTransportSettings(settings);
+    } else {
+        editSequence(id, [&replace](Sequence& seq) { replace(seq.triggers); });
+    }
+    notice(who + ": " + triggerText(t));
 }
 
 std::string RackController::triggerText(const SequenceTrigger& t) const {
@@ -557,17 +636,99 @@ std::string RackController::triggerText(const SequenceTrigger& t) const {
 // --- saving and quitting -----------------------------------------------------------
 
 bool RackController::save() {
-    if (config.saveTarget.empty()) {
-        notice("Not saved: " + config.noSaveReason);
+    if (config.savingOff || target.empty()) {
+        notice(config.savingOff ? "Not saved: saving is off (--no-save-rack)" : "Not saved: this rack is untitled; use Save As");
         return false;
     }
-    const RackFileResult result = saveRack(config.saveTarget, session.capture());
+    const RackFileResult result = saveRack(target, session.capture());
     if (!result.ok) {
         notice("Couldn't save the rack: " + result.error);
         return false;
     }
     session.markSaved();
-    notice("Saved the rack to " + config.saveTarget);
+    notice("Saved the rack to " + target);
+    return true;
+}
+
+RackController::SaveAsResult RackController::saveAs(const std::string& chosen, bool replace) {
+    if (config.savingOff) {
+        notice("Not saved: saving is off (--no-save-rack)");
+        return SaveAsResult::Failed;
+    }
+    const std::string path = saveAsPath(chosen);
+    if (path.empty()) return SaveAsResult::Failed;
+    switch (classifySaveTarget(path, target)) {
+        case SaveTarget::NotARack:
+            notice("Not saved: " + path + " exists and isn't a rack; choose another name");
+            return SaveAsResult::Failed;
+        case SaveTarget::OtherRack:
+            if (!replace) return SaveAsResult::NeedsReplace;
+            break;
+        case SaveTarget::New:
+        case SaveTarget::Current: break;
+    }
+    const std::string oldName = session.rackName();
+    session.setRackName(rackNameOf(path));
+    const RackFileResult result = saveRack(path, session.capture());
+    if (!result.ok) {
+        session.setRackName(oldName);
+        notice("Couldn't save the rack: " + result.error);
+        return SaveAsResult::Failed;
+    }
+    target = path;
+    session.markSaved();
+    notice("Saved the rack to " + target);
+    return SaveAsResult::Saved;
+}
+
+bool RackController::saveForQuit() {
+    return config.savingOff || target.empty() || save();
+}
+
+bool RackController::unsavedUntitled() const {
+    return target.empty() && !config.savingOff && session.modified();
+}
+
+bool RackController::newRack() {
+    Rack rack;
+    rack.name = "Untitled";
+    return replaceRack(rack, {}, {});
+}
+
+bool RackController::openRack(const std::string& chosen) {
+    const std::string bundle = rackBundleOf(chosen);
+    if (bundle.empty()) {
+        notice("Couldn't open " + chosen + ": it isn't a rack (no rack.json)");
+        return false;
+    }
+    Rack                 rack;
+    const RackFileResult result = loadRack(bundle, rack);
+    if (!result.ok) {
+        notice("Couldn't open " + bundle + ": " + result.error);
+        return false;
+    }
+    return replaceRack(rack, bundle, result.warnings);
+}
+
+// Switch racks: save the old one as quitting would, close what belongs to it,
+// and load the new one at the running sample rate.
+bool RackController::replaceRack(const Rack& rack, const std::string& path, const std::vector<std::string>& warnings) {
+    if (!saveForQuit()) return false;   // the notice says why
+    cancelLearn();
+    closeAllEditors();
+    rows.clear();
+    taps.clear();
+
+    session.stopTransport();   // a new song starts from bar 1
+    Session::LoadReport report;
+    session.load(rack, session.loadedSampleRate(), report);
+    target = path;
+    ++generation;
+    for (const std::string& warning : warnings) notice(warning);
+    for (const std::string& warning : report.warnings) notice(warning);
+    notice(path.empty() ? "New rack" : "Opened " + path);
+    refreshSources();
+    tick(std::max(lastTick, 0.0));
     return true;
 }
 

@@ -360,14 +360,25 @@ void testSlotMeters() {
     CHECK(!b.runtime->meter.take().clipped);
 }
 
-// The free-running beat clock: what plugins see, block by block and chunk by
-// chunk, through tempo and time-signature changes.
+// The beat clock: stopped until Start, then what plugins see, block by block
+// and chunk by chunk, through tempo and time-signature changes; Stop returns
+// to beat 0.
 void testTransport() {
     auto engine = std::make_unique<Engine>();
     auto plugin = std::make_shared<FakePlugin>();
     engine->commit(graphOf({slotFor(plugin)}));
 
+    // Stopped: beat 0, not playing, however long it runs.
+    for (int i = 0; i < 2; ++i) {
+        Block block(480, 48000.0, T);
+        engine->process(block.ctx);
+    }
+    CHECK(!plugin->calls[1].time.playing && plugin->calls[1].time.beatPosition == 0.0);
+    CHECK(!engine->transport().running && engine->transport().beatPosition == 0.0);
+    plugin->calls.clear();
+
     // 120 BPM at 48 kHz: 2 beats a second, so 480 frames = 0.02 beats.
+    CHECK(engine->sendTransportCommand(Engine::TransportCommand::Start));
     for (int i = 0; i < 3; ++i) {
         Block block(480, 48000.0, T);
         engine->process(block.ctx);
@@ -419,6 +430,21 @@ void testTransport() {
     engine->setTempo(1000.0);          // clamped
     now = engine->transport();
     CHECK(now.numerator == 6 && now.denominator == 8 && now.tempoBpm == Engine::kMaxTempo);
+
+    // Stop: after that block, back to beat 0 and not playing; Toggle starts again.
+    engine->sendTransportCommand(Engine::TransportCommand::Stop);
+    plugin->calls.clear();
+    for (int i = 0; i < 2; ++i) {
+        Block block(480, 48000.0, T);
+        engine->process(block.ctx);
+    }
+    CHECK(plugin->calls.size() == 2 && plugin->calls[0].time.playing && !plugin->calls[1].time.playing);
+    CHECK(!engine->transport().running && engine->transport().beatPosition == 0.0 &&
+          engine->transport().barNumber == 0);
+    engine->sendTransportCommand(Engine::TransportCommand::Toggle);
+    Block again(480, 48000.0, T);
+    engine->process(again.ctx);
+    CHECK(engine->transport().running && engine->transport().beatPosition > 0.0);
     engine->collect();
 }
 

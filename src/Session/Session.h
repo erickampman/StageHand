@@ -5,6 +5,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "Engine/Engine.h"
@@ -71,6 +72,8 @@ public:
     const std::vector<Slot>& slots() const noexcept { return loaded; }
     const Slot*              slot(const std::string& id) const noexcept;
     const std::string&       rackName() const noexcept { return name; }
+    void                     setRackName(std::string rackName) { name = std::move(rackName); }
+    double                   loadedSampleRate() const noexcept { return sampleRate; }   // of the last load()
     double                   tempoBpm() const noexcept { return tempo; }
     int                      timeSigNumerator() const noexcept { return sigNumerator; }
     int                      timeSigDenominator() const noexcept { return sigDenominator; }
@@ -133,6 +136,19 @@ public:
     bool stopSequence(const std::string& id);    // at its launch boundary
     void stopAllSequences();                     // now, with note-offs
     SequenceState sequenceState(const std::string& id) const noexcept;
+
+    // --- the transport (docs/sequences.md, section 7): Start puts beat 1 at the
+    // next block; Stop ends every sequence and returns to bar 1. Its MIDI
+    // control is saved with the rack and published with the sequences.
+    void startTransport();
+    void stopTransport();
+    bool transportRunning() const noexcept;   // as of the last audio block
+    const TransportSettings& transportSettings() const noexcept { return transportSetup; }
+    void setTransportSettings(const TransportSettings& settings);
+    // transportSettings().triggers' inputs, resolved (as SequenceEntry::triggerSources).
+    const std::vector<MidiSourceHandle>& transportTriggerHandles() const noexcept { return transportTriggerSources; }
+    // Why start on first note's input didn't resolve; empty if it did.
+    const std::string& startOnNoteIssue() const noexcept { return startOnNoteProblem; }
     double        sequencePosition(const std::string& id) const noexcept;   // units into the loop
 
     // Commit the graph if a structural edit is pending. Call once per UI tick.
@@ -162,6 +178,9 @@ private:
     void             resolveSource(Slot& slot);
     // Fills entry.triggerSources; returns why triggers didn't resolve, if any.
     std::vector<std::string> resolveTriggers(SequenceEntry& entry);
+    std::vector<std::string> resolveTriggerList(const std::vector<SequenceTrigger>& triggers,
+                                                std::vector<MidiSourceHandle>&      handles);
+    std::vector<std::string> resolveTransport();
     void             commitGraph();
     void             commitSequences();
     SequenceEntry*   findSequence(const std::string& id) noexcept;
@@ -184,6 +203,10 @@ private:
     bool                                    sequencesDirty = false;
     std::vector<SequenceEntry>              sequenceList;
     MidiSourceHandle                        nextSequenceSource = kSequenceSourceBase + 1;
+    TransportSettings                       transportSetup;
+    std::vector<MidiSourceHandle>           transportTriggerSources;
+    MidiSourceHandle                        startOnNoteHandle = kInvalidMidiSource;
+    std::string                             startOnNoteProblem;
     bool                                    dirty      = false;
 };
 

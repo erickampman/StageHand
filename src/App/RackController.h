@@ -48,9 +48,10 @@ public:
         std::vector<std::pair<std::string, MidiProtocol>> virtualInputs;
         MidiProtocol protocolPreference = MidiProtocol::Midi2;
 
-        // Where save() writes; empty = saving is off, and `noSaveReason` says why.
+        // The rack's bundle, where save() writes; empty = untitled (Save As
+        // names it). `savingOff` (--no-save-rack): nothing is ever saved.
         std::string saveTarget;
-        std::string noSaveReason;
+        bool        savingOff = false;
     };
 
     RackController(Session& session, Engine& engine, MidiInput& midiInput, PluginFactory& pluginFactory,
@@ -130,11 +131,46 @@ public:
     void learnTrigger(const std::string& id, SequenceTrigger::Action action);
     void cancelLearn();
     void removeTrigger(const std::string& id, std::size_t index);   // index into Sequence::triggers
+    void setSequenceAtStart(const std::string& id, bool atStart);
+
+    // --- the transport (docs/sequences.md, section 7) ---
+    void startTransport();
+    void stopTransport();
+    void toggleTransport();
+    // MIDI learn for the transport's own triggers, with the sequences' rules.
+    void learnTransportTrigger(SequenceTrigger::Action action);
+    void removeTransportTrigger(std::size_t index);   // index into TransportSettings::triggers
+    // Start on first note: off, or from `source` (All = any input).
+    void setStartOnNote(bool on, const MidiSourceRef& source = {});
 
     // Refresh the source menu (MidiInput::enumerate()); call when it opens.
     void refreshSources();
 
-    bool save();   // to Config::saveTarget; true if saved
+    // --- the rack file (docs/rack-view.md, "Files") ---
+    // Where Save writes: the rack's bundle; empty for an untitled rack (a
+    // no-argument start, a --plugin session, or after New).
+    const std::string& rackPath() const noexcept { return target; }
+    bool               savingOff() const noexcept { return config.savingOff; }
+    // An untitled rack with changes that switching racks or quitting would
+    // lose: the UI asks first.
+    bool unsavedUntitled() const;
+    // Replace the running rack with a new, empty one, or with the rack at
+    // `chosen` (a bundle, or its rack.json). A titled rack is saved first, as
+    // at quit (unless saving is off); if that fails, nothing changes. Editors
+    // close, MIDI learn is cancelled. False (with a notice) if nothing changed.
+    bool newRack();
+    bool openRack(const std::string& chosen);
+    bool save();   // to rackPath(); false (with a notice) if untitled or saving is off
+    // Save to a new bundle (".rack" added if missing), which becomes the rack's
+    // path and its name. An existing rack there is replaced only with `replace`;
+    // anything else there never is.
+    enum class SaveAsResult { Saved, Failed, NeedsReplace };
+    SaveAsResult saveAs(const std::string& chosen, bool replace = false);
+    // At quit: save a titled rack (unless saving is off). False if a save failed.
+    bool saveForQuit();
+    // Changes whenever another rack replaces the running one: windows tied to
+    // its sequences must close (their ids may mean something else now).
+    std::uint64_t rackGeneration() const noexcept { return generation; }
     void quit();
 
 private:
@@ -171,6 +207,7 @@ private:
     // Apply `change` to a copy of the sequence and hand it to the Session.
     template <typename Change>
     void           editSequence(const std::string& id, Change change);
+    bool           replaceRack(const Rack& rack, const std::string& path, const std::vector<std::string>& warnings);
     void           buildDock(double now);
     void           finishLearn(const Engine::Learned& learned);
     std::string    triggerText(const SequenceTrigger& trigger) const;
@@ -191,6 +228,8 @@ private:
     std::map<MidiSourceHandle, std::pair<std::uint32_t, double>> inputActivity;   // last count, lit until
     std::string                                           learningId;   // the sequence being learned for
     SequenceTrigger::Action                               learningAction = SequenceTrigger::Action::Toggle;
+    std::string                                           target;          // the rack's bundle; "" = untitled
+    std::uint64_t                                         generation = 0;  // rackGeneration()
     bool                                                  scanned  = false;
     double                                                lastTick = -1.0;
     std::vector<std::string>                              notices;

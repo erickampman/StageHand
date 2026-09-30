@@ -22,7 +22,7 @@ tempo-synced plugins (LFOs, delays, arpeggiators).
 
 - **The rack owns a tempo and time signature**, saved in `rack.json`
   (`"tempo": 120.0, "timeSignature": [4, 4]`).
-- **Proposed: the transport free-runs.** The beat position starts at 0 when
+- **Superseded 2026-09-30 by section 7 (Start/Stop).** Was: the transport free-runs. The beat position starts at 0 when
   StageHand starts and always advances. There's no global Play button.
   Sequences start and stop individually, quantized to the grid (section 4).
   That's the MainStage/Ableton-launch model: nothing about the rack's sound
@@ -283,6 +283,73 @@ Implemented 2026-09-29 (milestone 4):
   before the tuning fields are fixed in the file format.
 - **Panic:** Stop all, plus a Panic that sends all-notes-off to every row.
 
+## 7. Transport Start/Stop and the click (2026-09-30)
+
+Replaces the free-running transport of section 1. The beat grid was only
+visible (the beat lights), and a sequence waited up to a bar to start.
+
+### Start and Stop
+
+- **Two states.** Stopped: the position is bar 1, beat 1; the lights are dark;
+  plugins get `IS_PLAYING` off (tempo-synced LFOs and delays may reset); no
+  sequence sounds. Running: the beat clock advances from beat 0 at the moment
+  of Start. StageHand starts stopped.
+- **Start** puts beat 1 at the frame it happens: the block's start from the
+  toolbar or a key, the message's own frame from MIDI.
+- **Stop** stops every sequence at once (note-offs at the stop's frame), and
+  returns to bar 1. Stop all (the dock) still stops just the sequences.
+- **Ways to start and stop:**
+  - A ▶/■ button beside Tap, and Space in the rack window.
+  - MIDI triggers (learned: Start/Stop, Start, Stop), as for sequences, saved
+    in the rack.
+  - **Start on first note:** off by default. While stopped, the first note-on
+    from the chosen input (or any input) starts the transport, with beat 1 on
+    that note. The note still plays.
+  - **Starting a sequence while stopped** (its Play button or a MIDI trigger)
+    starts the transport, and that sequence starts on beat 1 with no quantize
+    wait.
+- **At Start.** Each sequence has an At Start toggle (off by default): however
+  the transport starts, every At Start sequence begins exactly on beat 1.
+  That's how a song's parts are coordinated. A sequence started with the
+  transport's own Start still honours At Start for the others.
+- **Rack file:** `"transport": {"triggers": [...], "startOnNote": "off" | "all"
+  | "device:<id>" | "virtual:<name>"}`, and `"atStart": true` on a sequence.
+
+Implemented 2026-09-30 (milestone 6):
+- **Toolbar:** ▶/■ beside Tap (green while running), a MIDI button with the
+  transport's learn menu and start on first note (off, any input, or one
+  input), then the time signature and the beat lights (dark while stopped).
+- **Rows:** an At Start toggle after the mini-map.
+- **Engine:** `Engine::sendTransportCommand()` (Start, Stop, Toggle). A start
+  from MIDI sets the clock back so beat 0 lands on the message's frame (plugins
+  see a moment of pre-roll); Stop ends the sequences at its frame and resets
+  after that block. Transport triggers and start on first note are published
+  with the sequences (`TransportControl` in SequenceSet.h).
+- **Opening or starting a new rack** stops the transport.
+- tests/SequenceTests.cpp checks the sample positions (a sequence starting the
+  transport, At Start, a transport trigger's frame, start on first note).
+
+### The click (milestone 2)
+
+- Its own output pair, `click_L`/`click_R`, never mixed into the main outputs,
+  connected to a playback device chosen in the rack window (e.g. the laptop's
+  headphone jack while the mains go to an interface).
+- A short synthesized blip, higher on the downbeat, on the counted beats (the
+  lights' rule: 6/8 clicks twice a bar). Only while running. Level and on/off.
+- Saved in the rack: `"click": {"on": true, "level": -12, "output": {...}}`,
+  where the output names the device by its PipeWire node name and its
+  description.
+- **A missing output device** (another machine, an unplugged interface):
+  1. Match by node name, then by description (USB node names can change
+     between ports), then by the same device on another port.
+  2. Otherwise the click is not connected anywhere. It never falls back to the
+     main outputs: a click in the PA is worse than no click. The Click button
+     shows amber, the load warns, and the setting is kept unchanged.
+  3. When the device appears (hot-plug), the click connects to it.
+- A device on another clock than the mains is bridged by PipeWire's resampler:
+  a few ms of latency on the click, fine for a click.
+- Later: a count-in bar, MIDI click out, MIDI clock out.
+
 ## Proposed milestones
 
 1. **Transport:** rack tempo and time signature, the engine's beat clock, CLAP
@@ -294,6 +361,10 @@ Implemented 2026-09-29 (milestone 4):
    sequences; choosing one as a row's source.
 4. **Editor window:** the grid, black-key bars, drag rules, undo.
 5. **MIDI-mapped launch** (learn).
+6. **Transport Start/Stop** (section 7): the stopped state, Start and Stop
+   with MIDI triggers and start on first note, At Start, a sequence starting
+   the transport.
+7. **The click** on its own output (section 7).
 
 ## Decisions (2026-09-29)
 

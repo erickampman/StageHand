@@ -115,6 +115,7 @@ CompiledSequence CompiledSequence::compile(const Sequence& sequence, MidiSourceH
     c.launch          = sequence.launch;
     c.repeat          = sequence.repeat;
     c.noteOffOffsetMs = sequence.noteOffOffsetMs;
+    c.atStart         = sequence.atStart;
     const int edo     = sequence.edo > 0 ? sequence.edo : 12;
 
     for (const SequenceNote& note : sequence.notes) {
@@ -149,6 +150,11 @@ std::size_t SequenceSet::adoptFrom(const SequenceSet* previous, const Block& b, 
     };
 
     if (previous != nullptr) {
+        for (CompiledSequence::Trigger& t : transport.triggers)   // a held controller doesn't act again
+            for (const CompiledSequence::Trigger& o : previous->transport.triggers)
+                if (o.source == t.source && o.control == t.control && o.group == t.group && o.channel == t.channel &&
+                    o.number == t.number)
+                    t.high = o.high;
         for (const CompiledSequence& old : previous->all) {
             if (find(all, old.source) != nullptr) continue;
             releaseAll(old, out, capacity, count);   // removed: its notes end now
@@ -216,36 +222,74 @@ void SequenceSet::command(MidiSourceHandle source, SequenceCommand command, cons
         if (source == kInvalidMidiSource || s.source == source) apply(s, command, b);
 }
 
-bool SequenceSet::trigger(MidiSourceHandle source, const MidiMessage& m, const Block& b) noexcept {
-    if (!ump::isChannelVoice(m) || isSequenceSource(source)) return false;
+namespace {
+
+// Does trigger `t` match this message? Updates a controller's edge; `fires` is
+// true for a note-on, or a controller rising to 64 or more.
+bool matchOne(CompiledSequence::Trigger& t, MidiSourceHandle source, bool note, std::uint8_t group,
+              std::uint8_t channel, std::uint8_t number, bool high, bool noteOn, bool& fires) noexcept {
+    if ((t.source != kInvalidMidiSource && t.source != source) || t.group != group || t.channel != channel ||
+        t.number != number || (t.control == SequenceTrigger::Control::Note) != note)
+        return false;
+    fires = note ? noteOn : high && !t.high;
+    if (!note) t.high = high;
+    return true;
+}
+
+} // namespace
+
+std::size_t SequenceSet::matchTriggers(MidiSourceHandle source, const MidiMessage& m, TriggerHit* hits,
+                                       std::size_t capacity, bool& matched) noexcept {
+    matched = false;
+    if (!ump::isChannelVoice(m) || isSequenceSource(source)) return 0;
     const ump::Status status = ump::status(m);
     const bool        note   = status == ump::Status::NoteOn || status == ump::Status::NoteOff;
-    if (!note && status != ump::Status::ControlChange) return false;
+    if (!note && status != ump::Status::ControlChange) return 0;
     const std::uint8_t group = ump::group(m), channel = ump::channel(m);
     const std::uint8_t number = static_cast<std::uint8_t>((m.words[0] >> 8) & 0x7F);   // note or controller
     const bool         high   = ump::messageType(m) == ump::MessageType::Midi2ChannelVoice
                                     ? m.words[1] >= 0x80000000u
                                     : (m.words[0] & 0x7F) >= 64;
+    const bool         noteOn = ump::isNoteOn(m);
 
-    bool matched = false;
-    for (CompiledSequence& s : all) {
-        for (CompiledSequence::Trigger& t : s.triggers) {
-            if ((t.source != kInvalidMidiSource && t.source != source) || t.group != group ||
-                t.channel != channel || t.number != number ||
-                (t.control == SequenceTrigger::Control::Note) != note)
-                continue;
-            matched     = true;
-            const bool acts = note ? ump::isNoteOn(m) : high && !t.high;
-            if (!note) t.high = high;
-            if (!acts) continue;
-            switch (t.action) {
-                case SequenceTrigger::Action::Toggle: apply(s, SequenceCommand::Toggle, b); break;
-                case SequenceTrigger::Action::Start:  apply(s, SequenceCommand::Start, b); break;
-                case SequenceTrigger::Action::Stop:   apply(s, SequenceCommand::Stop, b); break;
-            }
-        }
+    std::size_t count = 0;
+    auto        check = [&](CompiledSequence::Trigger& t, MidiSourceHandle sequence) {
+        bool fires = false;
+        if (!matchOne(t, source, note, group, channel, number, high, noteOn, fires)) return;
+        matched = true;
+        if (fires && count < capacity) hits[count++] = TriggerHit{sequence, t.action};
+    };
+    for (CompiledSequence::Trigger& t : transport.triggers) check(t, kInvalidMidiSource);
+    for (CompiledSequence& s : all)
+        for (CompiledSequence::Trigger& t : s.triggers) check(t, s.source);
+    return count;
+}
+
+bool SequenceSet::wouldStart(MidiSourceHandle sequence, SequenceCommand command) const noexcept {
+    for (const CompiledSequence& s : all) {
+        if (s.source != sequence) continue;
+        const SequenceState state = s.runtime->current;
+        return command == SequenceCommand::Start ||
+               (command == SequenceCommand::Toggle &&
+                (state == SequenceState::Stopped || state == SequenceState::Stopping));
     }
-    return matched;
+    return false;
+}
+
+bool SequenceSet::startsOnNote(MidiSourceHandle source, const MidiMessage& m) const noexcept {
+    return transport.startOnNote && !isSequenceSource(source) && ump::isNoteOn(m) &&
+           (transport.startOnNoteSource == kInvalidMidiSource || transport.startOnNoteSource == source);
+}
+
+void SequenceSet::transportStarted(const Block& b) noexcept {
+    for (CompiledSequence& s : all) {
+        SequenceRuntime& rt = *s.runtime;
+        if (!s.atStart || rt.current != SequenceState::Stopped) continue;
+        rt.anchorBeat = b.beat;
+        rt.current    = SequenceState::Starting;
+        rt.stopBeat   = s.repeat ? std::numeric_limits<double>::infinity() : b.beat + s.length / s.unitsPerBeat;
+        rt.state.store(rt.current, std::memory_order_relaxed);
+    }
 }
 
 void SequenceSet::apply(CompiledSequence& s, SequenceCommand command, const Block& b) noexcept {

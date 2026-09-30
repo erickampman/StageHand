@@ -118,6 +118,7 @@ get a **layer**.
 | `timeSignature` | no | `[numerator, denominator]`: 1-32 over 1, 2, 4, 8, 16 or 32; default `[4, 4]` |
 | `slots` | yes | Plugin slots, in order |
 | `sequences` | no | The rack's step sequences; see "Sequences" |
+| `transport` | no | The transport's MIDI control; see "Transport" |
 
 ### Slot
 
@@ -208,6 +209,7 @@ slot's filter applies to it as to any source. They're kept separate from
 | `repeat` | `true` | Off: plays once from its start, then stops |
 | `noteOffOffsetMs` | `0` | Moves every note-off by this much (-1000 to 1000): positive for legato, negative for staccato |
 | `notes` | `[]` | `[start, length, pitch, velocity]`: start and length in units, within `length`; pitch is a note number (1.0) or an EDO step relative to `referenceNote` (2.0, may be negative); velocity 1-127 (1.0) or 1-65535 (2.0) |
+| `atStart` | `false` | Starts on beat 1 whenever the transport starts |
 | `triggers` | `[]` | MIDI controls that start or stop it; see "Triggers" |
 
 A slot naming a sequence the rack doesn't have is an error, not a silent
@@ -235,6 +237,26 @@ section 4). Usually made with MIDI learn in the dock.
 
 Messages that match a trigger go only to it. A trigger whose device isn't
 connected is kept and does nothing, with a warning at load.
+
+## Transport
+
+The transport starts stopped; Start puts bar 1 at that moment, Stop ends every
+sequence and returns to bar 1 (docs/sequences.md, section 7). Its MIDI
+control:
+
+```json
+"transport": {
+  "triggers": [{"action": "toggle", "source": "device:Pads:Pads MIDI 1", "note": 40, "channel": 10}],
+  "startOnNote": "off"
+}
+```
+
+| Field | Default | Meaning |
+|---|---|---|
+| `triggers` | `[]` | As a sequence's triggers ("Triggers"); the action starts or stops the transport |
+| `startOnNote` | `"off"` | While stopped, the first note-on from this input starts it: `"off"`, `"all"` (any input), `"device:<id>"` or `"virtual:<name>"`. The note still plays |
+
+Written only when it differs from the defaults.
 
 ## Versioning
 

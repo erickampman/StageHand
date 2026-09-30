@@ -37,13 +37,14 @@ struct Rig {
     std::int64_t                     frames  = 0;
     std::vector<Heard>               heard;
 
-    explicit Rig(bool listenToAll = false) {
+    explicit Rig(bool listenToAll = false, bool startTransport = true) {
         SlotConfig slot;
         slot.plugin                = plugin;
         slot.midiFilter.allSources = listenToAll;
         slot.midiFilter.source     = listenToAll ? kInvalidMidiSource : kSeq;
         std::vector<SlotConfig> slots{slot};
         engine->commit(std::make_unique<EngineGraph>(std::move(slots)));
+        if (startTransport) engine->sendTransportCommand(Engine::TransportCommand::Start);   // beat 0 at frame 0
     }
     ~Rig() {
         engine->commit(nullptr);
@@ -52,11 +53,14 @@ struct Rig {
         engine->collect();
     }
 
-    void set(const Sequence& seq, std::vector<CompiledSequence::Trigger> triggers = {}) {
+    void set(const Sequence& seq, std::vector<CompiledSequence::Trigger> triggers = {},
+             TransportControl transport = {}, const Sequence* other = nullptr) {
         std::vector<CompiledSequence> list{CompiledSequence::compile(seq, kSeq, runtime)};
         list[0].triggers = std::move(triggers);
-        engine->commitSequences(std::make_unique<SequenceSet>(std::move(list)));
+        if (other != nullptr) list.push_back(CompiledSequence::compile(*other, kSeq + 1, otherRuntime));
+        engine->commitSequences(std::make_unique<SequenceSet>(std::move(list), std::move(transport)));
     }
+    std::shared_ptr<SequenceRuntime> otherRuntime = std::make_shared<SequenceRuntime>();
 
     // Queue `m` from input `source` so it lands `offset` frames into the next
     // block of `block` frames (run() stamps every block's start at 1 s).
@@ -442,6 +446,82 @@ void testTriggerConsumesAndLearn() {
     CHECK(rig.find(true, 52) != nullptr);
 }
 
+// Stopped, a sequence's Play starts the transport, on beat 1 with no quantize
+// wait, even with launch "next bar".
+void testSequenceStartsTransport() {
+    Rig      rig(false, false);
+    Sequence s = midi1({{0, 4, 60, 100}});   // fills the loop
+    s.launch   = LaunchQuantize::Bar;
+    rig.set(s);
+    rig.run(12000);   // stopped: nothing moves
+    CHECK(!rig.engine->transport().running && rig.engine->transport().beatPosition == 0.0);
+    rig.engine->sendSequenceCommand(kSeq, SequenceCommand::Start);
+    rig.run(4800);
+    CHECK(at(rig.find(true, 60), 14400));   // the next block's first frame: beat 0
+    CHECK(rig.engine->transport().running);
+    CHECK(std::fabs(rig.engine->transport().beatPosition - 0.2) < 1e-9);   // 4800 frames in
+
+    // Stop ends every sequence at once and returns to beat 0.
+    rig.run(2400);
+    rig.engine->sendTransportCommand(Engine::TransportCommand::Stop);
+    rig.run(4800);
+    CHECK(at(rig.find(false, 60), 24000));   // the sounding note ends at the stop (run() uses whole blocks)
+    CHECK(!rig.engine->transport().running && rig.engine->transport().beatPosition == 0.0);
+    CHECK(rig.runtime->state.load() == SequenceState::Stopped);
+}
+
+// At Start sequences start with the transport, exactly on beat 1; others
+// don't. A transport trigger acts at its own frame.
+void testAtStart() {
+    Rig      rig(false, false);
+    Sequence armed = midi1({{0, 1, 60, 100}});
+    armed.atStart  = true;
+    Sequence other = midi1({{0, 1, 62, 100}});
+    other.id       = "other";
+    TransportControl transport;
+    transport.triggers = {trigger(SequenceTrigger::Control::Note, 9, 36)};   // Start/Stop
+    rig.set(armed, {}, transport, &other);
+    rig.run(4800);
+    rig.midi(1, midi1Message(0x90, 9, 36, 100), 1000);
+    rig.run(4800);
+    CHECK(rig.engine->transport().running);
+    CHECK(at(rig.find(true, 60), 5800));
+    CHECK(rig.otherRuntime->state.load() == SequenceState::Stopped);
+
+    // A sequence Play while running waits for its launch boundary as before.
+    rig.midi(1, midi1Message(0x90, 9, 36, 100), 0);   // toggle: stop
+    rig.run(4800);
+    CHECK(!rig.engine->transport().running && rig.runtime->state.load() == SequenceState::Stopped);
+}
+
+// Start on first note: the note starts the transport at its frame and still
+// plays; later notes don't restart it. A sequence trigger while stopped starts
+// the transport at its frame too.
+void testStartOnNote() {
+    Rig      rig(true, false);   // hears all inputs (not the sequence)
+    Sequence armed = midi1({{0, 1, 60, 100}});
+    armed.atStart  = true;
+    TransportControl transport;
+    transport.startOnNote = true;
+    rig.set(armed, {}, transport);
+    rig.run(4800);
+    rig.midi(1, midi1Message(0x90, 0, 64, 100), 500);
+    rig.run(4800);
+    CHECK(rig.engine->transport().running && at(rig.find(true, 64), 5300));
+    CHECK(rig.runtime->state.load() == SequenceState::Playing);
+    const double beat = rig.engine->transport().beatPosition;
+    CHECK(std::fabs(beat - (9600.0 - 5300.0) / 24000.0) < 1e-9);   // beat 0 at the note
+
+    Rig      trig(false, false);
+    Sequence s = midi1({{0, 1, 60, 100}});
+    s.launch   = LaunchQuantize::Bar;
+    trig.set(s, {trigger(SequenceTrigger::Control::Note, 9, 36)});
+    trig.run(4800);
+    trig.midi(1, midi1Message(0x90, 9, 36, 100), 700);
+    trig.run(4800);
+    CHECK(at(trig.find(true, 60), 5500));   // beat 1 at the pad, not the next bar
+}
+
 } // namespace
 
 int main() {
@@ -457,5 +537,8 @@ int main() {
     testTriggerQuantize();
     testControllerTrigger();
     testTriggerConsumesAndLearn();
+    testSequenceStartsTransport();
+    testAtStart();
+    testStartOnNote();
     return test::finish("Sequence");
 }

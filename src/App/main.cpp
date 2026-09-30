@@ -48,12 +48,11 @@ void printUsage() {
     std::puts(
         "usage: stagehand [MODE] [options]\n"
         "\n"
-        "With no arguments: --play with a new, empty scratch rack (not saved).\n"
+        "With no arguments: --play with a new, empty, untitled rack.\n"
         "\n"
         "Modes:\n"
         "  --play               host plugins: MIDI in, audio out. Plays --rack or\n"
-        "                       --plugin; with neither, a new, empty rack (saved only\n"
-        "                       with --save-rack)\n"
+        "                       --plugin; with neither, a new, empty, untitled rack\n"
         "  --list-plugins       list installed CLAP plugins\n"
         "  --list-midi          list MIDI sources (id, protocol, hardware/software/app)\n"
         "  --monitor            print incoming MIDI exactly as it arrives\n"
@@ -96,6 +95,9 @@ void printUsage() {
         "Keys in the rack window and in plugin editor windows:\n"
         "  Ctrl-Q               quit StageHand (saving, unless --no-save-rack)\n"
         "  Ctrl-Shift-S         save the rack now\n"
+        "In the rack window also: Space starts or stops the transport; Ctrl-S saves,\n"
+        "Ctrl-N makes a new rack, Ctrl-O opens one, and the File menu has Save As. An\n"
+        "untitled rack with changes asks before they're lost.\n"
         "Closing the rack window quits the same way. Closing an editor window closes\n"
         "that editor only; StageHand keeps playing.\n"
         "In the terminal, Ctrl-C quits the same way as Ctrl-Q.\n"
@@ -135,7 +137,7 @@ struct Options {
 
 // Returns 0 to run, -1 to exit successfully (help), or a process exit code.
 int parseArguments(int argc, char** argv, Options& options) {
-    if (argc == 1) options.mode = Mode::Play;   // a scratch rack
+    if (argc == 1) options.mode = Mode::Play;   // a new, untitled rack
     for (int i = 1; i < argc; ++i) {
         const std::string_view arg = argv[i];
         if (arg == "--help" || arg == "-h") {
@@ -461,18 +463,6 @@ void printRack(const Session& session) {
     }
 }
 
-// "~/x" -> "$HOME/x", then an absolute, normalized path (the file needn't exist).
-std::filesystem::path resolvePath(const std::string& text) {
-    std::string expanded = text;
-    if (const char* home = std::getenv("HOME"); home != nullptr && (text == "~" || text.rfind("~/", 0) == 0))
-        expanded = home + text.substr(1);
-    std::error_code ec;
-    std::filesystem::path path = std::filesystem::weakly_canonical(expanded, ec);
-    if (ec) path = std::filesystem::absolute(expanded, ec);
-    if (!path.has_filename()) path = path.parent_path();   // "X.rack/" -> "X.rack"
-    return path;
-}
-
 // Where this session saves: the --save-rack path if given, else the --rack being
 // played; nothing with --no-save-rack (or a --plugin session without --save-rack).
 std::string saveTargetOf(const Options& options) {
@@ -486,25 +476,24 @@ std::string saveTargetOf(const Options& options) {
 // the rack being played is always allowed.
 bool saveTargetAllowed(const std::string& saveTarget, const Options& options) {
     if (saveTarget.empty()) return true;
-    namespace fs = std::filesystem;
-    std::error_code ec;
-    const fs::path  target = resolvePath(saveTarget);
-    if (!fs::exists(target, ec)) return true;
-
-    if (!fs::is_directory(target, ec) || !fs::exists(target / "rack.json", ec)) {
-        std::fprintf(stderr,
-                     "--save-rack %s: that path exists and isn't a rack, so StageHand won't replace it.\n"
-                     "Choose another path.\n",
-                     saveTarget.c_str());
-        return false;
+    switch (classifySaveTarget(saveTarget, options.rack)) {
+        case SaveTarget::New:
+        case SaveTarget::Current: return true;
+        case SaveTarget::NotARack:
+            std::fprintf(stderr,
+                         "--save-rack %s: that path exists and isn't a rack, so StageHand won't replace it.\n"
+                         "Choose another path.\n",
+                         saveTarget.c_str());
+            return false;
+        case SaveTarget::OtherRack:
+            if (options.overwrite) return true;
+            std::fprintf(stderr,
+                         "--save-rack %s would replace an existing rack you aren't playing.\n"
+                         "To edit that rack, play it: --rack %s\n"
+                         "To replace it anyway, add --overwrite.\n",
+                         saveTarget.c_str(), saveTarget.c_str());
+            return false;
     }
-    const bool playingIt = !options.rack.empty() && fs::equivalent(target, resolvePath(options.rack), ec);
-    if (playingIt || options.overwrite) return true;
-    std::fprintf(stderr,
-                 "--save-rack %s would replace an existing rack you aren't playing.\n"
-                 "To edit that rack, play it: --rack %s\n"
-                 "To replace it anyway, add --overwrite.\n",
-                 saveTarget.c_str(), saveTarget.c_str());
     return false;
 }
 
@@ -537,9 +526,9 @@ int runPlay(const Options& options) {
         if (!resolvePlugin(factory, options, desc)) return 1;
         rack = rackForPlugin(desc);
     } else if (!options.saveRack.empty()) {   // --save-rack alone: a new, empty rack, named after its file
-        rack.name = std::filesystem::path(resolvePath(options.saveRack)).stem().string();
-    } else {   // nothing to play: a scratch rack, not saved
-        rack.name = "Scratch";
+        rack.name = rackNameOf(options.saveRack);
+    } else {   // nothing to play: a new, untitled rack (Save As names it)
+        rack.name = "Untitled";
     }
 
     // Declaration order matters: destruction runs in reverse, so plugins (held
@@ -610,11 +599,8 @@ int runPlay(const Options& options) {
     config.quit               = [&loop] { loop.requestQuit(); };
     config.virtualInputs      = kVirtualInputs;
     config.protocolPreference = options.preference;
-    config.saveTarget         = saveTarget;
-    const bool scratch        = options.rack.empty() && options.plugin.empty() && options.saveRack.empty();
-    config.noSaveReason       = options.noSaveRack ? "saving is off (--no-save-rack)"
-                                : scratch          ? "this is a scratch rack; start StageHand with --save-rack PATH to keep one"
-                                                   : "this session has no rack; start it with --save-rack PATH";
+    config.saveTarget         = saveTarget.empty() ? std::string{} : resolveRackPath(saveTarget);
+    config.savingOff          = options.noSaveRack;
     RackController controller(session, *engine, *input, factory, std::move(config));
     controllerRef = &controller;
     std::unique_ptr<RackUi>* uiRef = nullptr;   // set once the window exists
@@ -639,8 +625,8 @@ int runPlay(const Options& options) {
                     saveTarget.c_str(), ui ? "StageHand's windows" : "an editor window");
     else if (options.noSaveRack)
         std::puts("Not saving (--no-save-rack).");
-    else if (scratch)
-        std::puts("Scratch rack: not saved. Start StageHand with --save-rack PATH to keep a rack.");
+    else if (ui)
+        std::puts("Untitled rack: Save As in the rack window's File menu keeps it.");
     else
         std::puts("Not saving: this session has no rack. Add --save-rack PATH to keep it.");
     std::printf("Playing %s. Send MIDI to an input above. Ctrl-Q in %s, or Ctrl-C here, stops.\n",
@@ -714,10 +700,10 @@ int runPlay(const Options& options) {
     // goes.
     ui.reset();
     controller.closeAllEditors();
-    const int exitCode = (!saveTarget.empty() && !controller.save()) ? 1 : 0;
+    const bool unsaved  = controller.unsavedUntitled();
+    const int  exitCode = controller.saveForQuit() ? 0 : 1;
     printNotices();
-    if (scratch && !options.noSaveRack && session.modified())
-        std::puts("The scratch rack's changes weren't saved.");
+    if (unsaved) std::puts("The untitled rack's changes weren't saved.");
     input.reset();
     host.onStateChanged = nullptr;   // plugins may outlive `session` (in the engine's graphs)
     session.unload();

@@ -63,11 +63,15 @@ Rack sampleRack() {
     pedal.group   = 2;
     pedal.number  = 64;
     arp.triggers  = {anyPad, pedal};
+    arp.atStart   = true;
     Sequence line;
     line.id       = "bass-line";
     line.protocol = MidiProtocol::Midi1;
     line.notes    = {{0, 1, 36, 100}};
     rack.sequences = {arp, line};
+    rack.transport.triggers          = {pedal};
+    rack.transport.startOnNote       = true;
+    rack.transport.startOnNoteSource = MidiSourceRef{MidiSourceRef::Kind::Virtual, "MIDI 2.0 In"};
 
     RackSlot bass;
     bass.id                  = "bass";
@@ -124,7 +128,7 @@ void testRoundTrip(const fs::path& dir) {
         CHECK(a.referenceNote == 62 && a.channel == 2 && a.group == 1 && a.length == 8);
         CHECK(a.rate.numerator == 1 && a.rate.denominator == 2 && a.launch == LaunchQuantize::Beat);
         CHECK(!a.repeat && a.noteOffOffsetMs == -5.0 && a.notes.size() == 2);
-        CHECK(a.triggers.size() == 2 && a.triggers[0] == SequenceTrigger{});
+        CHECK(a.triggers.size() == 2 && a.triggers[0] == SequenceTrigger{} && a.atStart);
         if (a.triggers.size() == 2)
             CHECK(a.triggers[1].action == SequenceTrigger::Action::Stop && a.triggers[1].channel == 9 &&
                   a.triggers[1].group == 2 && a.triggers[1].number == 64 &&
@@ -135,7 +139,8 @@ void testRoundTrip(const fs::path& dir) {
                   a.notes[1].length == 4 && a.notes[1].velocity == 65535);
         const Sequence& b = loaded.sequences[1];
         CHECK(b.id == "bass-line" && b.protocol == MidiProtocol::Midi1 && b.rate.numerator == 4);
-        CHECK(b.launch == LaunchQuantize::Bar && b.repeat && b.notes.size() == 1 && b.triggers.empty());
+        CHECK(b.launch == LaunchQuantize::Bar && b.repeat && b.notes.size() == 1 && b.triggers.empty() && !b.atStart);
+        CHECK(loaded.transport == sampleRack().transport && loaded.transport.startOnNote);
     }
     if (loaded.slots.size() != 2) return;
 
@@ -245,6 +250,9 @@ void testFailures(const fs::path& dir) {
                   R"({"format":"stagehand-rack","version":1,"slots":[],
                       "sequences":[{"id":"s","triggers":[{"action":"pause","note":36}]}]})",
                   "toggle");
+    expectFailure(dir, "OnNote.rack",
+                  R"({"format":"stagehand-rack","version":1,"slots":[],"transport":{"startOnNote":"sequence:x"}})",
+                  "transport: ");
     expectFailure(dir, "Fast.rack", R"({"format":"stagehand-rack","version":1,"tempo":500,"slots":[]})",
                   "20-400 BPM");
     expectFailure(dir, "Sig.rack",

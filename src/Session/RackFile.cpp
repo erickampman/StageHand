@@ -202,6 +202,7 @@ Sequence parseSequence(const Json& s) {
     else if (launch == "immediate") seq.launch = LaunchQuantize::Immediate;
     else fail("launch must be \"bar\", \"beat\" or \"immediate\"");
     seq.repeat          = s.value("repeat", true);
+    seq.atStart         = s.value("atStart", false);
     seq.noteOffOffsetMs = s.value("noteOffOffsetMs", 0.0);
     if (seq.noteOffOffsetMs < -1000.0 || seq.noteOffOffsetMs > 1000.0) fail("noteOffOffsetMs must be within +-1000");
 
@@ -249,6 +250,7 @@ Json sequenceJson(const Sequence& seq) {
     s["launch"]          = launchText(seq.launch);
     s["repeat"]          = seq.repeat;
     s["noteOffOffsetMs"] = seq.noteOffOffsetMs;
+    s["atStart"]         = seq.atStart;
     Json notes           = Json::array();
     for (const SequenceNote& n : seq.notes) notes.push_back(Json::array({n.start, n.length, n.pitch, n.velocity}));
     s["notes"] = notes;
@@ -258,6 +260,33 @@ Json sequenceJson(const Sequence& seq) {
         s["triggers"] = triggers;
     }
     return s;
+}
+
+// "transport": {"triggers": [...], "startOnNote": "off" | a source}.
+TransportSettings parseTransport(const Json& j) {
+    if (!j.is_object()) fail("transport should be an object");
+    TransportSettings t;
+    if (j.contains("triggers")) {
+        if (!j.at("triggers").is_array()) fail("transport.triggers should be a list");
+        for (const Json& trigger : j.at("triggers")) t.triggers.push_back(parseTrigger(trigger));
+    }
+    const std::string onNote = j.value("startOnNote", std::string("off"));
+    if (onNote != "off") {
+        t.startOnNote       = true;
+        t.startOnNoteSource = parseSource(onNote);
+        if (t.startOnNoteSource.kind == MidiSourceRef::Kind::Sequence)
+            fail("transport.startOnNote must be \"off\" or an input, not a sequence");
+    }
+    return t;
+}
+
+Json transportJson(const TransportSettings& t) {
+    Json j;
+    Json triggers = Json::array();
+    for (const SequenceTrigger& trigger : t.triggers) triggers.push_back(triggerJson(trigger));
+    j["triggers"]    = triggers;
+    j["startOnNote"] = t.startOnNote ? sourceText(t.startOnNoteSource) : std::string("off");
+    return j;
 }
 
 // "all", or a list of numbers 1-16, as a bit mask.
@@ -419,6 +448,13 @@ RackFileResult loadRack(const std::string& bundlePath, Rack& rack) {
                 }
             }
         }
+        if (doc.contains("transport")) {
+            try {
+                loaded.transport = parseTransport(doc.at("transport"));
+            } catch (const std::exception& e) {
+                fail(std::string("transport: ") + e.what());
+            }
+        }
 
         std::set<std::string> ids;
         std::size_t           index = 0;
@@ -479,6 +515,7 @@ RackFileResult saveRack(const std::string& bundlePath, const Rack& rack) {
             }
             doc["sequences"] = sequences;
         }
+        if (rack.transport != TransportSettings{}) doc["transport"] = transportJson(rack.transport);
         {
             std::ofstream out(temp / "rack.json", std::ios::trunc);
             out << doc.dump(2) << '\n';
@@ -498,6 +535,47 @@ RackFileResult saveRack(const std::string& bundlePath, const Rack& rack) {
     }
     result.ok = true;
     return result;
+}
+
+// --- paths -------------------------------------------------------------------------
+
+std::string resolveRackPath(const std::string& text) {
+    std::string expanded = text;
+    if (const char* home = std::getenv("HOME"); home != nullptr && (text == "~" || text.rfind("~/", 0) == 0))
+        expanded = home + text.substr(1);
+    std::error_code ec;
+    fs::path        path = fs::weakly_canonical(expanded, ec);
+    if (ec) path = fs::absolute(expanded, ec);
+    if (!path.has_filename()) path = path.parent_path();   // "X.rack/" -> "X.rack"
+    return path.string();
+}
+
+std::string rackBundleOf(const std::string& chosen) {
+    if (chosen.empty()) return {};
+    fs::path        path = resolveRackPath(chosen);
+    std::error_code ec;
+    if (path.filename() == "rack.json") path = path.parent_path();
+    return fs::is_regular_file(path / "rack.json", ec) ? path.string() : std::string{};
+}
+
+std::string saveAsPath(const std::string& chosen) {
+    if (chosen.empty()) return {};
+    fs::path path = resolveRackPath(chosen);
+    if (path.extension() != ".rack") path += ".rack";
+    return path.string();
+}
+
+SaveTarget classifySaveTarget(const std::string& target, const std::string& current) {
+    std::error_code ec;
+    const fs::path  path = resolveRackPath(target);
+    if (!fs::exists(path, ec)) return SaveTarget::New;
+    if (!fs::is_directory(path, ec) || !fs::exists(path / "rack.json", ec)) return SaveTarget::NotARack;
+    if (!current.empty() && fs::equivalent(path, resolveRackPath(current), ec)) return SaveTarget::Current;
+    return SaveTarget::OtherRack;
+}
+
+std::string rackNameOf(const std::string& bundlePath) {
+    return fs::path(resolveRackPath(bundlePath)).stem().string();
 }
 
 } // namespace stagehand

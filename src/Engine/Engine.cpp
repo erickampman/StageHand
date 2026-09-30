@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <utility>
 #include <vector>
 
@@ -182,6 +183,10 @@ bool Engine::sendSequenceCommand(MidiSourceHandle source, SequenceCommand comman
     return sequenceCommands.push(QueuedCommand{source, command});
 }
 
+bool Engine::sendTransportCommand(TransportCommand command) noexcept {
+    return transportCommands.push(command);
+}
+
 Engine::Stats Engine::stats() const noexcept {
     Stats s;
     s.midiReceived       = midiReceived.load(std::memory_order_relaxed);
@@ -213,6 +218,7 @@ Engine::Transport Engine::transport() const noexcept {
     t.beatPosition     = publishedBeat.load(std::memory_order_relaxed);
     t.barStartBeats    = publishedBarStart.load(std::memory_order_relaxed);
     t.barNumber        = publishedBar.load(std::memory_order_relaxed);
+    t.running          = publishedRunning.load(std::memory_order_relaxed);
     return t;
 }
 
@@ -236,7 +242,16 @@ void Engine::process(const AudioCallbackContext& ctx) noexcept {
     routeMidi(ctx.frameCount);
     runSlots(ctx);
 
-    clock.beat += static_cast<double>(ctx.frameCount) * clock.beatsPerFrame;
+    if (clock.stopPending) {   // stopped in this block: the next one starts at beat 0, stopped
+        clock.running       = false;
+        clock.stopPending   = false;
+        clock.beat          = 0.0;
+        clock.barAnchorBeat = 0.0;
+        clock.barAnchor     = 0;
+    } else if (clock.running) {
+        clock.beat += static_cast<double>(ctx.frameCount) * clock.beatsPerFrame;
+    }
+    publishedRunning.store(clock.running, std::memory_order_relaxed);
     const TimeInfo now = timeAt(ctx, 0);   // the next block's start (the clock has moved)
     publishedBeat.store(now.beatPosition, std::memory_order_relaxed);
     publishedBarStart.store(now.barStartBeats, std::memory_order_relaxed);
@@ -267,7 +282,7 @@ TimeInfo Engine::timeAt(const AudioCallbackContext& ctx, std::uint32_t frame) co
     t.tempoBpm            = clock.tempoBpm;
     t.timeSigNumerator    = clock.numerator;
     t.timeSigDenominator  = clock.denominator;
-    t.playing             = true;   // free-running
+    t.playing             = clock.running;
     t.beatPosition        = clock.beat + static_cast<double>(frame) * clock.beatsPerFrame;
     const double barBeats = clock.numerator * 4.0 / clock.denominator;
     // A hair of tolerance, so a position exactly on a bar line isn't read as the
@@ -278,10 +293,9 @@ TimeInfo Engine::timeAt(const AudioCallbackContext& ctx, std::uint32_t frame) co
     return t;
 }
 
-// Adopt a new sequence snapshot, if any, and apply the dock's Play/Stop commands.
-void Engine::adoptSequences(const AudioCallbackContext& ctx) noexcept {
-    sequenceEventCount = 0;
-    const TimeInfo     now = timeAt(ctx, 0);
+// This block as the sequences see it, from the clock.
+void Engine::makeSequenceBlock(const AudioCallbackContext& ctx) noexcept {
+    const TimeInfo      now   = timeAt(ctx, 0);
     SequenceSet::Block& block = sequenceBlock;
     block.beat          = now.beatPosition;
     block.beatsPerFrame = clock.beatsPerFrame;
@@ -289,6 +303,52 @@ void Engine::adoptSequences(const AudioCallbackContext& ctx) noexcept {
     block.frames        = ctx.frameCount;
     block.barStartBeats = now.barStartBeats;
     block.barBeats      = clock.numerator * 4.0 / clock.denominator;
+}
+
+// Beat 0 at `frame`: the clock is set back so that frame lands on it (plugins
+// see a moment of pre-roll before it). At Start sequences start there.
+void Engine::startTransport(const AudioCallbackContext& ctx, std::uint32_t frame) noexcept {
+    if (clock.running && !clock.stopPending) return;
+    clock.running       = true;
+    clock.stopPending   = false;
+    clock.beat          = -static_cast<double>(frame) * clock.beatsPerFrame;
+    clock.barAnchorBeat = 0.0;
+    clock.barAnchor     = 0;
+    makeSequenceBlock(ctx);
+    if (currentSequences != nullptr) currentSequences->transportStarted(sequenceBlock.from(frame));
+}
+
+// Every sequence ends at `frame`; the clock returns to beat 0 after this block.
+void Engine::stopTransport(std::uint32_t frame) noexcept {
+    if (!clock.running || clock.stopPending) return;
+    if (currentSequences != nullptr)
+        currentSequences->command(kInvalidMidiSource, SequenceCommand::StopNow, sequenceBlock.from(frame));
+    clock.stopPending = true;
+}
+
+void Engine::transportAction(const AudioCallbackContext& ctx, TransportCommand command, std::uint32_t frame) noexcept {
+    const bool running = clock.running && !clock.stopPending;
+    if (command == TransportCommand::Start || (command == TransportCommand::Toggle && !running))
+        startTransport(ctx, frame);
+    else
+        stopTransport(frame);
+}
+
+void Engine::sequenceCommand(const AudioCallbackContext& ctx, MidiSourceHandle source, SequenceCommand command,
+                             std::uint32_t frame) noexcept {
+    if (currentSequences == nullptr) return;
+    if ((!clock.running || clock.stopPending) && source != kInvalidMidiSource &&
+        currentSequences->wouldStart(source, command))
+        startTransport(ctx, frame);   // on beat 1, with no quantize wait
+    currentSequences->command(source, command, sequenceBlock.from(frame));
+}
+
+// Adopt a new sequence snapshot, if any, and apply the transport's and the
+// dock's commands (at the block's start).
+void Engine::adoptSequences(const AudioCallbackContext& ctx) noexcept {
+    sequenceEventCount = 0;
+    makeSequenceBlock(ctx);
+    SequenceSet::Block& block = sequenceBlock;
 
     if (pendingSequences.load(std::memory_order_acquire) != nullptr &&
         (currentSequences == nullptr || retiredSequences.canPush())) {
@@ -298,10 +358,10 @@ void Engine::adoptSequences(const AudioCallbackContext& ctx) noexcept {
             currentSequences = next;
         }
     }
-    if (currentSequences == nullptr) return;
-
+    TransportCommand transport;
+    while (transportCommands.pop(transport)) transportAction(ctx, transport, 0);
     QueuedCommand queued;
-    while (sequenceCommands.pop(queued)) currentSequences->command(queued.source, queued.command, block);
+    while (sequenceCommands.pop(queued)) sequenceCommand(ctx, queued.source, queued.command, 0);
 }
 
 // This block's sequence events, sorted by (offset, order) for routeMidi() to
@@ -377,9 +437,32 @@ void Engine::takeMidi(const AudioCallbackContext& ctx) noexcept {
             learnState.compare_exchange_strong(armed, kLearnCaptured, std::memory_order_acq_rel);
             continue;
         }
-        if (currentSequences != nullptr &&
-            currentSequences->trigger(entry.item.source, m, sequenceBlock.from(entry.offset)))
-            continue;
+        if (currentSequences != nullptr) {
+            SequenceSet::TriggerHit hits[16];
+            bool                    matched = false;
+            const std::size_t       fired =
+                currentSequences->matchTriggers(entry.item.source, m, hits, std::size(hits), matched);
+            for (std::size_t i = 0; i < fired; ++i) {
+                const auto action = hits[i].action;
+                if (hits[i].sequence == kInvalidMidiSource) {
+                    transportAction(ctx,
+                                    action == SequenceTrigger::Action::Start  ? TransportCommand::Start
+                                    : action == SequenceTrigger::Action::Stop ? TransportCommand::Stop
+                                                                              : TransportCommand::Toggle,
+                                    entry.offset);
+                } else {
+                    sequenceCommand(ctx, hits[i].sequence,
+                                    action == SequenceTrigger::Action::Start  ? SequenceCommand::Start
+                                    : action == SequenceTrigger::Action::Stop ? SequenceCommand::Stop
+                                                                              : SequenceCommand::Toggle,
+                                    entry.offset);
+                }
+            }
+            if (matched) continue;
+            // Start on first note: the note starts the transport, and still plays.
+            if (!clock.running && currentSequences->startsOnNote(entry.item.source, m))
+                startTransport(ctx, entry.offset);
+        }
         ++stagedCount;
     }
 }

@@ -37,8 +37,8 @@ The listing and monitoring modes (`--list-plugins`, `--list-midi`,
 stagehand [MODE] [options]
 ```
 
-One mode per run. With no arguments at all, StageHand plays a new, empty
-scratch rack (see "Scratch rack").
+One mode per run. With no arguments at all, StageHand plays a new, empty,
+untitled rack (see "Untitled rack").
 
 | Mode | What it does |
 |---|---|
@@ -58,7 +58,7 @@ What `--play` plays:
 | `--rack PATH` | Play a rack: a `.rack` bundle (docs/rack-format.md) |
 | `--plugin PATH\|ID` | Play one plugin: a `.clap` file, or an id or name from `--list-plugins`. It starts from the plugin's defaults |
 | `--save-rack PATH` alone | Start a new, empty rack, built in the rack window and saved to PATH |
-| none of these | A scratch rack (see below) |
+| none of these | A new, untitled rack (see below) |
 
 `--rack` and `--plugin` can't be used together: a rack already names its
 plugins.
@@ -70,17 +70,21 @@ plugins.
 | `--no-ui` | No rack window, console only. Every editor opens at start |
 | `--no-editor` | With `--no-ui`: don't open the editors either |
 
-### Scratch rack
+### Untitled rack
 
 `stagehand` with no arguments, or `--play` with no `--rack`, `--plugin` or
-`--save-rack`, starts a new, empty rack named "Scratch" with the defaults:
+`--save-rack`, starts a new, empty rack named "Untitled" with the defaults:
 120 BPM, 4/4, every hardware MIDI input plus the virtual inputs, and stereo
 out. Build it in the window as usual.
 
-A scratch rack is **never saved**: Ctrl-Shift-S says so, and quitting with
-changes prints "The scratch rack's changes weren't saved." To keep a new
-rack, start with `--save-rack PATH` instead. The rack window can't choose a
-path, because it has no text entry.
+An untitled rack is saved with **File > Save As** (or Ctrl-S), which names
+it. With changes still unsaved, New, Open, Ctrl-Q and closing the window ask
+first. Quitting from the terminal (Ctrl-C) doesn't ask; it prints "The
+untitled rack's changes weren't saved." A `--plugin` session without
+`--save-rack` is untitled too.
+
+In the window, File also has New rack and Open...; see docs/rack-view.md,
+section 7. The file chooser is the desktop's own (zenity, or kdialog on KDE).
 
 ### Saving
 
@@ -101,8 +105,8 @@ The save target is checked before any audio starts:
 - Saving back to the rack being played is always allowed.
 - `--save-rack` with `--no-save-rack` is refused as a contradiction.
 
-A `--plugin` session without `--save-rack` has nowhere to save; Ctrl-Shift-S
-then says so.
+The same rules apply to Save As in the window, except that replacing another
+rack asks instead of needing `--overwrite`.
 
 ## Audio options (--play, --tone)
 
@@ -138,9 +142,18 @@ In the rack window and in plugin editor windows:
 
 | Key | Action |
 |---|---|
-| Ctrl-Q | Quit (saving, unless `--no-save-rack`) |
+| Ctrl-Q | Quit (saving a titled rack, unless `--no-save-rack`). In the rack window, an untitled rack with changes asks first |
 | Ctrl-Shift-S | Save the rack now |
-| Escape | Rack window only: close a menu or panel, and cancel MIDI learn |
+
+In the rack window only:
+
+| Key | Action |
+|---|---|
+| Space | Start or stop the transport |
+| Ctrl-S | Save (Save As for an untitled rack) |
+| Ctrl-N | New rack |
+| Ctrl-O | Open a rack |
+| Escape | Close a menu or panel, and cancel MIDI learn |
 
 Closing the rack window quits the same way as Ctrl-Q. Closing a plugin editor
 or a sequence editor closes just that window; StageHand keeps playing. In the
@@ -156,7 +169,7 @@ terminal, Ctrl-C quits the same way as Ctrl-Q.
 
 ## Examples
 
-Open a scratch rack to try things out:
+Open a new, untitled rack:
 
 ```bash
 ./build/stagehand

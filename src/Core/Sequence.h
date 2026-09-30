@@ -73,6 +73,7 @@ struct Sequence {
     double          noteOffOffsetMs = 0.0;              // moves every note-off (+ legato, - staccato)
     std::vector<SequenceNote> notes;
     std::vector<SequenceTrigger> triggers;              // MIDI controls that start or stop it
+    bool            atStart         = false;            // starts on beat 1 whenever the transport starts
 };
 
 // A sequence's MidiSourceHandle lives above the range MIDI inputs use, so the

@@ -72,8 +72,8 @@ struct StatusModel {
     std::uint32_t outputs       = 2;   // for the output-pair choice
     std::uint64_t midiDropped   = 0;   // queue or buffer full, or no form a plugin takes
     MidiProtocol  preference    = MidiProtocol::Midi2;
-    std::string   saveTarget;          // empty: not saving
-    std::string   noSaveReason;
+    std::string   saveTarget;          // the rack's bundle; empty: untitled, or saving is off
+    std::string   noSaveReason;        // shown instead, when saveTarget is empty
     float         outputDb[2]   = {-60.0f, -60.0f};   // master meter, with ballistics
     bool          outputClipped = false;
 };
@@ -85,8 +85,16 @@ struct TransportModel {
     int    denominator  = 4;
     double beatPosition = 0.0;   // as of the last audio block
     int    beatInBar    = 0;     // 0-based, for the beat lights
-    int    beatsInBar   = 4;     // lights to draw (a 6/8 bar is 3 beats; 5/8 rounds up to 3)
-    bool   onBeat       = false; // the first part of a beat: the light is lit
+    int    beatsInBar   = 4;     // lights to draw: counted beats (6/8: 2 dotted beats; 7/8: 7 eighths)
+    bool   onBeat       = false; // the first part of a beat: the light is lit (never while stopped)
+    bool   running      = false; // Start/Stop (docs/sequences.md, section 7)
+    // Its MIDI control: triggers described as a sequence row's are; start on
+    // first note ("" when off, else the input: "All inputs", "KeyLab 88").
+    std::vector<std::string> triggers;
+    bool                     learning       = false;
+    SequenceTrigger::Action  learningAction = SequenceTrigger::Action::Toggle;
+    std::string              startOnNote;
+    bool                     startOnNoteConnected = true;
 };
 
 // One sequence in the sources dock (docs/sequences.md, section 4).
@@ -99,6 +107,7 @@ struct SequenceRowModel {
     std::uint32_t            length   = 16;
     LaunchQuantize           launch   = LaunchQuantize::Bar;
     bool                     repeat   = true;
+    bool                     atStart  = false;   // starts with the transport
     double                   noteOffOffsetMs = 0.0;
     std::size_t              noteCount = 0;
     std::vector<std::uint32_t> noteStarts;   // distinct start units, for the dock's mini-map

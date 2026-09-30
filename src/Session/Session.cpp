@@ -47,6 +47,9 @@ bool Session::load(const Rack& rack, double rate, LoadReport& report) {
         for (const std::string& problem : resolveTriggers(sequenceList.back()))
             report.warnings.push_back("sequence '" + seq.id + "': a MIDI trigger won't act: " + problem);
     }
+    transportSetup = rack.transport;
+    for (const std::string& problem : resolveTransport())
+        report.warnings.push_back("transport: a MIDI control won't act: " + problem);
 
     for (const RackSlot& saved : rack.slots) {
         Slot slot;
@@ -100,6 +103,7 @@ Rack Session::capture() const {
     rack.timeSigNumerator   = sigNumerator;
     rack.timeSigDenominator = sigDenominator;
     for (const SequenceEntry& entry : sequenceList) rack.sequences.push_back(entry.sequence);
+    rack.transport = transportSetup;
     for (const Slot& slot : loaded) {
         RackSlot saved = slot.saved;
         if (slot.plugin) {
@@ -315,6 +319,25 @@ bool Session::stopSequence(const std::string& id) {
     return entry != nullptr && engine.sendSequenceCommand(entry->source, SequenceCommand::Stop);
 }
 
+void Session::setTransportSettings(const TransportSettings& settings) {
+    transportSetup = settings;
+    resolveTransport();
+    sequencesDirty = dirty = true;
+}
+
+void Session::startTransport() {
+    flush();   // sequences added or edited this tick must be in the engine first
+    engine.sendTransportCommand(Engine::TransportCommand::Start);
+}
+
+void Session::stopTransport() {
+    engine.sendTransportCommand(Engine::TransportCommand::Stop);
+}
+
+bool Session::transportRunning() const noexcept {
+    return engine.transport().running;
+}
+
 void Session::stopAllSequences() {
     engine.sendSequenceCommand(kInvalidMidiSource, SequenceCommand::StopNow);
 }
@@ -332,17 +355,26 @@ double Session::sequencePosition(const std::string& id) const noexcept {
 void Session::commitSequences() {
     std::vector<CompiledSequence> compiled;
     compiled.reserve(sequenceList.size());
+    // A trigger whose input didn't resolve hears nothing.
+    auto compileTriggers = [](const std::vector<SequenceTrigger>& triggers, const std::vector<MidiSourceHandle>& handles,
+                              std::vector<CompiledSequence::Trigger>& out) {
+        for (std::size_t i = 0; i < triggers.size() && i < handles.size(); ++i) {
+            const SequenceTrigger& t = triggers[i];
+            if (handles[i] == kInvalidMidiSource && t.source.kind != MidiSourceRef::Kind::All) continue;
+            out.push_back(CompiledSequence::Trigger{handles[i], t.action, t.control, t.group, t.channel, t.number});
+        }
+    };
     for (const SequenceEntry& entry : sequenceList) {
         CompiledSequence c = CompiledSequence::compile(entry.sequence, entry.source, entry.runtime);
-        for (std::size_t i = 0; i < entry.sequence.triggers.size() && i < entry.triggerSources.size(); ++i) {
-            const SequenceTrigger& t      = entry.sequence.triggers[i];
-            const MidiSourceHandle source = entry.triggerSources[i];
-            if (source == kInvalidMidiSource && t.source.kind != MidiSourceRef::Kind::All) continue;   // hears nothing
-            c.triggers.push_back(CompiledSequence::Trigger{source, t.action, t.control, t.group, t.channel, t.number});
-        }
+        compileTriggers(entry.sequence.triggers, entry.triggerSources, c.triggers);
         compiled.push_back(std::move(c));
     }
-    engine.commitSequences(std::make_unique<SequenceSet>(std::move(compiled)));
+    TransportControl transport;
+    compileTriggers(transportSetup.triggers, transportTriggerSources, transport.triggers);
+    // An input that isn't connected: start on first note waits for nothing.
+    transport.startOnNote       = transportSetup.startOnNote && startOnNoteProblem.empty();
+    transport.startOnNoteSource = startOnNoteHandle;
+    engine.commitSequences(std::make_unique<SequenceSet>(std::move(compiled), std::move(transport)));
     sequencesDirty = false;
 }
 
@@ -391,9 +423,14 @@ std::shared_ptr<HostedPlugin> Session::createPlugin(const RackSlot& saved, std::
 }
 
 std::vector<std::string> Session::resolveTriggers(SequenceEntry& entry) {
+    return resolveTriggerList(entry.sequence.triggers, entry.triggerSources);
+}
+
+std::vector<std::string> Session::resolveTriggerList(const std::vector<SequenceTrigger>& triggers,
+                                                     std::vector<MidiSourceHandle>&      handles) {
     std::vector<std::string> problems;
-    entry.triggerSources.clear();
-    for (const SequenceTrigger& t : entry.sequence.triggers) {
+    handles.clear();
+    for (const SequenceTrigger& t : triggers) {
         MidiSourceHandle handle = kInvalidMidiSource;   // All: any input
         if (t.source.kind == MidiSourceRef::Kind::Sequence) {
             problems.push_back("a sequence can't trigger one");
@@ -402,7 +439,20 @@ std::vector<std::string> Session::resolveTriggers(SequenceEntry& entry) {
             handle = resolve(t.source, problem);
             if (handle == kInvalidMidiSource) problems.push_back(problem);
         }
-        entry.triggerSources.push_back(handle);
+        handles.push_back(handle);
+    }
+    return problems;
+}
+
+// The transport's triggers and start-on-note input, resolved like a sequence's.
+std::vector<std::string> Session::resolveTransport() {
+    std::vector<std::string> problems = resolveTriggerList(transportSetup.triggers, transportTriggerSources);
+    startOnNoteHandle                 = kInvalidMidiSource;   // any input
+    startOnNoteProblem.clear();
+    const MidiSourceRef& from = transportSetup.startOnNoteSource;
+    if (transportSetup.startOnNote && from.kind != MidiSourceRef::Kind::All) {
+        startOnNoteHandle = resolve(from, startOnNoteProblem);
+        if (startOnNoteHandle == kInvalidMidiSource) problems.push_back("start on first note: " + startOnNoteProblem);
     }
     return problems;
 }

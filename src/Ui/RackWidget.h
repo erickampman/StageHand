@@ -21,6 +21,20 @@ public:
     void showNotice(const std::string& text, double now);
     // Opens (or raises) a sequence's editor window; set by RackUi.
     std::function<void(const std::string& sequenceId)> openSequenceEditor;
+    // Shows the desktop's file chooser (a folder to open, or a path to save
+    // to, with `name` suggested); `chosen` runs only if a path is chosen. Set
+    // by RackUi.
+    std::function<void(bool save, const std::string& title, const std::string& folder, const std::string& name,
+                       std::function<void(const std::string& path)> chosen)>
+        chooseFile;
+
+    // New, Open, Save, Save As, Quit: from the File menu and keys, and Quit
+    // when the window is closed. New, Open and Quit ask first if an untitled
+    // rack has changes.
+    enum class FileAction { New, Open, Save, SaveAs, Quit };
+    void fileAction(FileAction action);
+    // Another rack replaced the running one: close menus and panels.
+    void rackReplaced();
 
 protected:
     void draw() override;
@@ -62,6 +76,11 @@ private:
     void openSourceMenu(const RowModel& row, float x, float y);
     void openRowMenu(const RowModel& row, float x, float y);
     void openAddMenu(float x, float y);
+    void openFileMenu(float x, float y);
+    void openTransportMenu(float x, float y);
+    void proceed(FileAction action);
+    void saveAsThen(std::function<void()> then);
+    std::string startFolder() const;
     const RowModel* rowById(const std::string& id) const;   // the current model's row, at event time
     // Filter edits go through here, so the filter panel shows them before the
     // next model rebuild.

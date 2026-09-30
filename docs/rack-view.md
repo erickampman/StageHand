@@ -239,6 +239,38 @@ Constraints carried from the spike and the DGL notes in architecture.md:
 - Stage-first drawing: large type, high contrast, and a UI scale factor
   (HiDPI and a "big" mode).
 
+## 7. Files: New, Open, Save, Save As (2026-09-30)
+
+The rack window's **File** button opens a menu: New rack, Open..., Save and
+Save As.... Keys: Ctrl-N, Ctrl-O, Ctrl-S (Ctrl-Shift-S also saves, as in
+plugin editor windows) and Ctrl-Q.
+
+- **Titled and untitled.** A rack has a path (its bundle) or is untitled: the
+  no-argument start, a `--plugin` session, or after New. Save writes to the
+  path; for an untitled rack it's Save As. The status bar says which.
+- **Switching racks** (New, Open) saves a titled rack first, just as quitting
+  does, then loads the new one while audio keeps running (Session::load's
+  rules). Plugin and sequence editor windows close, and MIDI learn is
+  cancelled. If the save fails, nothing changes.
+- **Untitled changes are asked about.** New, Open, Ctrl-Q and closing the window
+  ask "Keep the changes to Untitled?": Save As... (then carry on), Discard or
+  Quit without saving, or Cancel. Ctrl-C in the terminal and Ctrl-Q in a
+  plugin editor window don't ask.
+- **Save As** adds `.rack` if it's missing, and the rack takes the file's name.
+  An existing rack there is replaced only after "Replace the existing rack
+  X?"; anything else there is never replaced. The same rules back
+  `--save-rack` (Session/RackFile.h, `classifySaveTarget`).
+- **Open** takes the `.rack` folder (or its rack.json). A file that isn't a
+  rack, or doesn't load, leaves the running rack alone, with a notice.
+- **`--no-save-rack`:** Save and Save As are disabled, and switching racks
+  discards changes without asking (saving was turned off on purpose).
+- **The chooser** is the desktop's own, run as a separate process
+  (App/FileDialog: zenity, or kdialog on KDE), so the main loop never waits
+  on it. DPF's built-in browser was the first plan, but it can't choose a
+  folder or suggest a name when saving, and its X11 fallback can't save. It
+  starts beside the current rack, else in `~/Racks`, else in your home
+  folder. Without zenity or kdialog, the status bar says what to install.
+
 ## Review decisions (2026-09-28)
 
 1. Add and remove are in v1, with a plain list of scanned plugins.
