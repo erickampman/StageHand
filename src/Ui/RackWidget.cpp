@@ -283,6 +283,46 @@ void RackWidget::drawTransport(float x) {
         fill(!lit ? kTrack : b == 0 ? kAmber : kGreen);   // the downbeat stands out
         NanoVG::fill();
     }
+
+    // "⋮" after the lights: what they and the click count, and the click. Its
+    // dots are blue while the click plays, amber if it's on but its output
+    // isn't there.
+    const float dotsX = sigX + 60.0f, moreX = sigX + 62.0f + static_cast<float>(beats) * spacing;
+    for (int i = -1; i <= 1; ++i) {
+        beginPath();
+        circle(moreX + 6.0f, kToolbarH / 2 + static_cast<float>(i) * 6.0f, 2.0f);
+        fill(!t.click ? kText : t.clickConnected ? kAccent : kAmber);
+        NanoVG::fill();
+    }
+    region(dotsX, 8.0f, moreX + 14.0f - dotsX, 28.0f, [this, moreX](const Press&) { openMetronomeMenu(moreX, kToolbarH); });
+}
+
+// The lights' count, and the click: on, level, and its output device.
+void RackWidget::openMetronomeMenu(float x, float y) {
+    controller.refreshPlaybackDevices();   // devices come and go
+    const TransportModel& t = controller.view().transport;
+    Menu                  m;
+    m.x     = x;
+    m.y     = y;
+    m.w     = 330.0f;
+    m.title = "Beat lights and click";
+    m.items.push_back(MenuItem{"Count the beats (6/8: 2, 7/8: 7)", [this] { controller.setMetronomeCount(false); },
+                               !t.everyNote});
+    m.items.push_back(MenuItem{"Count every note (6/8: 6)", [this] { controller.setMetronomeCount(true); }, t.everyNote});
+    m.items.push_back(MenuItem{"Click", [this, on = t.click] { controller.setClick(!on); }, t.click});
+    for (const float db : {-24.0f, -18.0f, -12.0f, -6.0f, 0.0f})
+        m.items.push_back(MenuItem{"Click level " + std::to_string(static_cast<int>(db)) + " dB",
+                                   [this, db] { controller.setClickLevel(db); }, std::fabs(t.clickLevelDb - db) < 0.5f});
+    bool listed = false;
+    for (const std::string& device : t.playbackDevices) {
+        listed = listed || device == t.clickOutput;
+        m.items.push_back(MenuItem{"Click output: " + device, [this, device] { controller.setClickOutput(device); },
+                                   device == t.clickOutput});
+    }
+    if (!t.clickOutput.empty() && !listed)
+        m.items.push_back(MenuItem{"Click output: " + t.clickOutput + " (not connected)", {}, true});
+    if (t.playbackDevices.empty()) m.items.push_back(MenuItem{"No playback devices found", {}});
+    openMenu(std::move(m));
 }
 
 void RackWidget::drawRow(const RowModel& row, std::size_t index) {

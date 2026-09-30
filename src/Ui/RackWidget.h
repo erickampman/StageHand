@@ -78,6 +78,7 @@ private:
     void openAddMenu(float x, float y);
     void openFileMenu(float x, float y);
     void openTransportMenu(float x, float y);
+    void openMetronomeMenu(float x, float y);
     void proceed(FileAction action);
     void saveAsThen(std::function<void()> then);
     std::string startFolder() const;

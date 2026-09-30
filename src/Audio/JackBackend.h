@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "Audio/AudioBackend.h"
+#include "Audio/AuxRouting.h"
 
 typedef struct _jack_client jack_client_t;
 typedef struct _jack_port   jack_port_t;
@@ -23,7 +24,7 @@ namespace stagehand {
 // buffer size can change while running, in both directions (a forced quantum
 // applies at activation; other clients can change the graph); config() always
 // reports the current value, and the engine never assumes a fixed block size.
-class JackBackend final : public AudioBackend {
+class JackBackend final : public AudioBackend, public AuxRouting {
 public:
     // `connectToSystem`: on start(), connect our ports to the system's physical
     // playback/capture ports. JACK-specific, so it lives here rather than in
@@ -47,6 +48,12 @@ public:
     AudioConfig config() const override;
     const char* name() const override { return "JACK"; }
 
+    // --- AuxRouting: physical playback ports, grouped by device (client name).
+    std::vector<PlaybackDevice> playbackDevices() override;
+    bool                        connectAux(const PlaybackDevice& device) override;
+    void                        disconnectAux() override;
+    bool                        takeDevicesChanged() override;
+
     // --- diagnostics (any thread) ---
     std::uint64_t xrunCount() const noexcept { return xruns.load(std::memory_order_relaxed); }
     bool          serverShutDown() const noexcept { return shutDown.load(std::memory_order_relaxed); }
@@ -67,6 +74,7 @@ private:
     static int  bufferSizeCallback(std::uint32_t nframes, void* arg);
     static int  xrunCallback(void* arg);
     static void shutdownCallback(void* arg);
+    static void portRegistrationCallback(std::uint32_t port, int registered, void* arg);
 
     void connectToSystemPorts();
 
@@ -76,10 +84,12 @@ private:
     jack_client_t*            client = nullptr;
     std::vector<jack_port_t*> inputPorts;
     std::vector<jack_port_t*> outputPorts;
+    std::vector<jack_port_t*> auxPorts;
 
     // Sized at open() so the RT callback never allocates.
     std::vector<const float*> inputPointers;
     std::vector<float*>       outputPointers;
+    std::vector<float*>       auxPointers;
 
     AudioProcessor* processor = nullptr;
     AudioConfig     negotiatedConfig;
@@ -91,6 +101,7 @@ private:
     std::atomic<std::int64_t>  frameCounter{0};     // written only by the RT thread
     std::atomic<std::uint64_t> xruns{0};
     std::atomic<bool>          shutDown{false};
+    std::atomic<bool>          devicesChanged{false};   // set by JACK's notification thread
 };
 
 } // namespace stagehand

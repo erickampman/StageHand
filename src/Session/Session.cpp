@@ -48,6 +48,8 @@ bool Session::load(const Rack& rack, double rate, LoadReport& report) {
             report.warnings.push_back("sequence '" + seq.id + "': a MIDI trigger won't act: " + problem);
     }
     transportSetup = rack.transport;
+    metronomeSetup = rack.metronome;
+    applyMetronome();
     for (const std::string& problem : resolveTransport())
         report.warnings.push_back("transport: a MIDI control won't act: " + problem);
 
@@ -104,6 +106,7 @@ Rack Session::capture() const {
     rack.timeSigDenominator = sigDenominator;
     for (const SequenceEntry& entry : sequenceList) rack.sequences.push_back(entry.sequence);
     rack.transport = transportSetup;
+    rack.metronome = metronomeSetup;
     for (const Slot& slot : loaded) {
         RackSlot saved = slot.saved;
         if (slot.plugin) {
@@ -323,6 +326,16 @@ void Session::setTransportSettings(const TransportSettings& settings) {
     transportSetup = settings;
     resolveTransport();
     sequencesDirty = dirty = true;
+}
+
+void Session::setMetronome(const MetronomeSettings& settings) {
+    metronomeSetup = settings;
+    applyMetronome();
+    dirty = true;
+}
+
+void Session::applyMetronome() {
+    engine.setClick(metronomeSetup.click, metronomeSetup.everyNote, dbToGain(metronomeSetup.clickLevelDb));
 }
 
 void Session::startTransport() {

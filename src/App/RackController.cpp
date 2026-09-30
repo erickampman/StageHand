@@ -1,7 +1,9 @@
 #include "App/RackController.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <cstring>
 
 #include "Core/Ump.h"
 #include "Session/RackFile.h"
@@ -17,13 +19,57 @@ SourceProtocol toSourceProtocol(MidiProtocol p) {
     return p == MidiProtocol::Midi2 ? SourceProtocol::Midi2 : SourceProtocol::Midi1;
 }
 
+// "Scarlett 2i2 USB 2" -> "Scarlett 2i2 USB": PipeWire's number for a second alike device.
+std::string withoutNumber(const std::string& name) {
+    std::size_t end = name.size();
+    while (end > 0 && std::isdigit(static_cast<unsigned char>(name[end - 1]))) --end;
+    return end < name.size() && end > 0 && name[end - 1] == ' ' ? name.substr(0, end - 1) : name;
+}
+
+// The card without its profile: "Built-in Audio Analog Stereo" -> "Built-in Audio".
+std::string cardOf(const std::string& name) {
+    const std::string plain = withoutNumber(name);
+    std::size_t       cut   = plain.size();
+    for (const char* profile : {" Analog", " Digital", " Pro", " Multichannel", " Mono", " Stereo", " Surround"}) {
+        for (std::size_t at = plain.find(profile); at != std::string::npos; at = plain.find(profile, at + 1)) {
+            const std::size_t after = at + std::strlen(profile);
+            if (after == plain.size() || plain[after] == ' ' || plain[after] == '(') {
+                cut = std::min(cut, at);
+                break;
+            }
+        }
+    }
+    return plain.substr(0, cut);
+}
+
+bool digitalOut(const std::string& name) {
+    return name.find("Digital") != std::string::npos || name.find("HDMI") != std::string::npos ||
+           name.find("IEC958") != std::string::npos;
+}
+
 } // namespace
+
+int findPlaybackDevice(const std::string& saved, const std::vector<PlaybackDevice>& devices) {
+    if (saved.empty()) return -1;
+    for (std::size_t i = 0; i < devices.size(); ++i)
+        if (devices[i].name == saved) return static_cast<int>(i);
+    for (std::size_t i = 0; i < devices.size(); ++i)
+        if (withoutNumber(devices[i].name) == withoutNumber(saved)) return static_cast<int>(i);
+    int found = -1;
+    for (std::size_t i = 0; i < devices.size(); ++i) {
+        if (cardOf(devices[i].name) != cardOf(saved) || digitalOut(devices[i].name) != digitalOut(saved)) continue;
+        if (found >= 0) return -1;   // two candidates: don't guess
+        found = static_cast<int>(i);
+    }
+    return found;
+}
 
 RackController::RackController(Session& runningSession, Engine& runningEngine, MidiInput& midiInput,
                                PluginFactory& pluginFactory, Config appConfig)
     : session(runningSession), engine(runningEngine), midi(midiInput), factory(pluginFactory),
       config(std::move(appConfig)) {
     target = config.saveTarget;
+    routeClick(true);
     refreshSources();
     tick(0.0);
 }
@@ -59,17 +105,16 @@ void RackController::tick(double now) {
     transport.numerator    = session.timeSigNumerator();
     transport.denominator  = session.timeSigDenominator();
     transport.beatPosition = clock.beatPosition;
-    // The lights show the beats a player counts. Compound meters (6/8, 9/8,
-    // 12/8, and the same over 16) count dotted beats, three notes each; any
-    // other meter counts its notes (7/8: seven). A light stays lit for 0.15 of
-    // a quarter note, or of the beat if that's longer, so a quick eighth still
+    // The lights (and the click) count metronomePulse()s: the counted beats,
+    // or every note if the rack says so. A light stays lit for 0.15 of a
+    // quarter note, or of the pulse if that's longer, so a quick eighth still
     // shows.
-    const bool   compound = transport.denominator >= 8 && transport.numerator > 3 && transport.numerator % 3 == 0;
-    const int    perBeat  = compound ? 3 : 1;
-    const double beatLen  = perBeat * 4.0 / transport.denominator;   // in quarter notes
+    const MetronomePulse pulse =
+        metronomePulse(transport.numerator, transport.denominator, session.metronome().everyNote);
+    const double beatLen  = pulse.beats;   // in quarter notes
     const double intoBar  = std::max(0.0, clock.beatPosition - clock.barStartBeats);
     const int    beat     = static_cast<int>(std::floor(intoBar / beatLen + 1e-9));
-    transport.beatsInBar  = transport.numerator / perBeat;
+    transport.beatsInBar  = pulse.perBar;
     transport.beatInBar   = std::clamp(beat, 0, std::max(0, transport.beatsInBar - 1));
     transport.running     = clock.running;
     transport.onBeat      = clock.running && intoBar - beat * beatLen < 0.15 * std::max(beatLen, 1.0);
@@ -87,6 +132,14 @@ void RackController::tick(double now) {
     transport.learningAction       = learningAction;
     transport.startOnNote          = settings.startOnNote ? sourceLabel(settings.startOnNoteSource) : std::string{};
     transport.startOnNoteConnected = session.startOnNoteIssue().empty();
+    if (config.clickRouting != nullptr && config.clickRouting->takeDevicesChanged()) routeClick(true);   // hot-plug
+    const MetronomeSettings& metronome = session.metronome();
+    transport.everyNote       = metronome.everyNote;
+    transport.click           = metronome.click;
+    transport.clickLevelDb    = metronome.clickLevelDb;
+    transport.clickOutput     = metronome.clickOutput;
+    transport.clickConnected  = !clickDevice.empty();
+    transport.playbackDevices = deviceNames;
     model.rows.clear();
     for (const Session::Slot& slot : session.slots()) model.rows.push_back(rowFor(slot, now, dt));
     // Forget rows that are gone.
@@ -531,6 +584,77 @@ void RackController::setSequenceAtStart(const std::string& id, bool atStart) {
     editSequence(id, [atStart](Sequence& seq) { seq.atStart = atStart; });
 }
 
+void RackController::setMetronome(const MetronomeSettings& settings) {
+    session.setMetronome(settings);
+    routeClick(true);
+}
+
+void RackController::setMetronomeCount(bool everyNote) {
+    MetronomeSettings m = session.metronome();
+    m.everyNote         = everyNote;
+    setMetronome(m);
+}
+
+void RackController::setClick(bool on) {
+    MetronomeSettings m = session.metronome();
+    m.click             = on;
+    if (on && m.clickOutput.empty()) notice("Click: choose its output in the same menu (not the main outputs' device)");
+    setMetronome(m);
+}
+
+void RackController::setClickLevel(float db) {
+    MetronomeSettings m = session.metronome();
+    m.clickLevelDb      = std::clamp(db, -60.0f, 0.0f);
+    setMetronome(m);
+}
+
+void RackController::setClickOutput(const std::string& device) {
+    MetronomeSettings m = session.metronome();
+    m.clickOutput       = device;
+    clickMissing        = false;   // a new choice: report afresh
+    setMetronome(m);
+}
+
+void RackController::refreshPlaybackDevices() {
+    deviceNames.clear();
+    if (config.clickRouting == nullptr) return;
+    for (const PlaybackDevice& d : config.clickRouting->playbackDevices()) deviceNames.push_back(d.name);
+    model.transport.playbackDevices = deviceNames;
+}
+
+// Never the main outputs by default: a click the audience hears is worse than
+// none. A missing device leaves it unconnected, and it connects when it appears.
+void RackController::routeClick(bool report) {
+    AuxRouting* const        routing = config.clickRouting;
+    const MetronomeSettings& m       = session.metronome();
+    if (routing == nullptr) return;
+    if (!m.click || m.clickOutput.empty()) {
+        if (!clickDevice.empty()) routing->disconnectAux();
+        clickDevice.clear();
+        clickMissing = false;
+        return;
+    }
+    const std::vector<PlaybackDevice> devices = routing->playbackDevices();
+    const int                         i       = findPlaybackDevice(m.clickOutput, devices);
+    if (i < 0) {
+        if (!clickDevice.empty()) routing->disconnectAux();
+        clickDevice.clear();
+        if (report && !clickMissing)
+            notice("Click: its output '" + m.clickOutput + "' isn't connected; the click is silent until it is");
+        clickMissing = true;
+        return;
+    }
+    const PlaybackDevice& device = devices[static_cast<std::size_t>(i)];
+    if (device.name == clickDevice) return;
+    if (!routing->connectAux(device)) {
+        notice("Click: couldn't connect to " + device.name);
+        return;
+    }
+    if (clickMissing || device.name != m.clickOutput) notice("Click: playing on " + device.name);
+    clickDevice  = device.name;
+    clickMissing = false;
+}
+
 void RackController::startTransport() {
     session.startTransport();
 }
@@ -723,6 +847,7 @@ bool RackController::replaceRack(const Rack& rack, const std::string& path, cons
     Session::LoadReport report;
     session.load(rack, session.loadedSampleRate(), report);
     target = path;
+    routeClick(true);
     ++generation;
     for (const std::string& warning : warnings) notice(warning);
     for (const std::string& warning : report.warnings) notice(warning);

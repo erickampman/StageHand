@@ -144,6 +144,10 @@ public:
     void stopTransport();
     bool transportRunning() const noexcept;   // as of the last audio block
     const TransportSettings& transportSettings() const noexcept { return transportSetup; }
+    // The beat lights' count and the click, applied to the engine at once (the
+    // click's output device is the app's business: RackController routes it).
+    const MetronomeSettings& metronome() const noexcept { return metronomeSetup; }
+    void setMetronome(const MetronomeSettings& settings);
     void setTransportSettings(const TransportSettings& settings);
     // transportSettings().triggers' inputs, resolved (as SequenceEntry::triggerSources).
     const std::vector<MidiSourceHandle>& transportTriggerHandles() const noexcept { return transportTriggerSources; }
@@ -204,6 +208,8 @@ private:
     std::vector<SequenceEntry>              sequenceList;
     MidiSourceHandle                        nextSequenceSource = kSequenceSourceBase + 1;
     TransportSettings                       transportSetup;
+    MetronomeSettings                       metronomeSetup;
+    void                                    applyMetronome();
     std::vector<MidiSourceHandle>           transportTriggerSources;
     MidiSourceHandle                        startOnNoteHandle = kInvalidMidiSource;
     std::string                             startOnNoteProblem;

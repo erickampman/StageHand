@@ -69,6 +69,10 @@ Rack sampleRack() {
     line.protocol = MidiProtocol::Midi1;
     line.notes    = {{0, 1, 36, 100}};
     rack.sequences = {arp, line};
+    rack.metronome.everyNote         = true;
+    rack.metronome.click             = true;
+    rack.metronome.clickLevelDb      = -18.0f;
+    rack.metronome.clickOutput       = "Built-in Audio Analog Stereo";
     rack.transport.triggers          = {pedal};
     rack.transport.startOnNote       = true;
     rack.transport.startOnNoteSource = MidiSourceRef{MidiSourceRef::Kind::Virtual, "MIDI 2.0 In"};
@@ -141,6 +145,7 @@ void testRoundTrip(const fs::path& dir) {
         CHECK(b.id == "bass-line" && b.protocol == MidiProtocol::Midi1 && b.rate.numerator == 4);
         CHECK(b.launch == LaunchQuantize::Bar && b.repeat && b.notes.size() == 1 && b.triggers.empty() && !b.atStart);
         CHECK(loaded.transport == sampleRack().transport && loaded.transport.startOnNote);
+        CHECK(loaded.metronome == sampleRack().metronome);
     }
     if (loaded.slots.size() != 2) return;
 
@@ -253,6 +258,9 @@ void testFailures(const fs::path& dir) {
     expectFailure(dir, "OnNote.rack",
                   R"({"format":"stagehand-rack","version":1,"slots":[],"transport":{"startOnNote":"sequence:x"}})",
                   "transport: ");
+    expectFailure(dir, "Count.rack",
+                  R"({"format":"stagehand-rack","version":1,"slots":[],"metronome":{"count":"halves"}})",
+                  "metronome: ");
     expectFailure(dir, "Fast.rack", R"({"format":"stagehand-rack","version":1,"tempo":500,"slots":[]})",
                   "20-400 BPM");
     expectFailure(dir, "Sig.rack",

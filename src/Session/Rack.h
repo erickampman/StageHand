@@ -42,6 +42,16 @@ struct TransportSettings {
     bool operator==(const TransportSettings&) const = default;
 };
 
+// The beat lights and the click (docs/sequences.md, section 7).
+struct MetronomeSettings {
+    bool        everyNote    = false;    // count every note (6/8: six), not the counted beats (6/8: two)
+    bool        click        = false;
+    float       clickLevelDb = -12.0f;
+    std::string clickOutput;             // a playback device, by name; "" = none chosen
+
+    bool operator==(const MetronomeSettings&) const = default;
+};
+
 // A complete setup (docs/rack-format.md). Its sequences are kept separate from
 // `slots` because a sequence is a MIDI source, not something that makes sound.
 struct Rack {
@@ -52,6 +62,7 @@ struct Rack {
     std::vector<RackSlot> slots;
     std::vector<Sequence> sequences;
     TransportSettings     transport;
+    MetronomeSettings     metronome;
 };
 
 // A slot id from a display name: lowercase letters and digits, other runs of

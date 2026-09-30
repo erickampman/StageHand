@@ -119,6 +119,7 @@ get a **layer**.
 | `slots` | yes | Plugin slots, in order |
 | `sequences` | no | The rack's step sequences; see "Sequences" |
 | `transport` | no | The transport's MIDI control; see "Transport" |
+| `metronome` | no | What the beat lights and click count, and the click; see "Metronome" |
 
 ### Slot
 
@@ -255,6 +256,21 @@ control:
 |---|---|---|
 | `triggers` | `[]` | As a sequence's triggers ("Triggers"); the action starts or stops the transport |
 | `startOnNote` | `"off"` | While stopped, the first note-on from this input starts it: `"off"`, `"all"` (any input), `"device:<id>"` or `"virtual:<name>"`. The note still plays |
+
+Written only when it differs from the defaults.
+
+## Metronome
+
+```json
+"metronome": {"count": "beats", "click": true, "clickLevel": -12, "clickOutput": "Built-in Audio Analog Stereo"}
+```
+
+| Field | Default | Meaning |
+|---|---|---|
+| `count` | `"beats"` | `"beats"`: the counted beats (6/8: 2, 7/8: 7); `"notes"`: every note (6/8: 6) |
+| `click` | `false` | The click, on its own outputs |
+| `clickLevel` | `-12` | dB, -60 to 0 |
+| `clickOutput` | `""` | The playback device it's connected to, by the name PipeWire shows. Missing: see docs/sequences.md, section 7 (never the main outputs) |
 
 Written only when it differs from the defaults.
 

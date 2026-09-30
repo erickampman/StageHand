@@ -28,4 +28,19 @@ struct TimeInfo {
     std::int64_t loopEnd   = 0;
 };
 
+// What the beat lights and the click count in a bar (docs/sequences.md,
+// section 7). Counted beats: a compound meter (6/8, 9/8, 12/8, and the same
+// over 16) counts dotted beats of three notes; any other meter counts its
+// notes (7/8: seven). Every note: always the numerator (6/8: six).
+struct MetronomePulse {
+    int    perBar = 4;     // pulses in a bar
+    double beats  = 1.0;   // one pulse's length, in quarter notes
+};
+constexpr MetronomePulse metronomePulse(int numerator, int denominator, bool everyNote) noexcept {
+    if (numerator < 1 || denominator < 1) return {};
+    const bool compound = !everyNote && denominator >= 8 && numerator > 3 && numerator % 3 == 0;
+    const int  notes    = compound ? 3 : 1;
+    return MetronomePulse{numerator / notes, notes * 4.0 / denominator};
+}
+
 } // namespace stagehand

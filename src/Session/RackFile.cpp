@@ -289,6 +289,29 @@ Json transportJson(const TransportSettings& t) {
     return j;
 }
 
+// "metronome": {"count": "beats" | "notes", "click": bool, "clickLevel": dB, "clickOutput": name}.
+MetronomeSettings parseMetronome(const Json& j) {
+    if (!j.is_object()) fail("metronome should be an object");
+    MetronomeSettings m;
+    const std::string count = j.value("count", std::string("beats"));
+    if (count != "beats" && count != "notes") fail("metronome.count must be \"beats\" or \"notes\"");
+    m.everyNote    = count == "notes";
+    m.click        = j.value("click", false);
+    m.clickLevelDb = j.value("clickLevel", -12.0f);
+    if (m.clickLevelDb < -60.0f || m.clickLevelDb > 0.0f) fail("metronome.clickLevel must be within -60 to 0 dB");
+    m.clickOutput = j.value("clickOutput", std::string());
+    return m;
+}
+
+Json metronomeJson(const MetronomeSettings& m) {
+    Json j;
+    j["count"]       = m.everyNote ? "notes" : "beats";
+    j["click"]       = m.click;
+    j["clickLevel"]  = m.clickLevelDb;
+    j["clickOutput"] = m.clickOutput;
+    return j;
+}
+
 // "all", or a list of numbers 1-16, as a bit mask.
 std::uint16_t parseMask(const Json& value, const char* field) {
     if (value.is_string() && value.get<std::string>() == "all") return 0xFFFF;
@@ -448,6 +471,13 @@ RackFileResult loadRack(const std::string& bundlePath, Rack& rack) {
                 }
             }
         }
+        if (doc.contains("metronome")) {
+            try {
+                loaded.metronome = parseMetronome(doc.at("metronome"));
+            } catch (const std::exception& e) {
+                fail(std::string("metronome: ") + e.what());
+            }
+        }
         if (doc.contains("transport")) {
             try {
                 loaded.transport = parseTransport(doc.at("transport"));
@@ -516,6 +546,7 @@ RackFileResult saveRack(const std::string& bundlePath, const Rack& rack) {
             doc["sequences"] = sequences;
         }
         if (rack.transport != TransportSettings{}) doc["transport"] = transportJson(rack.transport);
+        if (rack.metronome != MetronomeSettings{}) doc["metronome"] = metronomeJson(rack.metronome);
         {
             std::ofstream out(temp / "rack.json", std::ios::trunc);
             out << doc.dump(2) << '\n';

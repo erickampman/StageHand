@@ -104,6 +104,7 @@ bool JackBackend::open(const AudioConfig& requested, AudioConfig& negotiated) {
     jack_set_buffer_size_callback(client, &JackBackend::bufferSizeCallback, this);
     jack_set_xrun_callback(client, &JackBackend::xrunCallback, this);
     jack_on_shutdown(client, &JackBackend::shutdownCallback, this);
+    jack_set_port_registration_callback(client, &JackBackend::portRegistrationCallback, this);
 
     auto registerPorts = [this](std::uint32_t count, const char* prefix,
                                 unsigned long flags, std::vector<jack_port_t*>& ports) {
@@ -122,14 +123,29 @@ bool JackBackend::open(const AudioConfig& requested, AudioConfig& negotiated) {
         close();
         return false;
     }
+    // Aux (the click): "click_L"/"click_R" for a pair.
+    for (std::uint32_t i = 0; i < requested.auxOutputChannels; ++i) {
+        const std::string portName = requested.auxOutputChannels == 2 ? (i == 0 ? "click_L" : "click_R")
+                                                                      : "click_" + std::to_string(i + 1);
+        jack_port_t* port = jack_port_register(client, portName.c_str(), JACK_DEFAULT_AUDIO_TYPE, JackPortIsOutput, 0);
+        if (port == nullptr) break;
+        auxPorts.push_back(port);
+    }
+    if (auxPorts.size() != requested.auxOutputChannels) {
+        std::fprintf(stderr, "JackBackend: port registration failed\n");
+        close();
+        return false;
+    }
     inputPointers.assign(inputPorts.size(), nullptr);
     outputPointers.assign(outputPorts.size(), nullptr);
+    auxPointers.assign(auxPorts.size(), nullptr);
 
     // The server owns rate and buffer size: report what it runs, not the request.
     negotiatedConfig.sampleRate     = jack_get_sample_rate(client);
     negotiatedConfig.bufferSize     = jack_get_buffer_size(client);
     negotiatedConfig.inputChannels  = static_cast<std::uint32_t>(inputPorts.size());
     negotiatedConfig.outputChannels = static_cast<std::uint32_t>(outputPorts.size());
+    negotiatedConfig.auxOutputChannels = static_cast<std::uint32_t>(auxPorts.size());
     currentBufferSize.store(negotiatedConfig.bufferSize, std::memory_order_relaxed);
 
     if (requested.sampleRate != 0.0 && requested.sampleRate != negotiatedConfig.sampleRate)
@@ -179,14 +195,59 @@ void JackBackend::close() {
     }
     inputPorts.clear();
     outputPorts.clear();
+    auxPorts.clear();
     inputPointers.clear();
     outputPointers.clear();
+    auxPointers.clear();
 }
 
 AudioConfig JackBackend::config() const {
     AudioConfig current = negotiatedConfig;
     current.bufferSize  = currentBufferSize.load(std::memory_order_relaxed);
     return current;
+}
+
+// --- AuxRouting ------------------------------------------------------------------
+
+std::vector<PlaybackDevice> JackBackend::playbackDevices() {
+    std::vector<PlaybackDevice> devices;
+    if (client == nullptr) return devices;
+    const char** ports = jack_get_ports(client, nullptr, JACK_DEFAULT_AUDIO_TYPE, JackPortIsPhysical | JackPortIsInput);
+    if (ports == nullptr) return devices;
+    for (std::size_t i = 0; ports[i] != nullptr; ++i) {
+        const std::string full  = ports[i];
+        const std::size_t colon = full.find(':');
+        const std::string name  = full.substr(0, colon);
+        auto it = std::find_if(devices.begin(), devices.end(), [&](const PlaybackDevice& d) { return d.name == name; });
+        if (it == devices.end()) it = devices.insert(devices.end(), PlaybackDevice{name, {}});
+        it->ports.push_back(full);
+    }
+    jack_free(ports);
+    return devices;
+}
+
+bool JackBackend::connectAux(const PlaybackDevice& device) {
+    if (client == nullptr || !running || device.ports.empty()) return false;
+    disconnectAux();
+    bool ok = true;
+    for (std::size_t i = 0; i < auxPorts.size(); ++i) {
+        const std::string& to = device.ports[std::min(i, device.ports.size() - 1)];
+        ok = jack_connect(client, jack_port_name(auxPorts[i]), to.c_str()) == 0 && ok;
+    }
+    return ok;
+}
+
+void JackBackend::disconnectAux() {
+    if (client == nullptr) return;
+    for (jack_port_t* port : auxPorts) jack_port_disconnect(client, port);
+}
+
+bool JackBackend::takeDevicesChanged() {
+    return devicesChanged.exchange(false, std::memory_order_relaxed);
+}
+
+void JackBackend::portRegistrationCallback(std::uint32_t, int, void* arg) {
+    static_cast<JackBackend*>(arg)->devicesChanged.store(true, std::memory_order_relaxed);
 }
 
 void JackBackend::connectToSystemPorts() {
@@ -228,6 +289,8 @@ int JackBackend::processCallback(std::uint32_t nframes, void* arg) {
     for (std::size_t i = 0; i < self->outputPorts.size(); ++i)
         self->outputPointers[i] =
             static_cast<float*>(jack_port_get_buffer(self->outputPorts[i], nframes));
+    for (std::size_t i = 0; i < self->auxPorts.size(); ++i)
+        self->auxPointers[i] = static_cast<float*>(jack_port_get_buffer(self->auxPorts[i], nframes));
 
     const std::int64_t position = self->frameCounter.load(std::memory_order_relaxed);
 
@@ -251,11 +314,14 @@ int JackBackend::processCallback(std::uint32_t nframes, void* arg) {
                                   static_cast<std::uint32_t>(self->inputPointers.size()), nframes};
     ctx.output = AudioBuffer{self->outputPointers.data(),
                              static_cast<std::uint32_t>(self->outputPointers.size()), nframes};
+    ctx.aux    = AudioBuffer{self->auxPointers.data(), static_cast<std::uint32_t>(self->auxPointers.size()), nframes};
 
     if (self->processor != nullptr) {
         self->processor->process(ctx);
     } else {
         for (float* channel : self->outputPointers)
+            std::fill_n(channel, nframes, 0.0f);
+        for (float* channel : self->auxPointers)
             std::fill_n(channel, nframes, 0.0f);
     }
 

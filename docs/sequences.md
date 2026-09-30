@@ -329,26 +329,42 @@ Implemented 2026-09-30 (milestone 6):
 - tests/SequenceTests.cpp checks the sample positions (a sequence starting the
   transport, At Start, a transport trigger's frame, start on first note).
 
-### The click (milestone 2)
+### The beat lights and the click (milestone 7)
 
-- Its own output pair, `click_L`/`click_R`, never mixed into the main outputs,
-  connected to a playback device chosen in the rack window (e.g. the laptop's
-  headphone jack while the mains go to an interface).
-- A short synthesized blip, higher on the downbeat, on the counted beats (the
-  lights' rule: 6/8 clicks twice a bar). Only while running. Level and on/off.
-- Saved in the rack: `"click": {"on": true, "level": -12, "output": {...}}`,
-  where the output names the device by its PipeWire node name and its
-  description.
+- **What they count** (the "⋮" after the lights, saved in the rack): the
+  counted beats (a compound meter counts dotted beats: 6/8 two, 9/8 three,
+  12/8 four; any other meter its notes: 7/8 seven), or every note (6/8 six).
+  One rule for both, `metronomePulse()` in Core/TimeInfo.h.
+- **The click** has its own output pair, `click_L`/`click_R`, never mixed into
+  the main outputs and never connected automatically. The same menu turns it
+  on, sets its level (-24 to 0 dB), and chooses its output: any playback
+  device (e.g. the laptop's headphone jack while the mains go to an
+  interface). A short sine blip (30 ms, 6 ms decay), 1600 Hz on the downbeat
+  and 1000 Hz on the other pulses, placed to the sample, only while the
+  transport runs. The ⋮ is blue while it plays, amber when its output is
+  missing.
+- **Naming the device.** PipeWire's JACK layer shows a device only by its
+  description ("Built-in Audio Analog Stereo"; no node name or alias), so
+  that's what's saved.
 - **A missing output device** (another machine, an unplugged interface):
-  1. Match by node name, then by description (USB node names can change
-     between ports), then by the same device on another port.
-  2. Otherwise the click is not connected anywhere. It never falls back to the
-     main outputs: a click in the PA is worse than no click. The Click button
-     shows amber, the load warns, and the setting is kept unchanged.
-  3. When the device appears (hot-plug), the click connects to it.
-- A device on another clock than the mains is bridged by PipeWire's resampler:
-  a few ms of latency on the click, fine for a click.
+  1. the same name; else
+  2. the same name without the " 2" PipeWire adds to tell two alike devices
+     apart; else
+  3. the same card under another profile ("Scarlett 2i2 USB Analog Stereo" vs
+     "Scarlett 2i2 USB Pro"), only if exactly one device matches and it's the
+     same kind: an analog output never finds an HDMI or digital one, which
+     could feed the PA.
+  4. Otherwise the click is connected nowhere. It never falls back to the main
+     outputs: a click in the PA is worse than no click. The status bar says so
+     once, the setting is kept, and when the device appears (hot-plug: JACK's
+     port registration), it connects.
+- A device on another clock than the mains is bridged by PipeWire's
+  resampler: a few ms of latency on the click, fine for a click.
 - Later: a count-in bar, MIDI click out, MIDI clock out.
+- Implemented 2026-09-30: `Engine::setClick()`, `AudioConfig::auxOutputChannels`
+  and `AuxRouting` (JackBackend), `findPlaybackDevice()` and the routing in
+  RackController; tests in EngineTests (timing, pitch, counts) and
+  RackControllerTests (matching, hot-plug).
 
 ## Proposed milestones
 

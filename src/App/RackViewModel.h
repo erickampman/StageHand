@@ -95,6 +95,14 @@ struct TransportModel {
     SequenceTrigger::Action  learningAction = SequenceTrigger::Action::Toggle;
     std::string              startOnNote;
     bool                     startOnNoteConnected = true;
+
+    // The lights' count and the click.
+    bool                     everyNote      = false;
+    bool                     click          = false;
+    float                    clickLevelDb   = -12.0f;
+    std::string              clickOutput;              // chosen device; "" = none
+    bool                     clickConnected = false;   // to it, now
+    std::vector<std::string> playbackDevices;          // as of refreshPlaybackDevices()
 };
 
 // One sequence in the sources dock (docs/sequences.md, section 4).

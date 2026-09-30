@@ -10,12 +10,21 @@
 #include <vector>
 
 #include "App/RackViewModel.h"
+#include "Audio/AuxRouting.h"
 #include "Engine/Engine.h"
 #include "Midi/MidiInput.h"
 #include "Plugin/PluginFactory.h"
 #include "Session/Session.h"
 
 namespace stagehand {
+
+// Which of `devices` a saved click output means (docs/sequences.md, section 7),
+// or -1: the same name; else the same name without the " 2" PipeWire adds to
+// tell two alike apart; else the same card under another profile ("Scarlett
+// 2i2 USB Analog Stereo" -> "Scarlett 2i2 USB Pro"), if exactly one matches and
+// it's the same kind (analog, or digital/HDMI: never HDMI for analog, which
+// could be the PA).
+int findPlaybackDevice(const std::string& saved, const std::vector<PlaybackDevice>& devices);
 
 // An open plugin editor, as the controller sees it. The app supplies these
 // (EditorWindow on X11), so the controller stays free of windowing and testable.
@@ -47,6 +56,9 @@ public:
         // StageHand's own virtual inputs (not listed by MidiInput::enumerate()).
         std::vector<std::pair<std::string, MidiProtocol>> virtualInputs;
         MidiProtocol protocolPreference = MidiProtocol::Midi2;
+
+        // Where the click's outputs are connected (the backend); null: nowhere.
+        AuxRouting* clickRouting = nullptr;
 
         // The rack's bundle, where save() writes; empty = untitled (Save As
         // names it). `savingOff` (--no-save-rack): nothing is ever saved.
@@ -133,6 +145,13 @@ public:
     void removeTrigger(const std::string& id, std::size_t index);   // index into Sequence::triggers
     void setSequenceAtStart(const std::string& id, bool atStart);
 
+    // --- the beat lights and the click (docs/sequences.md, section 7) ---
+    void setMetronomeCount(bool everyNote);   // every note (6/8: six), or the counted beats (6/8: two)
+    void setClick(bool on);
+    void setClickLevel(float db);             // -60 to 0
+    void setClickOutput(const std::string& device);
+    void refreshPlaybackDevices();            // for the menu; call when it opens
+
     // --- the transport (docs/sequences.md, section 7) ---
     void startTransport();
     void stopTransport();
@@ -208,6 +227,10 @@ private:
     template <typename Change>
     void           editSequence(const std::string& id, Change change);
     bool           replaceRack(const Rack& rack, const std::string& path, const std::vector<std::string>& warnings);
+    void           setMetronome(const MetronomeSettings& settings);
+    // Connect the click to its saved output, if it's on and the device is
+    // there; `report`: say so when it isn't (once, until it connects).
+    void           routeClick(bool report);
     void           buildDock(double now);
     void           finishLearn(const Engine::Learned& learned);
     std::string    triggerText(const SequenceTrigger& trigger) const;
@@ -230,6 +253,9 @@ private:
     SequenceTrigger::Action                               learningAction = SequenceTrigger::Action::Toggle;
     std::string                                           target;          // the rack's bundle; "" = untitled
     std::uint64_t                                         generation = 0;  // rackGeneration()
+    std::string                                           clickDevice;     // connected to; "" = nowhere
+    bool                                                  clickMissing = false;
+    std::vector<std::string>                              deviceNames;     // playback devices, for the menu
     bool                                                  scanned  = false;
     double                                                lastTick = -1.0;
     std::vector<std::string>                              notices;

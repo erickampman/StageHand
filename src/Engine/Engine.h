@@ -145,6 +145,14 @@ public:
         bool         running       = false;
     };
     Transport transport() const noexcept;   // any thread
+
+    // --- the click (docs/sequences.md, section 7) ---
+    // A short blip on each metronome pulse (metronomePulse(): counted beats, or
+    // every note), higher on the downbeat, on the aux outputs only, while the
+    // transport runs. `gain` is linear. Main thread (atomics, read per block).
+    void setClick(bool on, bool everyNote, float gain) noexcept;
+    static constexpr double kClickSeconds = 0.03;
+    static constexpr double kClickHz[2]   = {1000.0, 1600.0};   // a beat, the downbeat
     static constexpr double kMinTempo = 20.0;
     static constexpr double kMaxTempo = 400.0;
 
@@ -207,6 +215,7 @@ private:
     void                 runSlots(const AudioCallbackContext& ctx) noexcept;
     void                 advanceTransport(const AudioCallbackContext& ctx) noexcept;
     void                 makeSequenceBlock(const AudioCallbackContext& ctx) noexcept;
+    void                 renderClick(const AudioCallbackContext& ctx) noexcept;
     void                 startTransport(const AudioCallbackContext& ctx, std::uint32_t frame) noexcept;
     void                 stopTransport(std::uint32_t frame) noexcept;
     void                 transportAction(const AudioCallbackContext& ctx, TransportCommand command,
@@ -285,7 +294,17 @@ private:
         std::int32_t barAnchor     = 0;     // the bar number at barAnchorBeat
         bool         running       = false;
         bool         stopPending   = false; // stopped in this block: back to beat 0 after it
+        std::uint32_t stopFrame    = UINT32_MAX;   // where, in this block
     } clock;                                // audio thread only
+
+    std::atomic<bool>  clickOn{false};
+    std::atomic<bool>  clickEveryNote{false};
+    std::atomic<float> clickGain{0.25f};
+    struct ClickVoice {                     // the blip sounding now (audio thread only)
+        std::uint32_t remaining = 0;
+        double        phase = 0.0, step = 0.0;
+        float         level = 0.0f, decay = 1.0f;
+    } clickVoice;
     std::atomic<bool>         publishedRunning{false};
     std::atomic<double>       publishedBeat{0.0};
     std::atomic<double>       publishedBarStart{0.0};

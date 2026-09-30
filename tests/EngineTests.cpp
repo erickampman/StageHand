@@ -2,6 +2,7 @@
 // behind), block splitting, routing through filters and dialects, output mixing,
 // and the commit / adopt / retire lifecycle. No JACK, ALSA or real plugins.
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <memory>
@@ -448,6 +449,66 @@ void testTransport() {
     engine->collect();
 }
 
+// The click: on the aux outputs only, at each pulse from the transport's start,
+// higher on the downbeat; the pulse follows the count (6/8: dotted quarters, or
+// every eighth). Off, or stopped: silence.
+void testClick() {
+    auto engine = std::make_unique<Engine>();
+    engine->commit(graphOf({}));
+    std::vector<float> aux[2] = {std::vector<float>(96000), std::vector<float>(96000)};
+    auto run = [&](std::uint32_t frames) {   // one block, aux included
+        Block  block(frames, 48000.0, T);
+        float* channels[2] = {aux[0].data(), aux[1].data()};
+        block.ctx.aux      = AudioBuffer{channels, 2, frames};
+        engine->process(block.ctx);
+    };
+    auto onsets = [&](std::uint32_t frames) {   // frames where a blip begins
+        std::vector<std::uint32_t> at;
+        for (std::uint32_t f = 0; f < frames; ++f)
+            if (aux[0][f] != 0.0f && (f == 0 || aux[0][f - 1] == 0.0f)) at.push_back(f);
+        return at;
+    };
+    auto crossings = [&](std::uint32_t from) {   // over 10 ms: about 2 per cycle
+        int n = 0;
+        for (std::uint32_t f = from + 1; f < from + 480; ++f) n += (aux[0][f - 1] < 0.0f) != (aux[0][f] < 0.0f);
+        return n;
+    };
+
+    engine->setClick(true, false, 0.5f);
+    run(48000);   // stopped: silent
+    CHECK(onsets(48000).empty());
+
+    // 4/4 at 120 BPM: a beat is 24000 frames. (The blip's first sample is
+    // sin(0) = 0, so it shows from the next frame.)
+    engine->sendTransportCommand(Engine::TransportCommand::Start);
+    run(96000);
+    CHECK((onsets(96000) == std::vector<std::uint32_t>{1, 24001, 48001, 72001}));
+    CHECK(aux[1] == aux[0]);                                      // both sides alike
+    CHECK(crossings(0) > crossings(24000) + 8);                   // the downbeat is higher
+    CHECK(std::fabs(*std::max_element(aux[0].begin(), aux[0].end())) <= 0.5f);
+
+    // 6/8, counted: a dotted quarter (36000 frames); every note: an eighth (12000).
+    engine->sendTransportCommand(Engine::TransportCommand::Stop);
+    run(480);
+    engine->setTimeSignature(6, 8);
+    engine->sendTransportCommand(Engine::TransportCommand::Start);
+    run(96000);
+    CHECK((onsets(96000) == std::vector<std::uint32_t>{1, 36001, 72001}));
+    engine->sendTransportCommand(Engine::TransportCommand::Stop);
+    run(480);
+    engine->setClick(true, true, 0.5f);
+    engine->sendTransportCommand(Engine::TransportCommand::Start);
+    run(48000);
+    CHECK((onsets(48000) == std::vector<std::uint32_t>{1, 12001, 24001, 36001}));
+
+    // Off: silence, running or not.
+    engine->setClick(false, false, 0.5f);
+    run(4800);   // a blip's tail may end in this block
+    run(48000);
+    CHECK(onsets(48000).empty());
+    engine->collect();
+}
+
 void testGraphLifecycle() {
     auto engine = std::make_unique<Engine>();
     auto first  = std::make_shared<FakePlugin>();
@@ -495,6 +556,7 @@ void testGraphLifecycle() {
 } // namespace
 
 int main() {
+    testClick();
     testOnePeriodBehind();
     testBlockSplitting();
     testRoutingAndDialects();

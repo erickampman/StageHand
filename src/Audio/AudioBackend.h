@@ -16,6 +16,9 @@ struct AudioConfig {
     std::uint32_t bufferSize     = 0;   // frames per block; may change while running (see config())
     std::uint32_t inputChannels  = 0;
     std::uint32_t outputChannels = 2;
+    // Outputs of their own (the click), never mixed into the main outputs and
+    // never connected automatically: see AuxRouting.
+    std::uint32_t auxOutputChannels = 0;
 };
 
 // Everything handed to the real-time callback for one block. `blockStartTime`
@@ -29,6 +32,7 @@ struct AudioCallbackContext {
     TimeInfo         time;
     ConstAudioBuffer input;    // hardware inputs; channelCount may be 0
     AudioBuffer      output;   // hardware outputs to fill
+    AudioBuffer      aux;      // auxiliary outputs to fill (channelCount may be 0)
 };
 
 // Implemented by the engine; invoked by the backend on the real-time audio

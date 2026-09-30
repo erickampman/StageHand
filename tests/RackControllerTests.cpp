@@ -7,6 +7,7 @@
 #include <memory>
 #include <string>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 #include "App/RackController.h"
@@ -479,6 +480,80 @@ void testTransportControls() {
     CHECK(!view.transport.running && view.transport.startOnNote.empty());
 }
 
+// A stand-in for the backend's click routing: devices come and go.
+struct FakeRouting final : AuxRouting {
+    std::vector<PlaybackDevice> devices;
+    std::string                 connected;   // "" = nowhere
+    bool                        changed = false;
+    std::vector<PlaybackDevice> playbackDevices() override { return devices; }
+    bool connectAux(const PlaybackDevice& d) override {
+        connected = d.name;
+        return true;
+    }
+    void disconnectAux() override { connected.clear(); }
+    bool takeDevicesChanged() override { return std::exchange(changed, false); }
+};
+
+void testFindPlaybackDevice() {
+    auto dev = [](std::initializer_list<const char*> names) {
+        std::vector<PlaybackDevice> list;
+        for (const char* n : names) list.push_back(PlaybackDevice{n, {std::string(n) + ":playback_FL"}});
+        return list;
+    };
+    const auto both = dev({"Built-in Audio Analog Stereo", "Scarlett 2i2 USB Analog Stereo"});
+    CHECK(findPlaybackDevice("Scarlett 2i2 USB Analog Stereo", both) == 1);                 // by name
+    CHECK(findPlaybackDevice("Scarlett 2i2 USB Analog Stereo 2", both) == 1);               // numbered twin
+    CHECK(findPlaybackDevice("Scarlett 2i2 USB Pro", both) == 1);                           // another profile
+    CHECK(findPlaybackDevice("Built-in Audio Analog Surround 5.1", both) == 0);
+    CHECK(findPlaybackDevice("MOTU M4 Analog Stereo", both) == -1);                         // not there
+    CHECK(findPlaybackDevice("", both) == -1);
+    // Never analog -> HDMI (it could be the PA), and no guessing between two.
+    CHECK(findPlaybackDevice("Built-in Audio Analog Stereo", dev({"Built-in Audio Digital Stereo (HDMI)"})) == -1);
+    CHECK(findPlaybackDevice("Scarlett 2i2 USB Pro", dev({"Scarlett 2i2 USB Analog Stereo", "Scarlett 2i2 USB Analog Surround 4.0"})) == -1);
+}
+
+// The click goes only to its saved output; a missing one is reported once,
+// never replaced by the mains, and connected when it's plugged in.
+void testClickRouting() {
+    FakeRouting routing;
+    routing.devices = {PlaybackDevice{"Built-in Audio Analog Stereo", {"a:FL", "a:FR"}}};
+    Rig rig;
+    Rack rack;
+    rack.metronome.click       = true;
+    rack.metronome.clickOutput = "Scarlett 2i2 USB Analog Stereo";
+    Session::LoadReport report;
+    rig.session->load(rack, 48000.0, report);
+    RackController::Config config = rig.config();
+    config.clickRouting           = &routing;
+    RackController       controller(*rig.session, *rig.engine, rig.midi, rig.factory, config);
+    const RackViewModel& view = controller.view();
+    CHECK(routing.connected.empty() && !view.transport.clickConnected);
+    std::vector<std::string> notices = controller.takeNotices();
+    CHECK(notices.size() == 1 && notices[0].find("isn't connected") != std::string::npos);
+    controller.tick(1.0);
+    CHECK(controller.takeNotices().empty());   // said once
+
+    routing.devices.push_back(PlaybackDevice{"Scarlett 2i2 USB Analog Stereo", {"s:FL", "s:FR"}});
+    routing.changed = true;   // plugged in
+    controller.tick(1.1);
+    CHECK(routing.connected == "Scarlett 2i2 USB Analog Stereo" && view.transport.clickConnected);
+    CHECK(controller.takeNotices().size() == 1);
+
+    // Off: disconnected. On with no output chosen: nowhere, and a hint.
+    controller.setClick(false);
+    CHECK(routing.connected.empty());
+    controller.setClickOutput("");
+    controller.setClick(true);
+    CHECK(routing.connected.empty() && controller.takeNotices().size() == 1);
+    controller.setClickOutput("Built-in Audio Analog Stereo");
+    CHECK(routing.connected == "Built-in Audio Analog Stereo");
+    controller.setMetronomeCount(true);
+    controller.tick(1.2);
+    CHECK(view.transport.everyNote && rig.session->capture().metronome.everyNote);
+    controller.refreshPlaybackDevices();
+    CHECK(view.transport.playbackDevices.size() == 2);
+}
+
 void testSave() {
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "stagehand-controller-test";
     std::filesystem::remove_all(dir);
@@ -605,5 +680,7 @@ int main() {
     testDock();
     testLearn();
     testTransportControls();
+    testFindPlaybackDevice();
+    testClickRouting();
     return test::finish("RackController");
 }

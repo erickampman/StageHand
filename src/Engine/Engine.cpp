@@ -183,6 +183,12 @@ bool Engine::sendSequenceCommand(MidiSourceHandle source, SequenceCommand comman
     return sequenceCommands.push(QueuedCommand{source, command});
 }
 
+void Engine::setClick(bool on, bool everyNote, float gain) noexcept {
+    clickEveryNote.store(everyNote, std::memory_order_relaxed);
+    clickGain.store(std::clamp(gain, 0.0f, 1.0f), std::memory_order_relaxed);
+    clickOn.store(on, std::memory_order_relaxed);
+}
+
 bool Engine::sendTransportCommand(TransportCommand command) noexcept {
     return transportCommands.push(command);
 }
@@ -241,7 +247,9 @@ void Engine::process(const AudioCallbackContext& ctx) noexcept {
     generateSequences();
     routeMidi(ctx.frameCount);
     runSlots(ctx);
+    renderClick(ctx);
 
+    clock.stopFrame = UINT32_MAX;
     if (clock.stopPending) {   // stopped in this block: the next one starts at beat 0, stopped
         clock.running       = false;
         clock.stopPending   = false;
@@ -324,6 +332,7 @@ void Engine::stopTransport(std::uint32_t frame) noexcept {
     if (currentSequences != nullptr)
         currentSequences->command(kInvalidMidiSource, SequenceCommand::StopNow, sequenceBlock.from(frame));
     clock.stopPending = true;
+    clock.stopFrame   = frame;
 }
 
 void Engine::transportAction(const AudioCallbackContext& ctx, TransportCommand command, std::uint32_t frame) noexcept {
@@ -687,6 +696,52 @@ void Engine::runSlots(const AudioCallbackContext& ctx) noexcept {
         for (std::uint32_t f = 0; f < ctx.frameCount; ++f) peak = std::max(peak, std::fabs(ctx.output.channels[c][f]));
         outputLevels.add(c, peak);
     }
+}
+
+// The click, on the aux outputs: a blip at each pulse in this block (before a
+// stop in it), higher on the downbeat. A blip's tail runs on into the next
+// block, and past a stop.
+void Engine::renderClick(const AudioCallbackContext& ctx) noexcept {
+    const AudioBuffer&  aux    = ctx.aux;
+    const std::uint32_t frames = ctx.frameCount;
+    for (std::uint32_t c = 0; c < aux.channelCount; ++c) std::fill_n(aux.channels[c], frames, 0.0f);
+    const double rate = ctx.time.sampleRate;
+    if (aux.channelCount == 0 || rate <= 0.0 || frames == 0) return;
+
+    ClickVoice& v    = clickVoice;
+    auto        play = [&](std::uint32_t from, std::uint32_t to) {
+        for (std::uint32_t f = from; f < to && v.remaining > 0; ++f, --v.remaining) {
+            const float sample = v.level * static_cast<float>(std::sin(v.phase));
+            for (std::uint32_t c = 0; c < aux.channelCount; ++c) aux.channels[c][f] = sample;
+            v.phase += v.step;
+            v.level *= v.decay;
+        }
+    };
+
+    std::uint32_t done = 0;
+    if (clickOn.load(std::memory_order_relaxed) && clock.running && clock.beatsPerFrame > 0.0) {
+        const MetronomePulse pulse =
+            metronomePulse(clock.numerator, clock.denominator, clickEveryNote.load(std::memory_order_relaxed));
+        const float    gain     = clickGain.load(std::memory_order_relaxed);
+        const double   barStart = timeAt(ctx, 0).barStartBeats;
+        const double   end      = clock.beat + frames * clock.beatsPerFrame;
+        for (double k = std::ceil((clock.beat - barStart) / pulse.beats - 1e-9);; k += 1.0) {
+            const double beat = barStart + k * pulse.beats;
+            if (beat >= end - 1e-9) break;
+            const double at = beat <= clock.beat ? 0.0 : std::floor((beat - clock.beat) / clock.beatsPerFrame + 1e-6);
+            const auto   frame = static_cast<std::uint32_t>(std::min(at, static_cast<double>(frames - 1)));
+            if (frame >= clock.stopFrame) break;
+            play(done, frame);
+            done               = frame;
+            const bool downbeat = k - pulse.perBar * std::floor(k / pulse.perBar) < 0.5;
+            v.remaining = static_cast<std::uint32_t>(std::lround(kClickSeconds * rate));
+            v.phase     = 0.0;
+            v.step      = 2.0 * 3.14159265358979323846 * kClickHz[downbeat ? 1 : 0] / rate;
+            v.level     = gain;
+            v.decay     = static_cast<float>(std::exp(-1.0 / (0.006 * rate)));   // 6 ms
+        }
+    }
+    play(done, frames);
 }
 
 // Advance the slot's gain by `frames`. While a ramp runs, fills the graph's

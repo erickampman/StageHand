@@ -536,8 +536,9 @@ int runPlay(const Options& options) {
     // the backend.
     JackBackend backend("StageHand", options.autoConnect);
     AudioConfig requested;
-    requested.outputChannels = options.channels;
-    requested.bufferSize     = options.quantum;
+    requested.outputChannels    = options.channels;
+    requested.auxOutputChannels = 2;   // the click, connected only where the rack says
+    requested.bufferSize        = options.quantum;
     AudioConfig negotiated;
     if (!backend.open(requested, negotiated)) return 1;
     std::printf("%s: %.0f Hz, %u-frame buffer, %u out\n", backend.name(), negotiated.sampleRate,
@@ -601,6 +602,7 @@ int runPlay(const Options& options) {
     config.protocolPreference = options.preference;
     config.saveTarget         = saveTarget.empty() ? std::string{} : resolveRackPath(saveTarget);
     config.savingOff          = options.noSaveRack;
+    config.clickRouting       = &backend;
     RackController controller(session, *engine, *input, factory, std::move(config));
     controllerRef = &controller;
     std::unique_ptr<RackUi>* uiRef = nullptr;   // set once the window exists
