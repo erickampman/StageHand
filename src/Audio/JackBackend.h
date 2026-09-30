@@ -53,6 +53,7 @@ public:
     bool                        connectAux(const PlaybackDevice& device) override;
     void                        disconnectAux() override;
     bool                        takeDevicesChanged() override;
+    std::string                 mainDevice() override;
 
     // --- diagnostics (any thread) ---
     std::uint64_t xrunCount() const noexcept { return xruns.load(std::memory_order_relaxed); }

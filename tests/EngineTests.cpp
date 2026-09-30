@@ -506,6 +506,15 @@ void testClick() {
     run(4800);   // a blip's tail may end in this block
     run(48000);
     CHECK(onsets(48000).empty());
+
+    // The test blip: at once, with the click off and the transport stopped.
+    engine->sendTransportCommand(Engine::TransportCommand::Stop);
+    run(4800);
+    engine->testClick();
+    run(4800);
+    CHECK(onsets(4800) == std::vector<std::uint32_t>{1});
+    run(4800);
+    CHECK(onsets(4800).empty());   // just the one
     engine->collect();
 }
 

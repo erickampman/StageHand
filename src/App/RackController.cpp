@@ -247,7 +247,14 @@ RowModel RackController::rowFor(const Session::Slot& slot, double now, double dt
 
 void RackController::buildDock(double now) {
     model.inputs.clear();
-    for (const Session::OpenInput& input : session.openInputs()) {
+    // Devices first, then the virtual inputs (as in the source menus).
+    std::vector<const Session::OpenInput*> ordered;
+    for (const Session::OpenInput& input : session.openInputs())
+        if (input.ref.kind != MidiSourceRef::Kind::Virtual) ordered.push_back(&input);
+    for (const Session::OpenInput& input : session.openInputs())
+        if (input.ref.kind == MidiSourceRef::Kind::Virtual) ordered.push_back(&input);
+    for (const Session::OpenInput* openInput : ordered) {
+        const Session::OpenInput& input = *openInput;
         InputChipModel chip;
         chip.label     = sourceLabel(input.ref);
         chip.isVirtual = input.ref.kind == MidiSourceRef::Kind::Virtual;
@@ -311,11 +318,8 @@ void RackController::refreshSources() {
 
     model.sources.clear();
     model.sources.push_back(SourceChoice{"All inputs", MidiSourceRef{}, SourceProtocol::Mixed, false});
-    for (const auto& [name, protocol] : config.virtualInputs)
-        model.sources.push_back(SourceChoice{name, MidiSourceRef{MidiSourceRef::Kind::Virtual, name},
-                                             sourceProtocolOf(MidiSourceRef{MidiSourceRef::Kind::Virtual, name}),
-                                             false});
-    // Hardware first: it's what a player picks.
+    // Hardware first: it's what a player picks; then software, then the
+    // virtual inputs other apps send to.
     std::vector<const MidiSourceInfo*> ordered;
     for (const MidiSourceInfo& info : enumerated)
         if (info.isHardware) ordered.push_back(&info);
@@ -326,6 +330,10 @@ void RackController::refreshSources() {
         model.sources.push_back(SourceChoice{info->name.empty() ? info->id : info->name, ref,
                                              sourceProtocolOf(ref), info->isHardware});
     }
+    for (const auto& [name, protocol] : config.virtualInputs) {
+        const MidiSourceRef ref{MidiSourceRef::Kind::Virtual, name};
+        model.sources.push_back(SourceChoice{sourceLabel(ref), ref, sourceProtocolOf(ref), false});
+    }
     for (const Session::SequenceEntry& entry : session.sequences()) {   // last: the rack's own sources
         const MidiSourceRef ref{MidiSourceRef::Kind::Sequence, entry.sequence.id};
         model.sources.push_back(SourceChoice{"Sequence: " + entry.sequence.name, ref, sourceProtocolOf(ref), false});
@@ -335,7 +343,13 @@ void RackController::refreshSources() {
 std::string RackController::sourceLabel(const MidiSourceRef& ref) const {
     switch (ref.kind) {
         case MidiSourceRef::Kind::All:     return "All inputs";
-        case MidiSourceRef::Kind::Virtual: return ref.name;
+        case MidiSourceRef::Kind::Virtual:
+            // A port other apps send to, not a protocol setting: say so. The
+            // port keeps its name ("MIDI 2.0 In"), so racks and connections don't change.
+            for (const auto& [name, protocol] : config.virtualInputs)
+                if (name == ref.name)
+                    return std::string("From other apps (") + (protocol == MidiProtocol::Midi2 ? "MIDI 2.0" : "MIDI 1.0") + ")";
+            return ref.name;
         case MidiSourceRef::Kind::Sequence:
             if (const Session::SequenceEntry* entry = session.sequence(ref.name)) return entry->sequence.name;
             return ref.name;
@@ -595,24 +609,63 @@ void RackController::setMetronomeCount(bool everyNote) {
     setMetronome(m);
 }
 
+// Turned on with no output chosen, the click takes a playback device other
+// than the mains' (the first). If the mains' device is the only one, it stays
+// silent until chosen: the menu says so.
 void RackController::setClick(bool on) {
     MetronomeSettings m = session.metronome();
     m.click             = on;
-    if (on && m.clickOutput.empty()) notice("Click: choose its output in the same menu (not the main outputs' device)");
+    if (on && m.clickOutput.empty() && config.clickRouting != nullptr) {
+        const std::string main = config.clickRouting->mainDevice();
+        for (const PlaybackDevice& d : config.clickRouting->playbackDevices())
+            if (d.name != main) {
+                m.clickOutput = d.name;
+                break;
+            }
+        if (m.clickOutput.empty())
+            notice("Click: silent until you choose its output (the only device plays the main outputs too)");
+    }
     setMetronome(m);
+    if (on && !session.transportRunning()) notice("Click: it sounds while the transport runs (▶ or Space)");
 }
 
+// Choosing a level means wanting the click: it's turned on (as setClick(true)).
 void RackController::setClickLevel(float db) {
     MetronomeSettings m = session.metronome();
     m.clickLevelDb      = std::clamp(db, -60.0f, 0.0f);
-    setMetronome(m);
+    session.setMetronome(m);
+    setClick(true);
 }
 
 void RackController::setClickOutput(const std::string& device) {
     MetronomeSettings m = session.metronome();
     m.clickOutput       = device;
+    m.click             = !device.empty();   // choosing where it plays means wanting it
     clickMissing        = false;   // a new choice: report afresh
     setMetronome(m);
+}
+
+void RackController::testClick() {
+    const MetronomeSettings& m = session.metronome();
+    if (m.clickOutput.empty()) {
+        notice("Click: choose its output first");
+        return;
+    }
+    if (!m.click) {   // off: connect just for the test
+        AuxRouting* const routing = config.clickRouting;
+        const auto        devices = routing != nullptr ? routing->playbackDevices() : std::vector<PlaybackDevice>{};
+        const int         i       = findPlaybackDevice(m.clickOutput, devices);
+        if (i < 0 || !routing->connectAux(devices[static_cast<std::size_t>(i)])) {
+            notice("Click: its output '" + m.clickOutput + "' isn't connected");
+            return;
+        }
+        clickDevice = devices[static_cast<std::size_t>(i)].name;
+    } else if (clickDevice.empty()) {
+        notice("Click: its output '" + m.clickOutput + "' isn't connected");
+        return;
+    }
+    engine.testClick();
+    notice("Click: a test blip on " + clickDevice);
 }
 
 void RackController::refreshPlaybackDevices() {
@@ -620,6 +673,7 @@ void RackController::refreshPlaybackDevices() {
     if (config.clickRouting == nullptr) return;
     for (const PlaybackDevice& d : config.clickRouting->playbackDevices()) deviceNames.push_back(d.name);
     model.transport.playbackDevices = deviceNames;
+    model.transport.mainDevice      = config.clickRouting->mainDevice();
 }
 
 // Never the main outputs by default: a click the audience hears is worse than

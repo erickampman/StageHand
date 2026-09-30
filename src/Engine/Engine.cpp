@@ -718,6 +718,15 @@ void Engine::renderClick(const AudioCallbackContext& ctx) noexcept {
         }
     };
 
+    auto startBlip = [&](bool downbeat, float gain) {
+        v.remaining = static_cast<std::uint32_t>(std::lround(kClickSeconds * rate));
+        v.phase     = 0.0;
+        v.step      = 2.0 * 3.14159265358979323846 * kClickHz[downbeat ? 1 : 0] / rate;
+        v.level     = gain;
+        v.decay     = static_cast<float>(std::exp(-1.0 / (0.006 * rate)));   // 6 ms
+    };
+    if (clickTest.exchange(false, std::memory_order_relaxed)) startBlip(true, clickGain.load(std::memory_order_relaxed));
+
     std::uint32_t done = 0;
     if (clickOn.load(std::memory_order_relaxed) && clock.running && clock.beatsPerFrame > 0.0) {
         const MetronomePulse pulse =
@@ -733,12 +742,7 @@ void Engine::renderClick(const AudioCallbackContext& ctx) noexcept {
             if (frame >= clock.stopFrame) break;
             play(done, frame);
             done               = frame;
-            const bool downbeat = k - pulse.perBar * std::floor(k / pulse.perBar) < 0.5;
-            v.remaining = static_cast<std::uint32_t>(std::lround(kClickSeconds * rate));
-            v.phase     = 0.0;
-            v.step      = 2.0 * 3.14159265358979323846 * kClickHz[downbeat ? 1 : 0] / rate;
-            v.level     = gain;
-            v.decay     = static_cast<float>(std::exp(-1.0 / (0.006 * rate)));   // 6 ms
+            startBlip(k - pulse.perBar * std::floor(k / pulse.perBar) < 0.5, gain);
         }
     }
     play(done, frames);

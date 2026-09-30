@@ -151,6 +151,9 @@ public:
     // every note), higher on the downbeat, on the aux outputs only, while the
     // transport runs. `gain` is linear. Main thread (atomics, read per block).
     void setClick(bool on, bool everyNote, float gain) noexcept;
+    // One downbeat blip at the next block, whether the click is on or the
+    // transport runs: to check where it's heard.
+    void testClick() noexcept { clickTest.store(true, std::memory_order_relaxed); }
     static constexpr double kClickSeconds = 0.03;
     static constexpr double kClickHz[2]   = {1000.0, 1600.0};   // a beat, the downbeat
     static constexpr double kMinTempo = 20.0;
@@ -300,6 +303,7 @@ private:
     std::atomic<bool>  clickOn{false};
     std::atomic<bool>  clickEveryNote{false};
     std::atomic<float> clickGain{0.25f};
+    std::atomic<bool>  clickTest{false};
     struct ClickVoice {                     // the blip sounding now (audio thread only)
         std::uint32_t remaining = 0;
         double        phase = 0.0, step = 0.0;

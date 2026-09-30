@@ -110,13 +110,15 @@ void testViewModel() {
     CHECK(d.sourceProtocol == SourceProtocol::Midi2 && d.protocolWarning);   // MIDI 2.0 into a MIDI 1.0 plugin
     CHECK(!e.sourceConnected && e.sourceLabel == "Unplugged:Port (not connected)");
 
-    // The source menu: All, the virtual inputs, then hardware before software.
+    // The source menu: All, hardware before software, then the virtual inputs
+    // (labelled as what they are: where other apps send).
     CHECK(view.sources.size() == 5);
     if (view.sources.size() == 5) {
         CHECK(view.sources[0].ref.kind == MidiSourceRef::Kind::All);
-        CHECK(view.sources[1].label == "MIDI 2.0 In" && view.sources[1].protocol == SourceProtocol::Midi2);
-        CHECK(view.sources[3].label == "Keys" && view.sources[3].hardware);
-        CHECK(view.sources[4].label == "Midi Through" && !view.sources[4].hardware);
+        CHECK(view.sources[1].label == "Keys" && view.sources[1].hardware);
+        CHECK(view.sources[2].label == "Midi Through" && !view.sources[2].hardware);
+        CHECK(view.sources[3].label == "From other apps (MIDI 2.0)" && view.sources[3].protocol == SourceProtocol::Midi2);
+        CHECK(view.sources[4].label == "From other apps (MIDI 1.0)" && view.sources[4].ref.name == "MIDI 1.0 In");
     }
     CHECK(view.status.sampleRate == 48000.0 && view.status.bufferSize == 256 && view.status.xruns == 3);
     CHECK(view.status.outputs == 4);
@@ -340,7 +342,7 @@ void testDock() {
     CHECK(view.sequences.size() == 1 && !view.rows[0].sourceConnected);
 
     // The inputs row: one chip per open input, lit briefly by its messages.
-    CHECK(view.inputs.size() == 1 && view.inputs[0].label == "MIDI 2.0 In" && view.inputs[0].isVirtual);
+    CHECK(view.inputs.size() == 1 && view.inputs[0].label == "From other apps (MIDI 2.0)" && view.inputs[0].isVirtual);
     CHECK(!view.inputs[0].active);
     TimedMidiMessage m;
     m.captureTime       = 1'000'000'000 - 1'000'000;
@@ -385,7 +387,7 @@ void testLearn() {
     send(0x20993064);   // note 48 (C3) on channel 10
     controller.tick(1.1);
     CHECK(!view.sequences[0].learning);
-    CHECK(view.sequences[0].triggers == std::vector<std::string>{"Play/Stop: MIDI 2.0 In, note C3, ch 10"});
+    CHECK(view.sequences[0].triggers == std::vector<std::string>{"Play/Stop: From other apps (MIDI 2.0), note C3, ch 10"});
     const std::vector<SequenceTrigger>& triggers = controller.sequence("arp")->triggers;
     CHECK(triggers.size() == 1 && triggers[0].source == (MidiSourceRef{MidiSourceRef::Kind::Virtual, "MIDI 2.0 In"}));
     CHECK(controller.takeNotices().size() == 1 && rig.session->modified());
@@ -404,7 +406,7 @@ void testLearn() {
     send(0x20B0407F);
     controller.tick(1.3);
     CHECK((view.sequences[0].triggers ==
-           std::vector<std::string>{"Stop: MIDI 2.0 In, note C3, ch 10", "Start: MIDI 2.0 In, CC 64, ch 1"}));
+           std::vector<std::string>{"Stop: From other apps (MIDI 2.0), note C3, ch 10", "Start: From other apps (MIDI 2.0), CC 64, ch 1"}));
 
     // Removing one, and cancelling a learn.
     controller.removeTrigger("arp", 0);
@@ -413,7 +415,7 @@ void testLearn() {
     send(0x20903C64);
     controller.tick(1.4);
     CHECK(!view.sequences[0].learning &&
-          view.sequences[0].triggers == std::vector<std::string>{"Start: MIDI 2.0 In, CC 64, ch 1"});
+          view.sequences[0].triggers == std::vector<std::string>{"Start: From other apps (MIDI 2.0), CC 64, ch 1"});
 }
 
 // The transport's controls: Start/Stop, At Start, its MIDI learn, start on
@@ -460,7 +462,7 @@ void testTransportControls() {
     send(0x20993064);
     controller.tick(1.4);
     CHECK(!view.transport.learning &&
-          view.transport.triggers == std::vector<std::string>{"Play/Stop: MIDI 2.0 In, note C3, ch 10"});
+          view.transport.triggers == std::vector<std::string>{"Play/Stop: From other apps (MIDI 2.0), note C3, ch 10"});
     runBlock(*rig.engine);
     send(0x20993064);
     controller.tick(1.5);
@@ -472,7 +474,7 @@ void testTransportControls() {
     // Start on first note, from one input; a rack switch stops the transport.
     controller.setStartOnNote(true, MidiSourceRef{MidiSourceRef::Kind::Virtual, "MIDI 2.0 In"});
     controller.tick(1.7);
-    CHECK(view.transport.startOnNote == "MIDI 2.0 In" && view.transport.startOnNoteConnected);
+    CHECK(view.transport.startOnNote == "From other apps (MIDI 2.0)" && view.transport.startOnNoteConnected);
     CHECK(rig.session->capture().transport.startOnNote);
     controller.newRack();
     runBlock(*rig.engine);
@@ -492,6 +494,8 @@ struct FakeRouting final : AuxRouting {
     }
     void disconnectAux() override { connected.clear(); }
     bool takeDevicesChanged() override { return std::exchange(changed, false); }
+    std::string                 main;   // where the mains go
+    std::string mainDevice() override { return main; }
 };
 
 void testFindPlaybackDevice() {
@@ -539,19 +543,36 @@ void testClickRouting() {
     CHECK(routing.connected == "Scarlett 2i2 USB Analog Stereo" && view.transport.clickConnected);
     CHECK(controller.takeNotices().size() == 1);
 
-    // Off: disconnected. On with no output chosen: nowhere, and a hint.
+    // Off: disconnected. A chosen output connects.
     controller.setClick(false);
     CHECK(routing.connected.empty());
-    controller.setClickOutput("");
-    controller.setClick(true);
-    CHECK(routing.connected.empty() && controller.takeNotices().size() == 1);
-    controller.setClickOutput("Built-in Audio Analog Stereo");
+    controller.setClickOutput("Built-in Audio Analog Stereo");   // choosing where it plays turns it on
+    CHECK(rig.session->metronome().click);
+    controller.setClick(false);
+    controller.setClickLevel(-18.0f);   // so does choosing a level
+    CHECK(rig.session->metronome().click && rig.session->metronome().clickLevelDb == -18.0f &&
+          routing.connected == "Built-in Audio Analog Stereo");
     CHECK(routing.connected == "Built-in Audio Analog Stereo");
     controller.setMetronomeCount(true);
     controller.tick(1.2);
     CHECK(view.transport.everyNote && rig.session->capture().metronome.everyNote);
     controller.refreshPlaybackDevices();
     CHECK(view.transport.playbackDevices.size() == 2);
+
+    // Turned on with no output chosen: a device other than the mains', never
+    // the mains' own.
+    routing.main = "Scarlett 2i2 USB Analog Stereo";
+    controller.setClick(false);
+    controller.setClickOutput("");
+    controller.takeNotices();
+    controller.setClick(true);
+    CHECK(routing.connected == "Built-in Audio Analog Stereo" &&
+          rig.session->metronome().clickOutput == "Built-in Audio Analog Stereo");
+    routing.devices.erase(routing.devices.begin());   // only the mains' device left
+    controller.setClick(false);
+    controller.setClickOutput("");
+    controller.setClick(true);
+    CHECK(routing.connected.empty() && rig.session->metronome().clickOutput.empty());
 }
 
 void testSave() {

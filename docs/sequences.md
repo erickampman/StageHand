@@ -336,13 +336,23 @@ Implemented 2026-09-30 (milestone 6):
   12/8 four; any other meter its notes: 7/8 seven), or every note (6/8 six).
   One rule for both, `metronomePulse()` in Core/TimeInfo.h.
 - **The click** has its own output pair, `click_L`/`click_R`, never mixed into
-  the main outputs and never connected automatically. The same menu turns it
-  on, sets its level (-24 to 0 dB), and chooses its output: any playback
+  the main outputs and never connected automatically. The same menu has one
+  choice for it, No click or Click at -24 to 0 dB (choosing a level turns it
+  on), a Test the click item (one blip at once, running or not, to check
+  where it's heard), and its output (choosing one turns it on too): any playback
   device (e.g. the laptop's headphone jack while the mains go to an
   interface). A short sine blip (30 ms, 6 ms decay), 1600 Hz on the downbeat
   and 1000 Hz on the other pulses, placed to the sample, only while the
   transport runs. The ⋮ is blue while it plays, amber when its output is
   missing.
+- **Turning it on with no output chosen** takes the first playback device that
+  isn't the one the main outputs go to. If that's the only device, the click
+  stays silent until chosen. The menu says why it's silent, on a line under the levels ("choose an
+  output below", "its output isn't connected", "sounds while the transport
+  runs")
+  and marks the mains' device "(also the mains)". Added 2026-09-30 after the
+  click seemed dead: it was working, but silent for one of those reasons with
+  only a 4-second hint.
 - **Naming the device.** PipeWire's JACK layer shows a device only by its
   description ("Built-in Audio Analog Stereo"; no node name or alias), so
   that's what's saved.

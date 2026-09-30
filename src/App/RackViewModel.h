@@ -103,6 +103,7 @@ struct TransportModel {
     std::string              clickOutput;              // chosen device; "" = none
     bool                     clickConnected = false;   // to it, now
     std::vector<std::string> playbackDevices;          // as of refreshPlaybackDevices()
+    std::string              mainDevice;               // where the main outputs go ("" if unknown)
 };
 
 // One sequence in the sources dock (docs/sequences.md, section 4).

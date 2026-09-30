@@ -148,8 +148,9 @@ public:
     // --- the beat lights and the click (docs/sequences.md, section 7) ---
     void setMetronomeCount(bool everyNote);   // every note (6/8: six), or the counted beats (6/8: two)
     void setClick(bool on);
-    void setClickLevel(float db);             // -60 to 0
-    void setClickOutput(const std::string& device);
+    void setClickLevel(float db);             // -60 to 0; also turns the click on
+    void setClickOutput(const std::string& device);   // also turns the click on
+    void testClick();                         // one blip now, on the click's output (connected for it if need be)
     void refreshPlaybackDevices();            // for the menu; call when it opens
 
     // --- the transport (docs/sequences.md, section 7) ---

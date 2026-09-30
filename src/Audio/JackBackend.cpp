@@ -246,6 +246,16 @@ bool JackBackend::takeDevicesChanged() {
     return devicesChanged.exchange(false, std::memory_order_relaxed);
 }
 
+std::string JackBackend::mainDevice() {
+    if (client == nullptr || outputPorts.empty()) return {};
+    std::string device;
+    if (const char** to = jack_port_get_all_connections(client, outputPorts[0])) {
+        if (to[0] != nullptr) device = std::string(to[0]).substr(0, std::string(to[0]).find(':'));
+        jack_free(to);
+    }
+    return device;
+}
+
 void JackBackend::portRegistrationCallback(std::uint32_t, int, void* arg) {
     static_cast<JackBackend*>(arg)->devicesChanged.store(true, std::memory_order_relaxed);
 }

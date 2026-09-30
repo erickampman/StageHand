@@ -304,20 +304,29 @@ void RackWidget::openMetronomeMenu(float x, float y) {
     Menu                  m;
     m.x     = x;
     m.y     = y;
-    m.w     = 330.0f;
+    m.w     = 420.0f;
     m.title = "Beat lights and click";
     m.items.push_back(MenuItem{"Count the beats (6/8: 2, 7/8: 7)", [this] { controller.setMetronomeCount(false); },
                                !t.everyNote});
     m.items.push_back(MenuItem{"Count every note (6/8: 6)", [this] { controller.setMetronomeCount(true); }, t.everyNote});
-    m.items.push_back(MenuItem{"Click", [this, on = t.click] { controller.setClick(!on); }, t.click});
+    // One choice: no click, or a click at a level (choosing a level turns it on).
+    m.items.push_back(MenuItem{"No click", [this] { controller.setClick(false); }, !t.click});
     for (const float db : {-24.0f, -18.0f, -12.0f, -6.0f, 0.0f})
-        m.items.push_back(MenuItem{"Click level " + std::to_string(static_cast<int>(db)) + " dB",
-                                   [this, db] { controller.setClickLevel(db); }, std::fabs(t.clickLevelDb - db) < 0.5f});
+        m.items.push_back(MenuItem{"Click at " + std::to_string(static_cast<int>(db)) + " dB",
+                                   [this, db] { controller.setClickLevel(db); },
+                                   t.click && std::fabs(t.clickLevelDb - db) < 0.5f});
+    // Why it's silent, where it's plain to see.
+    if (t.click && t.clickOutput.empty()) m.items.push_back(MenuItem{"   Silent: choose an output below", {}});
+    else if (t.click && !t.clickConnected) m.items.push_back(MenuItem{"   Silent: its output isn't connected", {}});
+    else if (t.click && !t.running) m.items.push_back(MenuItem{"   Sounds while the transport runs (Space)", {}});
+    m.items.push_back(MenuItem{"Test the click (one blip now)",
+                               t.clickOutput.empty() ? std::function<void()>{} : [this] { controller.testClick(); }});
     bool listed = false;
     for (const std::string& device : t.playbackDevices) {
         listed = listed || device == t.clickOutput;
-        m.items.push_back(MenuItem{"Click output: " + device, [this, device] { controller.setClickOutput(device); },
-                                   device == t.clickOutput});
+        const std::string note = device == t.mainDevice ? "  (also the mains)" : "";
+        m.items.push_back(MenuItem{"Click output: " + device + note,
+                                   [this, device] { controller.setClickOutput(device); }, device == t.clickOutput});
     }
     if (!t.clickOutput.empty() && !listed)
         m.items.push_back(MenuItem{"Click output: " + t.clickOutput + " (not connected)", {}, true});
@@ -885,7 +894,9 @@ void RackWidget::openSourceMenu(const RowModel& row, float x, float y) {
     m.title = "MIDI source for " + row.name;
     for (const SourceChoice& choice : controller.view().sources) {
         std::string text = choice.label;
-        if (choice.protocol != SourceProtocol::Mixed) text += std::string("   (") + protocolText(choice.protocol) + ")";
+        // A virtual input's label already says its protocol.
+        if (choice.protocol != SourceProtocol::Mixed && choice.ref.kind != MidiSourceRef::Kind::Virtual)
+            text += std::string("   (") + protocolText(choice.protocol) + ")";
         m.items.push_back(MenuItem{text, [this, id = row.id, ref = choice.ref] { controller.setSource(id, ref); },
                                    sameSource(choice.ref, row.source), false});
     }

@@ -30,6 +30,9 @@ public:
     // True once after devices came or went (hot-plug), so connections can be
     // tried again.
     virtual bool takeDevicesChanged() = 0;
+    // The device the main outputs are connected to ("" if none): the click
+    // never goes there unless chosen.
+    virtual std::string mainDevice() = 0;
 };
 
 } // namespace stagehand
