@@ -16,7 +16,7 @@ The binary is `build/stagehand`. The tests run with `ctest` from `build/`.
 
 StageHand is a JACK client. On a PipeWire system, JACK is PipeWire's JACK
 layer, reached by running under `pw-jack`. You don't have to type it:
-`--play` and `--tone` check for a JACK server first, and if there's none in
+Playing and `--tone` check for a JACK server first, and if there's none in
 reach they restart themselves under `pw-jack` ("No JACK server in reach;
 restarting under pw-jack."). So a launcher or file manager can start
 StageHand directly.
@@ -37,28 +37,32 @@ The listing and monitoring modes (`--list-plugins`, `--list-midi`,
 stagehand [MODE] [options]
 ```
 
-One mode per run. With no arguments at all, StageHand plays a new, empty,
-untitled rack (see "Untitled rack").
+One mode per run. Without a mode, StageHand plays: `--play` is the default
+(since 2026-10-01) and can be left out, so `stagehand --rack X` plays X. With
+no arguments at all, it reopens the last setlist at the song it was on
+(docs/setlists.md), or, with none, plays a new, empty, untitled rack (see
+"Untitled rack").
 
 | Mode | What it does |
 |---|---|
-| `--play` | Host plugins: MIDI in, audio out, with the rack window |
+| `--play` | The default: host plugins, MIDI in, audio out, with the rack window |
 | `--list-plugins` | List installed CLAP plugins (id, name, note dialects) |
 | `--list-midi` | List MIDI sources: id, protocol, and hardware, software or app |
 | `--monitor` | Print incoming MIDI exactly as it arrives |
 | `--tone [HZ]` | Play a test sine (default 440 Hz) to check the audio path |
 | `-h`, `--help` | Show the help |
 
-## --play
+## Playing (--play)
 
-What `--play` plays:
+What it plays:
 
 | Option | Meaning |
 |---|---|
+| `--setlist PATH` | Play a setlist: a `.setlist` file (docs/setlists.md), from its first song. Can't be combined with `--rack`, `--plugin` or `--save-rack` |
 | `--rack PATH` | Play a rack: a `.rack` bundle (docs/rack-format.md) |
 | `--plugin PATH\|ID` | Play one plugin: a `.clap` file, or an id or name from `--list-plugins`. It starts from the plugin's defaults |
 | `--save-rack PATH` alone | Start a new, empty rack, built in the rack window and saved to PATH |
-| none of these | A new, untitled rack (see below) |
+| none of these | No arguments at all: the last setlist, at its song. Otherwise, or with none, a new, untitled rack (see below) |
 
 `--rack` and `--plugin` can't be used together: a rack already names its
 plugins.
@@ -72,8 +76,8 @@ plugins.
 
 ### Untitled rack
 
-`stagehand` with no arguments, or `--play` with no `--rack`, `--plugin` or
-`--save-rack`, starts a new, empty rack named "Untitled" with the defaults:
+`stagehand` with no `--setlist`, `--rack`, `--plugin` or `--save-rack` (and,
+with no arguments at all, no last setlist to reopen) starts a new, empty rack named "Untitled" with the defaults:
 120 BPM, 4/4, every hardware MIDI input plus the virtual inputs, and stereo
 out. Build it in the window as usual.
 
@@ -108,7 +112,7 @@ The save target is checked before any audio starts:
 The same rules apply to Save As in the window, except that replacing another
 rack asks instead of needing `--overwrite`.
 
-## Audio options (--play, --tone)
+## Audio options (playing, --tone)
 
 | Option | Meaning |
 |---|---|
@@ -116,7 +120,7 @@ rack asks instead of needing `--overwrite`.
 | `--channels N` | Output channels to register (default 2) |
 | `--no-connect` | Don't connect to the system playback ports |
 
-## MIDI options (--play, --monitor)
+## MIDI options (playing, --monitor)
 
 By default StageHand opens every hardware MIDI input, plus two virtual inputs
 that other apps can connect to:
@@ -175,34 +179,40 @@ Open a new, untitled rack:
 ./build/stagehand
 ```
 
+Play a setlist, from its first song:
+
+```bash
+./build/stagehand --setlist ~/Sets/Friday.setlist
+```
+
 Play a rack, saving it back at quit:
 
 ```bash
-./build/stagehand --play --rack ~/Racks/Piano.rack
+./build/stagehand --rack ~/Racks/Piano.rack
 ```
 
 Start a new rack and build it in the window:
 
 ```bash
-./build/stagehand --play --save-rack ~/Racks/New.rack
+./build/stagehand --save-rack ~/Racks/New.rack
 ```
 
 Play a gig rack at a 128-frame buffer without changing it:
 
 ```bash
-./build/stagehand --play --rack ~/Racks/Gig.rack --no-save-rack --quantum 128
+./build/stagehand --rack ~/Racks/Gig.rack --no-save-rack --quantum 128
 ```
 
 Try one plugin and keep the result as a rack:
 
 ```bash
-./build/stagehand --play --plugin com.unlikelyware.polygraphmodular --save-rack ~/Racks/New.rack
+./build/stagehand --plugin com.unlikelyware.polygraphmodular --save-rack ~/Racks/New.rack
 ```
 
 Listen only to one keyboard:
 
 ```bash
-./build/stagehand --play --rack ~/Racks/Piano.rack --midi "KeyLab 88:KeyLab 88 MIDI 1"
+./build/stagehand --rack ~/Racks/Piano.rack --midi "KeyLab 88:KeyLab 88 MIDI 1"
 ```
 
 See what a controller sends (useful before mapping a pad to a sequence):

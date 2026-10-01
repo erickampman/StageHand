@@ -30,6 +30,7 @@
 #include "Plugin/Clap/ClapPluginFactory.h"
 #include "Session/RackFile.h"
 #include "Session/Session.h"
+#include "Session/SetlistFile.h"
 #include "Ui/RackUi.h"
 
 using namespace stagehand;
@@ -48,19 +49,23 @@ void printUsage() {
     std::puts(
         "usage: stagehand [MODE] [options]\n"
         "\n"
-        "With no arguments: --play with a new, empty, untitled rack.\n"
+        "Without a mode, StageHand plays (--play is the default and can be left out).\n"
+        "With no arguments it reopens the last setlist at the song it was on; with\n"
+        "none (or a rack open on its own last), a new, empty, untitled rack.\n"
         "\n"
         "Modes:\n"
-        "  --play               host plugins: MIDI in, audio out. Plays --rack or\n"
-        "                       --plugin; with neither, a new, empty, untitled rack\n"
+        "  --play               (the default) host plugins: MIDI in, audio out. Plays\n"
+        "                       --setlist, --rack or --plugin; with none, as above\n"
         "  --list-plugins       list installed CLAP plugins\n"
         "  --list-midi          list MIDI sources (id, protocol, hardware/software/app)\n"
         "  --monitor            print incoming MIDI exactly as it arrives\n"
         "  --tone [HZ]          play a test sine (default 440 Hz) to check the audio path\n"
         "  -h, --help           show this help\n"
         "\n"
-        "What to play (--play):\n"
+        "What to play:\n"
         "  --rack PATH          a rack: a .rack bundle (see docs/rack-format.md)\n"
+        "  --setlist PATH       a setlist: a .setlist file, from its first song (see\n"
+        "                       docs/setlists.md)\n"
         "  --plugin PATH|ID     or a single plugin: a .clap file, or an id or name from\n"
         "                       --list-plugins (starts from the plugin's defaults)\n"
         "  --plugin-id ID       which plugin, when the .clap file holds several\n"
@@ -69,7 +74,7 @@ void printUsage() {
         "  --no-ui              no rack window, console only; every editor opens at start\n"
         "  --no-editor          with --no-ui: don't open the editors either\n"
         "\n"
-        "Saving (--play). A --rack is saved back to itself when StageHand quits, with\n"
+        "Saving (when playing). A --rack is saved back to itself when StageHand quits, with\n"
         "each plugin's current state:\n"
         "  --no-save-rack       don't save anything\n"
         "  --save-rack PATH     save to PATH instead (\"save as\"); the way to keep a\n"
@@ -77,14 +82,14 @@ void printUsage() {
         "  --overwrite          let --save-rack replace an existing rack other than the\n"
         "                       one being played (refused otherwise)\n"
         "\n"
-        "Audio (--play, --tone):\n"
+        "Audio (playing, --tone):\n"
         "  --quantum N          force a PipeWire buffer size of N frames (4-8192) while\n"
         "                       StageHand runs, released when it exits. Treat it as\n"
         "                       affecting all audio on the system.\n"
         "  --channels N         output channels to register (default 2)\n"
         "  --no-connect         don't connect to the system playback ports\n"
         "\n"
-        "MIDI (--play, --monitor). Every hardware MIDI input is opened by default, plus\n"
+        "MIDI (playing, --monitor). Every hardware MIDI input is opened by default, plus\n"
         "two virtual inputs other apps can connect to: 'MIDI 2.0 In' and 'MIDI 1.0 In'.\n"
         "  --midi ID            open only this source instead; repeatable. ID is from\n"
         "                       --list-midi, a client:port like 14:0, or 'all' (hardware\n"
@@ -103,13 +108,14 @@ void printUsage() {
         "In the terminal, Ctrl-C quits the same way as Ctrl-Q.\n"
         "\n"
         "Audio goes through PipeWire's JACK layer. Started without pw-jack and with no\n"
-        "JACK server to reach, --play and --tone restart themselves under pw-jack.\n"
+        "JACK server to reach, playing and --tone restart themselves under pw-jack.\n"
         "\n"
         "Examples:\n"
-        "  pw-jack stagehand --play --rack ~/Racks/Piano.rack\n"
-        "  pw-jack stagehand --play --save-rack ~/Racks/New.rack    (build it in the window)\n"
-        "  pw-jack stagehand --play --rack ~/Racks/Gig.rack --no-save-rack --quantum 128\n"
-        "  pw-jack stagehand --play --plugin com.unlikelyware.polygraphmodular \\\n"
+        "  pw-jack stagehand --rack ~/Racks/Piano.rack\n"
+        "  pw-jack stagehand --setlist ~/Sets/Friday.setlist\n"
+        "  pw-jack stagehand --save-rack ~/Racks/New.rack    (build it in the window)\n"
+        "  pw-jack stagehand --rack ~/Racks/Gig.rack --no-save-rack --quantum 128\n"
+        "  pw-jack stagehand --plugin com.unlikelyware.polygraphmodular \\\n"
         "      --save-rack ~/Racks/New.rack\n"
         "  stagehand --list-plugins");
 }
@@ -121,6 +127,8 @@ struct Options {
     std::string              plugin;
     std::string              pluginId;
     std::string              rack;
+    std::string              setlist;
+    bool                     reopen      = false;   // no arguments: the last setlist, at its song
     std::string              saveRack;
     bool                     editor      = true;    // --no-ui: open the editors at start
     bool                     openEditors = false;   // with the rack window: open them all at start
@@ -137,7 +145,10 @@ struct Options {
 
 // Returns 0 to run, -1 to exit successfully (help), or a process exit code.
 int parseArguments(int argc, char** argv, Options& options) {
-    if (argc == 1) options.mode = Mode::Play;   // a new, untitled rack
+    if (argc == 1) {   // the last setlist, else a new, untitled rack
+        options.mode   = Mode::Play;
+        options.reopen = true;
+    }
     for (int i = 1; i < argc; ++i) {
         const std::string_view arg = argv[i];
         if (arg == "--help" || arg == "-h") {
@@ -166,6 +177,8 @@ int parseArguments(int argc, char** argv, Options& options) {
             options.editor = false;
         } else if (arg == "--rack" && i + 1 < argc) {
             options.rack = argv[++i];
+        } else if (arg == "--setlist" && i + 1 < argc) {
+            options.setlist = argv[++i];
         } else if (arg == "--save-rack" && i + 1 < argc) {
             options.saveRack = argv[++i];
         } else if (arg == "--overwrite") {
@@ -199,6 +212,7 @@ int parseArguments(int argc, char** argv, Options& options) {
             return 2;
         }
     }
+    if (options.mode == Mode::None) options.mode = Mode::Play;   // playing is the default
     return 0;
 }
 
@@ -507,6 +521,15 @@ int runPlay(const Options& options) {
                      options.rack.c_str(), options.plugin.c_str());
         return 2;
     }
+    if (!options.setlist.empty() && (!options.rack.empty() || !options.plugin.empty() || !options.saveRack.empty())) {
+        std::fprintf(stderr,
+                     "--setlist chooses its racks itself: don't combine it with --rack, --plugin or --save-rack.\n");
+        return 2;
+    }
+    if (!options.setlist.empty() && !isSetlistFile(options.setlist)) {
+        std::fprintf(stderr, "--setlist %s: no setlist file there.\n", options.setlist.c_str());
+        return 1;
+    }
     if (options.noSaveRack && !options.saveRack.empty()) {
         std::fprintf(stderr, "--save-rack and --no-save-rack contradict each other; use one.\n");
         return 2;
@@ -604,7 +627,20 @@ int runPlay(const Options& options) {
     config.saveTarget         = saveTarget.empty() ? std::string{} : resolveRackPath(saveTarget);
     config.savingOff          = options.noSaveRack;
     config.clickRouting       = &backend;
+    config.lastPositionPath   = defaultLastPositionPath();
     RackController controller(session, *engine, *input, factory, std::move(config));
+    // A setlist: --setlist from its first song, or (no arguments) the last one
+    // at its song. Its rack replaces the untitled one loaded above.
+    if (!options.setlist.empty()) {
+        controller.openSetlist(options.setlist);
+    } else if (LastPosition last; options.reopen && loadLastPosition(defaultLastPositionPath(), last) &&
+                                  !last.setlist.empty()) {
+        if (isSetlistFile(last.setlist))
+            controller.openSetlist(last.setlist, last.song);
+        else
+            std::printf("The last setlist, %s, isn't there any more; starting with an untitled rack.\n",
+                        last.setlist.c_str());
+    }
     controllerRef = &controller;
     std::unique_ptr<RackUi>* uiRef = nullptr;   // set once the window exists
     auto printNotices = [&controller, &uiRef] {

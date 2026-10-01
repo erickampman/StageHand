@@ -234,7 +234,7 @@ Implemented in step 5:
 - A muted row is dimmed like a placeholder (since 2026-10-01), except its M
   button, which stays bright.
 - "+ Add plugin" lists the scanned plugins (scanned once, on first use) and
-  adds the choice at the bottom. `--play --save-rack PATH` alone starts a new,
+  adds the choice at the bottom. `--save-rack PATH` alone starts a new,
   empty rack. With the window, a rack with nothing runnable no longer exits.
 - Placeholder rows show no output controls.
 - Menus and the panel are overlays inside the window (DGL has no native

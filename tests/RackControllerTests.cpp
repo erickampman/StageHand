@@ -15,6 +15,7 @@
 #include "FakePlugin.h"
 #include "SessionFakes.h"
 #include "Session/RackFile.h"
+#include "Session/SetlistFile.h"
 
 using namespace stagehand;
 using namespace stagehand::test;
@@ -739,6 +740,122 @@ void testFiles() {
     std::filesystem::remove_all(dir);
 }
 
+// Setlists (docs/setlists.md, milestone 1): making one, going through it,
+// editing it (saved at once), missing racks skipped, Save As re-pointing the
+// song, the last position, and leaving it by opening a rack on its own.
+void testSetlist() {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / "stagehand-setlist-test";
+    fs::remove_all(dir);
+    for (const char* name : {"A", "B", "C"}) {
+        Rack rack;
+        rack.name  = name;
+        rack.slots = {slot("keys", "synth", "/clap/Synth.clap")};
+        CHECK(saveRack((dir / "Racks" / (std::string(name) + ".rack")).string(), rack).ok);
+    }
+    const std::string a = (dir / "Racks/A.rack").string(), b = (dir / "Racks/B.rack").string(),
+                      c = (dir / "Racks/C.rack").string();
+    const std::string lastPath = (dir / "state/last.json").string();
+
+    Rig                 rig;
+    Session::LoadReport report;
+    Rack                untitled;
+    untitled.name = "Untitled";
+    rig.session->load(untitled, 48000.0, report);
+    RackController::Config config = rig.config();
+    config.lastPositionPath       = lastPath;
+    RackController       controller(*rig.session, *rig.engine, rig.midi, rig.factory, config);
+    const RackViewModel& view = controller.view();
+    double               now  = 0.0;
+    auto tick = [&] { controller.tick(now += 2.0); };   // past the once-a-second disk check
+
+    // An untitled rack can't be a song.
+    const std::string gig = (dir / "Gig").string();
+    CHECK(controller.newSetlist(gig, true) == RackController::NewSetlistResult::Failed);
+    CHECK(!controller.hasSetlist());
+
+    // New setlist with this rack: it's song 1, and the file exists at once.
+    CHECK(controller.openRack(a));
+    CHECK(controller.newSetlist(gig, true) == RackController::NewSetlistResult::Created);
+    const std::string file = (dir / "Gig.setlist").string();
+    CHECK(controller.hasSetlist() && controller.setlistPath() == file && isSetlistFile(file));
+    tick();
+    CHECK(view.setlist.open && view.setlist.name == "Gig" && view.setlist.songs.size() == 1);
+    CHECK(view.setlist.current == 0 && view.setlist.next == -1 && view.setlist.songs[0].name == "A");
+    CHECK(controller.newSetlist(gig, false) == RackController::NewSetlistResult::NeedsReplace);
+
+    // Adding: after the current song, without switching; a non-rack is refused.
+    CHECK(controller.addRackToSetlist(b));
+    CHECK(!controller.addRackToSetlist((dir / "Nothing").string()));
+    tick();
+    CHECK(view.setlist.songs.size() == 2 && view.setlist.songs[1].name == "B" && controller.rackPath() == a);
+    Setlist saved;
+    CHECK(loadSetlist(file, saved).ok && saved.songs.size() == 2 && saved.songs[1].rack == b);
+
+    // Next and Previous, and the remembered position.
+    CHECK(controller.nextSong() && controller.rackPath() == b);
+    CHECK(!controller.nextSong());   // the end
+    LastPosition last;
+    CHECK(loadLastPosition(lastPath, last) && last.setlist == file && last.song == 1);
+    CHECK(controller.previousSong() && controller.rackPath() == a && !controller.previousSong());
+
+    // Again, move, rename: [A, A, B] -> [A, B, A]; B renamed, then back.
+    CHECK(controller.addThisRackAgain());
+    CHECK(controller.moveSong(2, -1));
+    CHECK(!controller.moveSong(2, 1));
+    CHECK(controller.renameSong(1, "  B (fast) "));
+    tick();
+    CHECK(view.setlist.songs.size() == 3 && view.setlist.songs[1].name == "B (fast)" &&
+          view.setlist.songs[1].rackName == "B" && view.setlist.songs[2].name == "A");
+    CHECK(view.setlist.current == 0 && view.setlist.next == 1);
+    CHECK(controller.moveSong(0, 1));   // the playing song moves with it
+    tick();
+    CHECK(view.setlist.current == 1 && view.setlist.songs[0].name == "B (fast)");
+    CHECK(controller.renameSong(0, "B"));   // the rack's own name: no override
+    CHECK(loadSetlist(file, saved).ok && saved.songs[0].name.empty());
+
+    // Remove the playing song: the rack still plays; Next goes to the one after.
+    CHECK(controller.removeSong(1));   // [B, A]
+    tick();
+    CHECK(view.setlist.current == -1 && view.setlist.next == 1 && controller.rackPath() == a);
+    CHECK(fs::exists(a));   // the rack stays on disk
+    CHECK(controller.nextSong() && view.setlist.current == -1);   // tick() hasn't run yet
+    tick();
+    CHECK(view.setlist.current == 1);
+
+    // A missing rack is shown and skipped.
+    CHECK(controller.addRackToSetlist(c));   // [B, A, C]
+    fs::rename(c, (dir / "Racks/C-away.rack").string());
+    CHECK(controller.previousSong() && controller.rackPath() == b);   // previous from A
+    tick();
+    CHECK(view.setlist.songs[2].missing && view.setlist.next == 1);
+    CHECK(controller.nextSong() && !controller.nextSong() && !controller.goToSong(2));
+    fs::rename((dir / "Racks/C-away.rack").string(), c);
+
+    // Save As while on a song points the song at the new bundle.
+    CHECK(controller.saveAs((dir / "Racks/A2").string()) == RackController::SaveAsResult::Saved);
+    CHECK(loadSetlist(file, saved).ok && saved.songs[1].rack == (dir / "Racks/A2.rack").string());
+
+    // A new rack added to the set is created on disk and played.
+    CHECK(controller.addNewRackToSetlist((dir / "Racks/D").string()));
+    CHECK(controller.rackPath() == (dir / "Racks/D.rack").string() && !rackBundleOf((dir / "Racks/D.rack").string()).empty());
+    CHECK(!controller.addNewRackToSetlist((dir / "Racks/D").string()));   // exists: refused
+
+    // Reopening at a song, as a start with no arguments does.
+    CHECK(controller.openSetlist(file, 0) && controller.rackPath() == b);
+    CHECK(controller.openSetlist(file, 9) && controller.rackPath() == c);   // clamped to the last
+
+    // Opening a rack on its own leaves the set, and forgets it.
+    CHECK(controller.openRack(a));
+    tick();
+    CHECK(!controller.hasSetlist() && !view.setlist.open);
+    CHECK(loadLastPosition(lastPath, last) && last.setlist.empty());
+
+    runBlock(*rig.engine);
+    rig.engine->collect();
+    fs::remove_all(dir);
+}
+
 } // namespace
 
 int main() {
@@ -755,5 +872,6 @@ int main() {
     testFindPlaybackDevice();
     testClickRouting();
     testRenameSequence();
+    testSetlist();
     return test::finish("RackController");
 }
