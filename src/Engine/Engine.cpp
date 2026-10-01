@@ -20,8 +20,9 @@ bool accepts(const SlotConfig& slot, MidiSourceHandle source, const MidiMessage&
     const MidiFilter& filter = slot.midiFilter;
     // A sequence plays only into the slots that list it (its targets); "all"
     // means every MIDI input, never a sequence. A live input is the slot's own.
-    if (isSequenceSource(source)) {
-        if (std::find(slot.sequenceSources.begin(), slot.sequenceSources.end(), source) == slot.sequenceSources.end())
+    if (isSequenceSource(source)) {   // an audition comes from its sequence's rows too
+        const MidiSourceHandle sequence = sequenceOfSource(source);
+        if (std::find(slot.sequenceSources.begin(), slot.sequenceSources.end(), sequence) == slot.sequenceSources.end())
             return false;
     } else if (!filter.allSources && filter.source != source) {
         return false;
@@ -52,6 +53,12 @@ bool accepts(const SlotConfig& slot, MidiSourceHandle source, const MidiMessage&
         if (velocity < filter.velocityLow || velocity > filter.velocityHigh) return false;
     }
     return true;
+}
+
+// Do two note messages address the same note (group, channel, note number)?
+bool sameNote(const MidiMessage& a, const MidiMessage& b) noexcept {
+    return ump::group(a) == ump::group(b) && ump::channel(a) == ump::channel(b) &&
+           ump::noteNumber(a) == ump::noteNumber(b);
 }
 
 // Can a note port with `dialects` take `m` unchanged?
@@ -189,6 +196,16 @@ bool Engine::sendSequenceCommand(MidiSourceHandle source, SequenceCommand comman
     return sequenceCommands.push(QueuedCommand{source, command});
 }
 
+bool Engine::auditionNote(MidiSourceHandle sequence, const MidiMessage& on, const MidiMessage& off,
+                          double seconds) noexcept {
+    return auditionRequests.push(AuditionRequest{auditionSourceOf(sequence), on, off, seconds, false});
+}
+
+bool Engine::endAuditions(MidiSourceHandle sequence, const MidiMessage* allNotesOff) noexcept {
+    return auditionRequests.push(AuditionRequest{auditionSourceOf(sequence),
+                                                 allNotesOff != nullptr ? *allNotesOff : MidiMessage{}, {}, 0.0, true});
+}
+
 void Engine::setClick(bool on, bool everyNote, float gain) noexcept {
     clickEveryNote.store(everyNote, std::memory_order_relaxed);
     clickGain.store(std::clamp(gain, 0.0f, 1.0f), std::memory_order_relaxed);
@@ -250,7 +267,7 @@ void Engine::process(const AudioCallbackContext& ctx) noexcept {
     advanceTransport(ctx);
     adoptSequences(ctx);
     takeMidi(ctx);
-    generateSequences();
+    generateSequences(ctx);
     routeMidi(ctx.frameCount);
     runSlots(ctx);
     renderClick(ctx);
@@ -381,12 +398,14 @@ void Engine::adoptSequences(const AudioCallbackContext& ctx) noexcept {
 
 // This block's sequence events, sorted by (offset, order) for routeMidi() to
 // merge with the input.
-void Engine::generateSequences() noexcept {
-    if (currentSequences == nullptr) return;
-    const std::size_t room = kMaxSequenceEvents - sequenceEventCount;
-    const std::size_t made = currentSequences->generate(sequenceBlock, sequenceEvents + sequenceEventCount, room);
-    if (made == room) sequenceEventsFull.fetch_add(1, std::memory_order_relaxed);   // may have dropped some
-    sequenceEventCount += made;
+void Engine::generateSequences(const AudioCallbackContext& ctx) noexcept {
+    if (currentSequences != nullptr) {
+        const std::size_t room = kMaxSequenceEvents - sequenceEventCount;
+        const std::size_t made = currentSequences->generate(sequenceBlock, sequenceEvents + sequenceEventCount, room);
+        if (made == room) sequenceEventsFull.fetch_add(1, std::memory_order_relaxed);   // may have dropped some
+        sequenceEventCount += made;
+    }
+    generateAuditions(ctx);
 
     // Insertion sort, stable: a block has few events, and most arrive in order.
     for (std::size_t i = 1; i < sequenceEventCount; ++i) {
@@ -397,6 +416,70 @@ void Engine::generateSequences() noexcept {
              --j)
             sequenceEvents[j] = sequenceEvents[j - 1];
         sequenceEvents[j] = e;
+    }
+}
+
+// Requests in order: an end ends its sequence's auditions (and with All Notes
+// Off, sends a note-off for every key and the CC), and a new audition
+// starts (ending any audition of the same note number first, so its note-off
+// can't cut the new one short), all at the block's start. Then every
+// audition whose time runs out in this block ends where it does.
+void Engine::generateAuditions(const AudioCallbackContext& ctx) noexcept {
+    auto push = [this](std::uint32_t offset, std::uint8_t order, MidiSourceHandle source, const MidiMessage& m) {
+        if (sequenceEventCount == kMaxSequenceEvents) {
+            sequenceEventsFull.fetch_add(1, std::memory_order_relaxed);
+            return false;
+        }
+        sequenceEvents[sequenceEventCount++] = SequenceEvent{offset, order, source, m};
+        return true;
+    };
+    AuditionRequest request;
+    while (auditionRequests.pop(request)) {
+        if (request.end) {
+            for (AuditionVoice& voice : auditionVoices)
+                if (voice.used && voice.source == request.source) {
+                    push(0, 0, voice.source, voice.off);
+                    voice.used = false;
+                }
+            if (request.on.wordCount > 0) {   // every key's note-off, in the CC's form, then the CC
+                MidiMessage off = request.on;
+                off.words[0]    = (off.words[0] & 0xFF0F0000u) | 0x00800000u;   // note-off, same type, group, channel
+                if (off.wordCount > 1) off.words[1] = 0;
+                for (std::uint32_t key = 0; key < 128; ++key) {
+                    off.words[0] = (off.words[0] & 0xFFFF00FFu) | (key << 8);
+                    push(0, 0, request.source, off);
+                }
+                push(0, 0, request.source, request.on);
+            }
+            continue;
+        }
+        AuditionVoice* free = nullptr;
+        for (AuditionVoice& voice : auditionVoices) {
+            if (voice.used && voice.source == request.source && sameNote(voice.off, request.off)) {
+                push(0, 0, voice.source, voice.off);
+                voice.used = false;
+            }
+            if (!voice.used && free == nullptr) free = &voice;
+        }
+        if (free == nullptr) {   // all sounding: the one nearest its end makes room
+            free = &auditionVoices[0];
+            for (AuditionVoice& voice : auditionVoices)
+                if (voice.framesLeft < free->framesLeft) free = &voice;
+            push(0, 0, free->source, free->off);
+            free->used = false;
+        }
+        if (!push(0, 1, request.source, request.on)) continue;
+        const double frames = std::max(1.0, request.seconds * ctx.time.sampleRate);
+        *free = AuditionVoice{true, request.source, request.off, static_cast<std::uint64_t>(frames)};
+    }
+    for (AuditionVoice& voice : auditionVoices) {
+        if (!voice.used) continue;
+        if (voice.framesLeft < ctx.frameCount) {
+            push(static_cast<std::uint32_t>(voice.framesLeft), 0, voice.source, voice.off);
+            voice.used = false;
+        } else {
+            voice.framesLeft -= ctx.frameCount;
+        }
     }
 }
 

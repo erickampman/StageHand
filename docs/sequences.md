@@ -278,7 +278,36 @@ Implemented 2026-09-29 (milestone 4):
   - The wheel scrolls, Shift-wheel scrolls sideways, and Ctrl-wheel zooms. The
     zoom fits the loop to the window until you zoom yourself.
 - **The strip also sets:** "Step 0 at" (the reference note), and the length
-  of new notes.
+  of new notes. The note-off offset steps by 10 ms (Shift: 100 ms).
+- **Hearing notes as you edit (added 2026-10-01):** adding a note sounds it,
+  and so does clicking one (any press that grabs it: to move, resize, or
+  change velocity; `SequenceEditor::soundNote`).
+  Moving notes sounds them each time the move's pitch changes, with a drag or
+  the up and down arrows. A move in time alone stays silent. Up to 8 notes
+  sound at once (`RackController::kMaxAuditionNotes`). Each sounds for its own
+  length at the current tempo, kept between 0.12 s and 1 s. The notes go
+  into every row the sequence plays into, through each row's filter, whether
+  or not the sequence or the transport is running. With no rows, nothing is
+  heard. Path: `SequenceEditor` -> `RackController::auditionNotes` ->
+  `Session::auditionNote` (`auditionMessages()` builds the messages that
+  playback would send; MIDI 2.0 uses the nearest note number plus the pitch
+  attribute) -> `Engine::auditionNote`. The engine queues the note, sends the
+  note-on at the next block, and counts down to the note-off. An audition comes
+  from the sequence's handle with `kAuditionSourceBit` set. It reaches the
+  same rows, but its held notes are tracked separately, so it never cuts off a
+  note the sequence is playing. Auditioning a note number that is still
+  sounding restarts it. Each new audition from the editor first ends the ones
+  it started before (`Engine::endAuditions`, through the same queue). So a
+  note dragged to a new pitch stops at the old pitch, in the same block where
+  it starts at the new one. Letting go of the mouse ends it too
+  (`SequenceEditor::stopSounding`). It is followed, on the sequence's
+  channel and into its rows, by a note-off for every key and then All Notes
+  Off (CC 123). Both are sent because some synths ignore CC 123. That ends
+  anything left on there, whoever started it, including notes the sequence
+  itself is playing. It was added after a drag left a note stuck. All of it
+  arrives at the start of the next block (about 130 events per row). So a note sounds only while it's held,
+  for at most its own length (capped as above). The arrow keys have no
+  release, so their notes play for that time.
 
 ### Drag and click rules (accepted)
 

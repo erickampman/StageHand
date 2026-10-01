@@ -61,12 +61,21 @@ public:
     bool inGesture() const noexcept { return gesture; }
 
     // Add a note (the last length used, the default velocity) and select only
-    // it. False if (start, pitch) is off the grid.
+    // it, and sound it. False if (start, pitch) is off the grid.
     bool addNote(std::uint32_t start, int pitch);
     void stretchNew(std::uint32_t lastUnit);                       // a new note's end follows the drag
-    void moveSelection(int units, int pitches, bool copy);         // relative to the gesture's start
+    // Relative to the gesture's start. The moved notes sound each time the
+    // move's pitch changes (a move in time alone is silent).
+    void moveSelection(int units, int pitches, bool copy);
     void resize(int index, std::uint32_t length);                  // `index` at the gesture's start
     void changeVelocity(double fractionOfRange);                   // relative to the gesture's start
+
+    // Sound one note (a click on it), as an added or moved note sounds.
+    void soundNote(int index);
+    // End what the editor is sounding (the mouse released), then send a
+    // note-off for every key and All Notes Off on the sequence's channel into
+    // its rows, so nothing is left stuck.
+    void stopSounding();
 
     // --- one-step edits
     void select(int index, bool add);
@@ -106,6 +115,7 @@ private:
     bool                                   gesture   = false;
     std::optional<SequenceNote>            added;       // a note this gesture is drawing
     std::uint32_t                          lastLength = 1;
+    int                                    soundedPitches = 0;   // the move's pitch offset last sounded
     std::vector<std::vector<SequenceNote>> undoStack, redoStack;
 };
 

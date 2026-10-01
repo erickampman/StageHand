@@ -331,6 +331,87 @@ void testRouting() {
     CHECK(at(slow.find(true, 62), 12000));
 }
 
+// Auditions (the editor sounding a note): into the sequence's rows only,
+// playing or not, for their own time, and held apart from what it plays.
+void testAudition() {
+    const AuditionMessages c4 = auditionMessages(midi1({}), SequenceNote{0, 1, 60, 90});
+
+    // Stopped, transport too: on at the next block, off 0.25 s (12000 frames) later.
+    Rig rig(false, false);
+    rig.run(4800);
+    CHECK(rig.engine->auditionNote(kSeq, c4.on, c4.off, 0.25));
+    rig.run(24000);
+    CHECK(at(rig.find(true, 60), 4800) && at(rig.find(false, 60), 4800 + 12000));
+    CHECK(rig.heard.size() == 2 && (rig.find(true, 60)->message.words[0] & 0x7F) == 90);
+
+    // "All inputs" doesn't hear it; nor does a row the sequence doesn't play into.
+    Rig all(true, false);
+    all.engine->auditionNote(kSeq, c4.on, c4.off, 0.25);
+    all.run(24000);
+    CHECK(all.heard.empty());
+
+    // Again before it ends: it restarts (one off first, then one at the new end).
+    Rig again(false, false);
+    again.engine->auditionNote(kSeq, c4.on, c4.off, 0.25);
+    again.run(4800);
+    again.engine->auditionNote(kSeq, c4.on, c4.off, 0.25);
+    again.run(24000);
+    CHECK(at(again.find(false, 60), 4800) && at(again.find(true, 60, 1), 4800));
+    CHECK(at(again.find(false, 60, 4801), 4800 + 12000) && again.heard.size() == 4);
+
+    // Ended early (a dragged note leaving its pitch), then a new one at once.
+    const AuditionMessages d4 = auditionMessages(midi1({}), SequenceNote{0, 1, 62, 90});
+    Rig moved(false, false);
+    moved.engine->auditionNote(kSeq, c4.on, c4.off, 0.25);
+    moved.run(4800);
+    moved.engine->endAuditions(kSeq);
+    moved.engine->auditionNote(kSeq, d4.on, d4.off, 0.25);
+    moved.run(24000);
+    CHECK(at(moved.find(false, 60), 4800) && at(moved.find(true, 62), 4800));
+    CHECK(at(moved.find(false, 62), 4800 + 12000) && moved.heard.size() == 4);
+    CHECK(moved.heard[1].frame == 4800 && !moved.heard[1].on);   // the old note's off comes first
+
+    // An end can carry All Notes Off: the audition's note-off, a note-off for
+    // every key, then the CC, all at the block's start, into the same rows.
+    Rig reset(false, false);
+    reset.engine->auditionNote(kSeq, c4.on, c4.off, 0.25);
+    reset.run(4800);
+    const MidiMessage allOff = midi1Message(0xB0, 0, 123, 0);
+    reset.engine->endAuditions(kSeq, &allOff);
+    reset.plugin->calls.clear();
+    reset.run(4800);   // run() keeps only notes: look at the last block's events
+    int  offsBeforeCc = 0, keys = 0;
+    bool sawCc = false, atStart = true;
+    for (const FakePlugin::Call& call : reset.plugin->calls)
+        for (const Event& e : call.events) {
+            atStart = atStart && e.sampleOffset == 0;
+            if (ump::isNoteOff(e.midi) && !sawCc) {
+                ++offsBeforeCc;
+                keys += ump::noteNumber(e.midi);
+            }
+            if (e.midi.words[0] == allOff.words[0]) sawCc = true;
+        }
+    CHECK(sawCc && atStart && offsBeforeCc == 1 + 128 && keys == 60 + 127 * 128 / 2);
+
+    // Over the sequence playing the same note: each note-off ends its own note.
+    Rig both;
+    both.set(midi1({{0, 4, 60, 100}}));   // 0-24000
+    both.engine->sendSequenceCommand(kSeq, SequenceCommand::Start);
+    both.run(4800);
+    both.engine->auditionNote(kSeq, c4.on, c4.off, 0.1);   // 4800-9600
+    both.run(48000);
+    CHECK(at(both.find(false, 60), 9600) && at(both.find(false, 60, 9601), 24000));
+
+    // MIDI 2.0 in 24-EDO: the nearest note number, the exact pitch attached.
+    Sequence quarter = midi1({});
+    quarter.protocol = MidiProtocol::Midi2;
+    quarter.edo      = 24;
+    quarter.referenceNote = 60;
+    const AuditionMessages q = auditionMessages(quarter, SequenceNote{0, 1, 1, 0x8000});   // 60.5
+    CHECK(ump::noteNumber(q.on) == 61 && (q.on.words[1] & 0xFFFF) == 60 * 512 + 256);
+    CHECK(ump::isNoteOff(q.off) && ump::noteNumber(q.off) == 61);
+}
+
 // A pad (note 36 on channel 10) toggles a sequence at the frame it arrives.
 void testNoteTrigger() {
     Rig rig;
@@ -534,6 +615,7 @@ int main() {
     testEdoPitches();
     testEditsWhilePlaying();
     testRouting();
+    testAudition();
     testNoteTrigger();
     testTriggerQuantize();
     testControllerTrigger();

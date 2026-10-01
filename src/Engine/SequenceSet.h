@@ -104,6 +104,13 @@ struct CompiledSequence {
                                     std::shared_ptr<SequenceRuntime> runtime);
 };
 
+// One note of `sequence` as playback would send it (MIDI 2.0: on the note
+// number nearest its pitch), for auditioning it while editing.
+struct AuditionMessages {
+    MidiMessage on, off;
+};
+AuditionMessages auditionMessages(const Sequence& sequence, const SequenceNote& note) noexcept;
+
 // The transport's own MIDI control (docs/sequences.md, section 7), published
 // with the sequences. Its triggers' actions start and stop the transport.
 struct TransportControl {

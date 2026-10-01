@@ -106,6 +106,22 @@ public:
     // block. False if the command queue is full (try again next tick).
     bool sendSequenceCommand(MidiSourceHandle source, SequenceCommand command) noexcept;
 
+    // Audition one note while editing (docs/sequences.md, section 5): `on` now,
+    // `off` after `seconds`, from `sequence` into the rows it plays into
+    // (through their filters), whether or not it is playing or the transport
+    // runs. Held apart from the sequence's own notes (kAuditionSourceBit). A
+    // new audition of a sounding note number restarts it. Main thread; false if
+    // the queue is full.
+    bool auditionNote(MidiSourceHandle sequence, const MidiMessage& on, const MidiMessage& off,
+                      double seconds) noexcept;
+    // End every audition of `sequence` still sounding, at the next block's start
+    // (in order with auditionNote(): a note moved to a new pitch ends, then the
+    // new one starts). With `allNotesOff` (CC 123, in the sequence's protocol,
+    // group and channel), then clear those rows on that channel for good: a
+    // note-off for every key (for plugins that ignore CC 123), then the CC
+    // itself. Main thread; false if the queue is full.
+    bool endAuditions(MidiSourceHandle sequence, const MidiMessage* allNotesOff = nullptr) noexcept;
+
     // --- MIDI learn (docs/sequences.md, section 4). Main thread.
     // Arm: the next note-on, or controller press (a value of 64 or more), from
     // any input is captured instead of reaching rows or triggers.
@@ -204,7 +220,8 @@ private:
     void adoptPendingGraph() noexcept;
     void adoptSequences(const AudioCallbackContext& ctx) noexcept;
     void takeMidi(const AudioCallbackContext& ctx) noexcept;
-    void generateSequences() noexcept;
+    void generateSequences(const AudioCallbackContext& ctx) noexcept;
+    void generateAuditions(const AudioCallbackContext& ctx) noexcept;
     void routeMidi(std::uint32_t frames) noexcept;
     void route(const QueuedMidi& item, std::uint32_t offset) noexcept;
     bool deliver(std::size_t slot, const MidiMessage& original, const MidiMessage* upconverted,
@@ -257,6 +274,23 @@ private:
     std::size_t                   sequenceEventCount = 0;
     std::atomic<std::uint64_t>    sequenceEventsFull{0};
     SequenceSet::Block            sequenceBlock;   // this block, for the sequences
+
+    // Auditioned notes: requests main -> audio, and the ones sounding (audio
+    // thread only), each ending after its own count of frames.
+    struct AuditionRequest {
+        MidiSourceHandle source = kInvalidMidiSource;   // the sequence's, with kAuditionSourceBit
+        MidiMessage      on, off;
+        double           seconds = 0.0;
+        bool             end     = false;   // endAuditions(): `on` is its allNotesOff (if any words)
+    };
+    struct AuditionVoice {
+        bool             used   = false;
+        MidiSourceHandle source = kInvalidMidiSource;
+        MidiMessage      off;
+        std::uint64_t    framesLeft = 0;
+    };
+    SpscQueue<AuditionRequest, 64> auditionRequests;
+    AuditionVoice                  auditionVoices[32];
 
     // This block's input MIDI, taken from the queue before the sequences run
     // (a trigger must act before they generate). As large as the queue.

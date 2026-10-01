@@ -299,7 +299,8 @@ void SequenceEditorWidget::drawStrip(const Sequence& seq) {
     char offset[32];
     std::snprintf(offset, sizeof offset, "%+.0f ms", seq.noteOffOffsetMs);
     stepper(80.0f, 300.0f, offset, [this, id, ms = seq.noteOffOffsetMs](int dir, bool big) {
-        controller.setSequenceNoteOffOffset(id, ms + dir * (big ? 10.0 : 1.0));
+        const double step = big ? 100.0 : 10.0;   // onto the step's grid, so an odd value from a file lines up
+        controller.setSequenceNoteOffOffset(id, std::round((ms + dir * step) / step) * step);
     });
 
     settingRow(330.0f, "Channel");
@@ -372,8 +373,12 @@ void SequenceEditorWidget::pressCanvas(const Press& p) {
             return;
         }
         if (!editor.items()[static_cast<std::size_t>(index)].selected) editor.select(index, false);
+        editor.soundNote(index);   // a click on a note plays it (whatever the drag does next)
         editor.beginGesture();
-        dragEnd = [this] { editor.endGesture(); };
+        dragEnd = [this] {
+            editor.endGesture();
+            editor.stopSounding();   // the note sounds only while it's held
+        };
 
         if (ctrl) {   // velocity: up is louder, 200 px for the whole range
             drag = [this, startY = p.y](float, float y, std::uint32_t) { editor.changeVelocity((startY - y) / 200.0); };
@@ -425,7 +430,10 @@ void SequenceEditorWidget::pressCanvas(const Press& p) {
     drag = [this](float x, float, std::uint32_t) {
         editor.stretchNew(static_cast<std::uint32_t>(std::max<std::int64_t>(0, unitAt(x))));
     };
-    dragEnd = [this] { editor.endGesture(); };
+    dragEnd = [this] {
+            editor.endGesture();
+            editor.stopSounding();   // the note sounds only while it's held
+        };
 }
 
 void SequenceEditorWidget::wheelUnclaimed(float x, float, float notches, std::uint32_t mod) {

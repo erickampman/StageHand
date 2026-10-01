@@ -100,7 +100,35 @@ std::uint8_t chooseNote(const CompiledSequence& s, const Note& n) noexcept {
     return static_cast<std::uint8_t>(std::clamp(best, 0, 127));
 }
 
+// A note's pitch resolved to what's sent (its length as written).
+Note compileNote(const Sequence& sequence, const SequenceNote& note) noexcept {
+    Note n;
+    n.start  = note.start;
+    n.length = note.length;
+    n.pitch  = note.pitch;
+    if (sequence.protocol == MidiProtocol::Midi1) {
+        n.semitones = std::clamp(note.pitch, 0, 127);
+        n.velocity  = std::clamp<std::uint16_t>(note.velocity, 1, 127);
+    } else {
+        const int edo = sequence.edo > 0 ? sequence.edo : 12;
+        n.semitones   = std::clamp(sequence.referenceNote + note.pitch * 12.0 / edo, 0.0, 127.0 + 511.0 / 512.0);
+        n.pitch79     = static_cast<std::uint16_t>(std::clamp(std::lround(n.semitones * 512.0), 0L, 65535L));
+        n.velocity    = std::max<std::uint16_t>(note.velocity, 1);
+    }
+    return n;
+}
+
 } // namespace
+
+AuditionMessages auditionMessages(const Sequence& sequence, const SequenceNote& note) noexcept {
+    CompiledSequence s;   // only what the messages need
+    s.protocol        = sequence.protocol;
+    s.channel         = static_cast<std::uint8_t>(sequence.channel & 0x0F);
+    s.group           = static_cast<std::uint8_t>(sequence.group & 0x0F);
+    const Note n      = compileNote(sequence, note);
+    const auto number = static_cast<std::uint8_t>(std::clamp(std::lround(n.semitones), 0L, 127L));
+    return AuditionMessages{noteOnMessage(s, number, n), noteOffMessage(s.protocol, s.channel, s.group, number)};
+}
 
 CompiledSequence CompiledSequence::compile(const Sequence& sequence, MidiSourceHandle source,
                                            std::shared_ptr<SequenceRuntime> runtime) {
@@ -116,22 +144,11 @@ CompiledSequence CompiledSequence::compile(const Sequence& sequence, MidiSourceH
     c.repeat          = sequence.repeat;
     c.noteOffOffsetMs = sequence.noteOffOffsetMs;
     c.atStart         = sequence.atStart;
-    const int edo     = sequence.edo > 0 ? sequence.edo : 12;
 
     for (const SequenceNote& note : sequence.notes) {
         if (note.length == 0 || note.start >= c.length) continue;
-        Note n;
-        n.start  = note.start;
+        Note n   = compileNote(sequence, note);
         n.length = std::min(note.length, c.length - note.start);
-        n.pitch  = note.pitch;
-        if (c.protocol == MidiProtocol::Midi1) {
-            n.semitones = std::clamp(note.pitch, 0, 127);
-            n.velocity  = std::clamp<std::uint16_t>(note.velocity, 1, 127);
-        } else {
-            n.semitones = std::clamp(sequence.referenceNote + note.pitch * 12.0 / edo, 0.0, 127.0 + 511.0 / 512.0);
-            n.pitch79   = static_cast<std::uint16_t>(std::clamp(std::lround(n.semitones * 512.0), 0L, 65535L));
-            n.velocity  = std::max<std::uint16_t>(note.velocity, 1);
-        }
         c.notes.push_back(n);
     }
     std::sort(c.notes.begin(), c.notes.end(), [](const Note& a, const Note& b) {

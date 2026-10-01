@@ -133,8 +133,9 @@ void SequenceEditor::apply(std::vector<Working> next) {
 
 void SequenceEditor::beginGesture() {
     if (gesture) return;
-    gesture = true;
-    base    = notes;
+    gesture        = true;
+    base           = notes;
+    soundedPitches = 0;
     added.reset();
 }
 
@@ -162,6 +163,7 @@ bool SequenceEditor::addNote(std::uint32_t start, int pitch) {
     note.velocity = defaultVelocity();
     added         = note;
     apply(fromBase());
+    controller.auditionNotes(sequenceId, {note});
     if (oneShot) endGesture();
     return true;
 }
@@ -203,6 +205,13 @@ void SequenceEditor::moveSelection(int units, int pitches, bool copy) {
         next.push_back(Working{moved, true, true});
     }
     apply(std::move(next));
+
+    if (dp == soundedPitches) return;
+    soundedPitches = dp;
+    std::vector<SequenceNote> moved;
+    for (const Item& item : notes)
+        if (item.selected) moved.push_back(item.note);
+    controller.auditionNotes(sequenceId, moved);
 }
 
 void SequenceEditor::resize(int index, std::uint32_t length) {
@@ -225,6 +234,15 @@ void SequenceEditor::changeVelocity(double fraction) {
             w.note.velocity = static_cast<std::uint16_t>(std::clamp(std::lround(w.note.velocity + fraction * top), 1L,
                                                                     static_cast<long>(top)));
     apply(std::move(next));
+}
+
+void SequenceEditor::soundNote(int index) {
+    if (index >= 0 && static_cast<std::size_t>(index) < notes.size())
+        controller.auditionNotes(sequenceId, {notes[static_cast<std::size_t>(index)].note});
+}
+
+void SequenceEditor::stopSounding() {
+    controller.endAuditions(sequenceId, true);
 }
 
 // --- one-step edits --------------------------------------------------------------------

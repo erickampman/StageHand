@@ -138,6 +138,17 @@ public:
     bool stopSequence(const std::string& id);    // at its launch boundary
     void stopAllSequences();                     // now, with note-offs
     SequenceState sequenceState(const std::string& id) const noexcept;
+    // Sound `note` of sequence `id` once in the rows it plays into, for its own
+    // length at the current tempo (kept between kMinAudition and kMaxAudition
+    // seconds), as the editor adds or moves it. Playing or not.
+    bool auditionNote(const std::string& id, const SequenceNote& note);
+    // End what auditionNote() started and is still sounding; `allNotesOff`: then
+    // send a note-off for every key and All Notes Off (CC 123) on the
+    // sequence's channel into its rows, which ends any note left on there,
+    // whoever started it, even in a plugin that ignores CC 123.
+    bool endAuditions(const std::string& id, bool allNotesOff = false);
+    static constexpr double kMinAudition = 0.12;
+    static constexpr double kMaxAudition = 1.0;
 
     // --- the transport (docs/sequences.md, section 7): Start puts beat 1 at the
     // next block; Stop ends every sequence and returns to bar 1. Its MIDI

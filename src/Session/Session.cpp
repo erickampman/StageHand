@@ -340,6 +340,35 @@ bool Session::stopSequence(const std::string& id) {
     return entry != nullptr && engine.sendSequenceCommand(entry->source, SequenceCommand::Stop);
 }
 
+bool Session::endAuditions(const std::string& id, bool allNotesOff) {
+    const SequenceEntry* entry = sequence(id);
+    if (entry == nullptr) return false;
+    if (!allNotesOff) return engine.endAuditions(entry->source);
+    const Sequence&     seq  = entry->sequence;
+    const std::uint32_t head = (std::uint32_t(seq.group & 0x0F) << 24) | ((0xB0u | (seq.channel & 0x0F)) << 16) |
+                               (123u << 8);   // controller 123, value 0
+    MidiMessage cc;
+    if (seq.protocol == MidiProtocol::Midi1) {
+        cc.words[0]  = 0x20000000u | head;
+        cc.wordCount = 1;
+    } else {
+        cc.words[0]  = 0x40000000u | head;
+        cc.words[1]  = 0;
+        cc.wordCount = 2;
+    }
+    return engine.endAuditions(entry->source, &cc);
+}
+
+bool Session::auditionNote(const std::string& id, const SequenceNote& note) {
+    const SequenceEntry* entry = sequence(id);
+    if (entry == nullptr) return false;
+    const Sequence&        seq          = entry->sequence;
+    const double           unitsPerBeat = seq.rate.unitsPerBeat() > 0.0 ? seq.rate.unitsPerBeat() : 4.0;
+    const double           seconds      = note.length / unitsPerBeat * 60.0 / std::max(1.0, tempo);
+    const AuditionMessages m            = auditionMessages(seq, note);
+    return engine.auditionNote(entry->source, m.on, m.off, std::clamp(seconds, kMinAudition, kMaxAudition));
+}
+
 void Session::setTransportSettings(const TransportSettings& settings) {
     transportSetup = settings;
     resolveTransport();

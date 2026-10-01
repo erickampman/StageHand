@@ -138,6 +138,15 @@ public:
     // The editor's edits (the editor window, docs/sequences.md section 5).
     // Notes are replaced whole; the rest changes one setting and leaves the notes.
     void setSequenceNotes(const std::string& id, std::vector<SequenceNote> notes);
+    // Sound these notes of the sequence once, in the rows it plays into (the
+    // editor, as notes are added, clicked or moved), ending the ones it sounded
+    // before: a note dragged to a new pitch stops sounding at the old one. A
+    // few at most: a big selection moved at once would be a cluster, not a
+    // check of the pitch.
+    void auditionNotes(const std::string& id, const std::vector<SequenceNote>& notes);
+    // Now, whatever auditionNotes() left sounding; `allNotesOff` as Session::endAuditions.
+    void endAuditions(const std::string& id, bool allNotesOff = false);
+    static constexpr std::size_t kMaxAuditionNotes = 8;
     void setSequenceProtocol(const std::string& id, MidiProtocol protocol);   // only while it has no notes
     void setSequenceTuning(const std::string& id, int edo, int referenceNote);
     void setSequenceChannel(const std::string& id, int channel);   // 0-based

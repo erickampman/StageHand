@@ -86,5 +86,15 @@ inline constexpr MidiSourceHandle kSequenceSourceBase = 0x80000000u;
 constexpr bool isSequenceSource(MidiSourceHandle handle) noexcept {
     return handle >= kSequenceSourceBase;
 }
+// Notes auditioned from the editor (Engine::auditionNote) come from the
+// sequence's handle with this bit set: they reach the same rows, but are held
+// apart from the notes the sequence is playing.
+inline constexpr MidiSourceHandle kAuditionSourceBit = 0x40000000u;
+constexpr MidiSourceHandle auditionSourceOf(MidiSourceHandle sequence) noexcept {
+    return sequence | kAuditionSourceBit;
+}
+constexpr MidiSourceHandle sequenceOfSource(MidiSourceHandle source) noexcept {   // an audition's sequence
+    return isSequenceSource(source) ? source & ~kAuditionSourceBit : source;
+}
 
 } // namespace stagehand

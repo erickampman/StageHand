@@ -10,6 +10,7 @@
 #include "App/RackController.h"
 #include "App/SequenceEditor.h"
 #include "Check.h"
+#include "Core/Ump.h"
 #include "FakePlugin.h"
 #include "SessionFakes.h"
 
@@ -26,7 +27,8 @@ struct Rig {
     std::unique_ptr<Session>        session;
     std::unique_ptr<RackController> controller;
 
-    explicit Rig(MidiProtocol protocol = MidiProtocol::Midi1, int edo = 12) {
+    // `row`: a row "a" (a fake synth) that the sequence plays into.
+    explicit Rig(MidiProtocol protocol = MidiProtocol::Midi1, int edo = 12, bool row = false) {
         session = std::make_unique<Session>(factory, host, midi, *engine);
         Rack     rack;
         Sequence seq;
@@ -34,6 +36,11 @@ struct Rig {
         seq.protocol = protocol;
         seq.edo      = edo;
         seq.length   = 16;
+        if (row) {
+            factory.installed = {installedPlugin("synth", "/clap/Synth.clap")};
+            rack.slots        = {slot("a", "synth", "/clap/Synth.clap")};
+            seq.targets       = {"a"};
+        }
         rack.sequences = {seq};
         Session::LoadReport report;
         session->load(rack, 48000.0, report);
@@ -46,6 +53,27 @@ struct Rig {
         engine->collect();
     }
     const std::vector<SequenceNote>& stored() const { return session->sequence("s")->sequence.notes; }
+    // The note numbers row "a" was sent note-ons for in one block (note-offs
+    // in `ended`, and how many All Notes Off in `allOff`).
+    std::vector<int> ended;
+    int              allOff = 0;
+    std::vector<int> sounded() {
+        ended.clear();
+        allOff = 0;
+        FakePlugin* plugin = factory.created["synth"];
+        plugin->calls.clear();
+        runBlock(*engine);
+        std::vector<int> notes;
+        for (const FakePlugin::Call& call : plugin->calls)
+            for (const Event& e : call.events)
+                if (ump::isNoteOn(e.midi))
+                    notes.push_back(ump::noteNumber(e.midi));
+                else if (ump::isNoteOff(e.midi))
+                    ended.push_back(ump::noteNumber(e.midi));
+                else if ((e.midi.words[0] & 0x00F0FF00u) == 0x00B07B00u)   // CC 123, any channel
+                    ++allOff;
+        return notes;
+    }
 };
 
 bool has(const std::vector<SequenceNote>& notes, std::uint32_t start, std::uint32_t length, int pitch) {
@@ -191,6 +219,40 @@ void testEdoAndSync() {
     CHECK(rig.session->sequence("s")->sequence.protocol == MidiProtocol::Midi1 && ed.highestPitch() == 127);
 }
 
+// Adding or clicking a note sounds it; a move sounds the moved notes when its pitch
+// changes, not when only its time does.
+void testAudition() {
+    Rig            rig(MidiProtocol::Midi1, 12, true);
+    SequenceEditor ed(*rig.controller, "s");
+    rig.sounded();   // the rack's graph is running
+    CHECK(ed.addNote(0, 60) && rig.sounded() == std::vector<int>{60});
+
+    ed.beginGesture();
+    ed.moveSelection(2, 0, false);
+    CHECK(rig.sounded().empty());
+    ed.moveSelection(3, 2, false);
+    ed.moveSelection(4, 2, false);   // the same pitch again: once is enough
+    CHECK(rig.sounded() == std::vector<int>{62} && rig.ended == std::vector<int>{60});   // the old pitch ends
+    ed.moveSelection(4, 0, false);   // back where it started is a change too
+    CHECK(rig.sounded() == std::vector<int>{60});
+    ed.endGesture();
+    ed.stopSounding();               // the mouse released: it ends, then every key, then All Notes Off
+    CHECK(rig.sounded().empty() && rig.ended.size() == 1 + 128 && rig.ended[0] == 60 && rig.allOff == 1);
+
+    ed.addNote(8, 64);
+    rig.sounded();
+    ed.selectAll();
+    ed.nudge(0, 1);   // the arrow keys: both notes
+    CHECK(rig.sounded() == (std::vector<int>{61, 65}));
+    ed.nudge(1, 0);
+    CHECK(rig.sounded().empty());
+
+    ed.soundNote(ed.noteAt(9, 65));   // a click on a note
+    CHECK(rig.sounded() == std::vector<int>{65});
+    ed.soundNote(99);                 // no such note: nothing
+    CHECK(rig.sounded().empty());
+}
+
 } // namespace
 
 int main() {
@@ -198,5 +260,6 @@ int main() {
     testMoveCopyAndTrim();
     testResizeVelocitySelection();
     testEdoAndSync();
+    testAudition();
     return test::finish("SequenceEditor");
 }
