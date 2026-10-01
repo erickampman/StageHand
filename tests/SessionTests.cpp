@@ -279,15 +279,18 @@ void testSequences() {
     arp.notes    = {{0, 1, 60, 100}};
     rack.sequences = {arp};
     RackSlot a     = slot("a", "synth", "/clap/Synth.clap");
-    a.source       = MidiSourceRef{MidiSourceRef::Kind::Sequence, "arp"};
+    a.source       = MidiSourceRef{MidiSourceRef::Kind::Sequence, "arp"};   // the old (format 1) way
     RackSlot b     = slot("b", "synth", "/clap/Synth.clap");   // "all inputs": doesn't hear it
     rack.slots     = {a, b};
     Session::LoadReport report;
     CHECK(session.load(rack, 48000.0, report) && report.warnings.empty());
     CHECK(session.sequences().size() == 1 && isSequenceSource(session.sequences()[0].source));
-    CHECK(session.slot("a")->source == session.sequences()[0].source);
+    // An old "sequence:<id>" slot becomes one of its targets, with no live input.
+    CHECK(session.sequence("arp")->sequence.targets == std::vector<std::string>{"a"});
+    CHECK(session.slot("a")->saved.source.kind == MidiSourceRef::Kind::None &&
+          session.slot("a")->source == kInvalidMidiSource && session.slot("a")->sourceProblem.empty());
 
-    // Started through the Session, it plays into the row that chose it.
+    // Started through the Session, it plays into its target only.
     CHECK(session.startSequence("arp"));
     runBlock(*engine);
     auto* fa = dynamic_cast<FakePlugin*>(session.slot("a")->plugin.get());
@@ -312,11 +315,33 @@ void testSequences() {
     CHECK(session.addSequence() == "seq" && session.addSequence(MidiProtocol::Midi1) == "seq-2");
     const Rack captured = session.capture();
     CHECK(captured.sequences.size() == 3 && captured.sequences[0].protocol == MidiProtocol::Midi2);
-    CHECK(captured.slots[0].source.kind == MidiSourceRef::Kind::Sequence);
+    CHECK(captured.slots[0].source.kind == MidiSourceRef::Kind::None && captured.sequences[0].targets.size() == 1);
 
-    // Removing a sequence leaves its rows hearing nothing, with a reason.
+    // Aimed at "b" too, it plays into both; b keeps its live input ("all inputs").
+    // Unknown and repeated targets are dropped.
+    session.stopAllSequences();
+    runBlock(*engine);
+    edit         = session.sequence("arp")->sequence;
+    edit.notes   = {{0, 1, 0, 30000}};   // MIDI 2.0 now: step 0 = the reference note
+    edit.targets = {"a", "b", "b", "nope"};
+    CHECK(session.setSequence(edit, problem));
+    CHECK((session.sequence("arp")->sequence.targets == std::vector<std::string>{"a", "b"}));
+    CHECK(session.slot("b")->saved.source.kind == MidiSourceRef::Kind::All);
+    session.flush();
+    CHECK(session.startSequence("arp"));   // launch: immediately
+    fa->calls.clear();
+    fb->calls.clear();
+    runBlock(*engine);   // its first note-on reaches both rows
+    CHECK(fa->calls.size() == 1 && fb->calls.size() == 1);
+    CHECK(!fa->calls[0].events.empty() && !fb->calls[0].events.empty());
+
+    // Removing a row takes it out of every sequence's targets.
+    CHECK(session.removeSlot("b"));
+    CHECK((session.sequence("arp")->sequence.targets == std::vector<std::string>{"a"}));
+
+    // Removing a sequence: its rows simply stop hearing it (no source problem).
     CHECK(session.removeSequence("arp"));
-    CHECK(!session.slot("a")->sourceProblem.empty() && session.slot("a")->source == kInvalidMidiSource);
+    CHECK(session.slot("a")->sourceProblem.empty());
     session.flush();
     CHECK(session.sequences().size() == 2);
 

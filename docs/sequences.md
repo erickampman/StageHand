@@ -95,7 +95,8 @@ Sequence
   (16 against 12) on purpose. Forcing one length would rule that out, and buy
   nothing a quantized launch doesn't already give.
 - **In the rack.** `"sequences": [...]` holds them (reserved already), and a
-  slot plays one with `"source": "sequence:<id>"`. Like a device, one sequence
+  slot plays one with `"source": "sequence:<id>"` (superseded 2026-10-01: a
+  sequence now lists the rows it plays into; see "Where a sequence plays"). Like a device, one sequence
   can feed several rows, and a row's filter (channel, key range, transpose)
   applies to it as to any source.
 
@@ -170,6 +171,13 @@ main window:
   window, then scrolls with the wheel.
 - **Not yet:** mapping Play/Stop to MIDI (milestone 5), and setting the note-off
   offset or renaming (the editor, milestone 4).
+- **Naming (added 2026-09-30):** a new sequence opens a name field on its row
+  at once (typing replaces "Sequence N"; Enter or a click elsewhere keeps it,
+  Escape keeps the old name), and the row's "•••" menu has Rename.... Leading
+  and trailing spaces go, an empty name is refused, 64 bytes at most; the id
+  doesn't change, so rows keep playing it. The field is UiWidget's own text
+  entry (DGL has none): UTF-8 typing, Backspace, Delete, arrows, Home/End,
+  Ctrl-A, and it takes every key while open.
 
 Implemented 2026-09-29 (milestone 5), MIDI-mapped launch:
 - **Triggers:** each sequence has a list of triggers, saved in the rack
@@ -200,6 +208,33 @@ Implemented 2026-09-29 (milestone 5), MIDI-mapped launch:
 - tests/SequenceTests.cpp checks trigger timing (including the bar-line case),
   controller edges, consuming, and learn; the Session, rack-file and
   controller tests cover the rest.
+
+## Where a sequence plays (added 2026-10-01)
+
+A sequence chooses its rows, not the other way round. Each sequence has a list
+of **targets** (rows, by id) and plays into them on top of each row's own live
+input, so aiming a sequence at a row never takes the row away from the
+keyboard. (Before, a row's single source could be a sequence, which did.)
+
+- **Rows' inputs** no longer list sequences. They gain **No live input**, for a
+  row that should only play the sequences aimed at it.
+- **The dock row's second line** shows where the sequence plays ("> Bass,
+  Pad"), or "> no rows: click to choose" in amber. A click opens **Plays into**:
+  every row, ticked if the sequence plays into it (a click toggles it), then
+  **New row...**, which opens the plugin list and adds the chosen plugin as a
+  new row the sequence plays into.
+- **+ Sequence** asks, after the protocol, where the new sequence plays: an
+  existing row, **New row...** (the plugin list), or **No row for now**. With
+  no rows in the rack yet, it goes straight to the plugin list ("No instrument
+  for now" is its first item). Then the name field opens as before.
+- **Engine:** each slot in a graph carries the handles of the sequences that
+  target it (`SlotConfig::sequenceSources`); a sequence's events reach exactly
+  those slots, through each slot's filter. "All inputs" still never hears a
+  sequence.
+- **Rack file:** `targets` on each sequence and `"none"` as a source, in format
+  2 (rack-format.md). Format-1 racks convert on load.
+- **Edits:** removing a row takes it out of every sequence's targets; removing
+  a sequence stops its rows hearing it (no error on the row).
 
 ## 5. The editor window
 

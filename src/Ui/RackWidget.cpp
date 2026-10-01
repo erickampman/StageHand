@@ -159,6 +159,7 @@ void RackWidget::meterBars(float x0, float x1, float y, const float db[2], const
 // --- the frame -----------------------------------------------------------------------
 
 void RackWidget::draw() {
+    if (!editingText()) renamingId.clear();   // the rename ended (Enter, Escape, or a click)
     box(0, 0, width(), height(), kBg);
 
     const RackViewModel& view = controller.view();
@@ -537,8 +538,9 @@ void RackWidget::drawDock() {
         m.y     = top + kDockHeadH;
         m.w     = 220.0f;
         m.title = "New sequence";
-        m.items.push_back(MenuItem{"MIDI 2.0 (EDO pitches)", [this] { controller.addSequence(MidiProtocol::Midi2); }});
-        m.items.push_back(MenuItem{"MIDI 1.0 (note numbers)", [this] { controller.addSequence(MidiProtocol::Midi1); }});
+        // Then where it plays, then its name (newSequence).
+        m.items.push_back(MenuItem{"MIDI 2.0 (EDO pitches)", [this, addX, top] { newSequence(MidiProtocol::Midi2, addX, top + kDockHeadH); }});
+        m.items.push_back(MenuItem{"MIDI 1.0 (note numbers)", [this, addX, top] { newSequence(MidiProtocol::Midi1, addX, top + kDockHeadH); }});
         openMenu(std::move(m));
     });
     button(stopX, top + 3.0f, 80.0f, 22.0f, "Stop all", false, !view.sequences.empty(), kAccent);
@@ -602,24 +604,30 @@ void RackWidget::drawSequenceRow(const SequenceRowModel& seq, float y) {
 
     // Name, and what it is and who plays it.
     const float nameX = kPad + 44.0f, editX = 262.0f, mapX = 314.0f, mapW = 130.0f;
+    if (seq.id == renamingId) moveTextField(nameX - 6.0f, y + 4.0f, editX - nameX, 24.0f);   // it follows the row
     save();
     scissor(nameX, y, editX - nameX - 10.0f, kSeqRowH);
     label(nameX, y + 16.0f, seq.name, 14.0f, kText);
     std::string detail = seq.protocol == MidiProtocol::Midi2 ? "MIDI 2.0, " + std::to_string(seq.edo) + "-EDO"
                                                              : std::string("MIDI 1.0");
     detail += ", " + std::to_string(seq.noteCount) + (seq.noteCount == 1 ? " note" : " notes");
-    if (!seq.usedBy.empty()) {
+    // Where it plays: a click on this line opens the Plays into menu.
+    if (seq.usedBy.empty()) {
+        detail += "  > no rows: click to choose";
+    } else {
         detail += "  >";
         for (std::size_t i = 0; i < seq.usedBy.size(); ++i) detail += (i ? ", " : " ") + seq.usedBy[i];
     }
     label(nameX, y + 33.0f, detail, 11.0f, seq.usedBy.empty() ? kAmber : kDim);
     restore();
     // The editor opens from the Edit button, and from a click on the name or
-    // the mini-map.
+    // the mini-map; the second line chooses the rows.
     auto openEditor = [this, id = seq.id](const Press&) {
         if (openSequenceEditor) openSequenceEditor(id);
     };
-    region(nameX, y + 4.0f, editX - nameX - 10.0f, kSeqRowH - 8.0f, openEditor);
+    region(nameX, y + 4.0f, editX - nameX - 10.0f, 21.0f, openEditor);
+    region(nameX, y + 25.0f, editX - nameX - 10.0f, kSeqRowH - 29.0f,
+           [this, id = seq.id, nameX, y](const Press&) { openTargetsMenu(id, nameX, y + kSeqRowH - 4.0f); });
     button(editX, y + 10.0f, 44.0f, 24.0f, "Edit", false, true, kAccent);
     region(editX, y + 10.0f, 44.0f, 24.0f, openEditor);
     region(mapX, y + 10.0f, mapW, 24.0f, openEditor);
@@ -712,6 +720,7 @@ void RackWidget::openSequenceMenu(const SequenceRowModel& seq, float x, float y)
     m.items.push_back(MenuItem{"Edit notes...", [this, id = seq.id] {
                                    if (openSequenceEditor) openSequenceEditor(id);
                                }});
+    m.items.push_back(MenuItem{"Rename...", [this, id = seq.id, name = seq.name] { startRename(id, name); }});
     m.items.push_back(MenuItem{"Remove...", [this, id = seq.id, name = seq.name, x, y] {
                                    Menu confirm;
                                    confirm.x     = x;
@@ -883,6 +892,16 @@ void RackWidget::rackReplaced() {
     scrollY = dockScroll = 0;
 }
 
+// Type a sequence's name over its row's name (Enter keeps it, Escape doesn't).
+void RackWidget::startRename(const std::string& id, const std::string& name) {
+    renamingId = id;
+    editText(kPad + 38.0f, 0.0f, 212.0f, 24.0f, name, RackController::kMaxNameBytes,   // placed when the row draws
+             [this, id](const std::string& text) {
+                 renamingId.clear();
+                 controller.renameSequence(id, text);
+             });
+}
+
 // --- menus ---------------------------------------------------------------------------
 
 void RackWidget::openSourceMenu(const RowModel& row, float x, float y) {
@@ -941,20 +960,82 @@ void RackWidget::openRowMenu(const RowModel& row, float x, float y) {
 }
 
 void RackWidget::openAddMenu(float x, float y) {
+    openPluginMenu(x, y, "Add a plugin (added at the bottom)", [this](const PluginDescriptor& plugin) {
+        controller.addPlugin(plugin, controller.view().rows.size());
+        scrollY = 1e9f;   // show the new row (clamped when drawn)
+    });
+}
+
+void RackWidget::openPluginMenu(float x, float y, const std::string& title,
+                                std::function<void(const PluginDescriptor&)> chosen, const std::string& none) {
     Menu m;
     m.x     = x;
     m.y     = y;
     m.w     = 360.0f;
-    m.title = "Add a plugin (added at the bottom)";
+    m.title = title;
+    if (!none.empty()) m.items.push_back(MenuItem{none, [chosen] { chosen(PluginDescriptor{}); }, false, false});
+    bool any = false;
     for (const PluginDescriptor& plugin : controller.availablePlugins()) {   // scans once; may take a moment
         const std::string text = plugin.name + (plugin.vendor.empty() ? "" : "  -  " + plugin.vendor);
-        m.items.push_back(MenuItem{text, [this, plugin] {
-                                       controller.addPlugin(plugin, controller.view().rows.size());
-                                       scrollY = 1e9f;   // show the new row (clamped when drawn)
-                                   },
-                                   false, false});
+        m.items.push_back(MenuItem{text, [chosen, plugin] { chosen(plugin); }, false, false});
+        any = true;
     }
-    if (m.items.empty()) m.items.push_back(MenuItem{"No CLAP plugins found", {}, false, false});
+    if (!any) m.items.push_back(MenuItem{"No CLAP plugins found", {}, false, false});
+    openMenu(std::move(m));
+}
+
+void RackWidget::openTargetsMenu(const std::string& seqId, float x, float y) {
+    const Sequence* seq = controller.sequence(seqId);
+    if (seq == nullptr) return;
+    Menu m;
+    m.x     = x;
+    m.y     = y;
+    m.w     = 300.0f;
+    m.title = seq->name + " plays into";
+    for (const RowModel& row : controller.view().rows) {   // ticked: playing into it; a click toggles
+        const bool on = std::find(seq->targets.begin(), seq->targets.end(), row.id) != seq->targets.end();
+        m.items.push_back(MenuItem{row.name, [this, seqId, rowId = row.id, on] {
+                                       controller.setSequenceTarget(seqId, rowId, !on);
+                                   },
+                                   on, false});
+    }
+    m.items.push_back(MenuItem{"New row...", [this, seqId, x, y] {
+                                   openPluginMenu(x, y, "New row for this sequence", [this, seqId](const PluginDescriptor& plugin) {
+                                       if (!controller.addRowForSequence(seqId, plugin).empty()) scrollY = 1e9f;
+                                   });
+                               },
+                               false, false});
+    openMenu(std::move(m));
+}
+
+void RackWidget::newSequence(MidiProtocol protocol, float x, float y) {
+    // Create it playing into `row` ("" = nowhere yet), or into a new row for
+    // `plugin`; then show it and name it straight away (Enter keeps "Sequence N").
+    auto create = [this, protocol](const std::string& row, const PluginDescriptor* plugin) {
+        const std::string id = controller.addSequence(protocol, row);
+        if (plugin != nullptr && !plugin->id.empty() && !controller.addRowForSequence(id, *plugin).empty())
+            scrollY = 1e9f;   // show the new row too
+        dockScroll = 1e9f;    // show the new sequence (clamped when drawn)
+        if (const Sequence* seq = controller.sequence(id)) startRename(id, seq->name);
+    };
+    auto choosePlugin = [this, x, y, create](const std::string& title) {
+        openPluginMenu(x, y, title, [create](const PluginDescriptor& plugin) { create({}, &plugin); },
+                       "No instrument for now");
+    };
+    if (controller.view().rows.empty()) {   // nothing to play into: choose an instrument first
+        choosePlugin("New sequence: choose an instrument for it");
+        return;
+    }
+    Menu m;
+    m.x     = x;
+    m.y     = y;
+    m.w     = 300.0f;
+    m.title = "New sequence plays into";
+    for (const RowModel& row : controller.view().rows)
+        m.items.push_back(MenuItem{row.name, [create, rowId = row.id] { create(rowId, nullptr); }, false, false});
+    m.items.push_back(MenuItem{"New row...", [choosePlugin] { choosePlugin("New sequence: choose an instrument for it"); },
+                               false, false});
+    m.items.push_back(MenuItem{"No row for now", [create] { create({}, nullptr); }, false, false});
     openMenu(std::move(m));
 }
 
@@ -1113,6 +1194,7 @@ void RackWidget::wheelUnclaimed(float, float, float notches, std::uint32_t) {
 }
 
 bool RackWidget::onKeyboard(const KeyboardEvent& ev) {
+    if (UiWidget::onKeyboard(ev)) return true;   // a text field has the keys
     if (!ev.press) return false;
     if (ev.key == dgl::kKeyEscape) {
         controller.cancelLearn();

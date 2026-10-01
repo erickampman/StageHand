@@ -89,6 +89,17 @@ protected:
     // [-] value [+]; `change` gets the direction and whether Shift made it a big step.
     void stepper(float x, float y, const std::string& value, const std::function<void(int dir, bool big)>& change);
 
+    // --- text entry: one field at a time, drawn on top of everything. Typing
+    // (UTF-8), Backspace, Delete, Left/Right, Home/End and Ctrl-A edit it; it
+    // starts all selected, so typing replaces. Enter, or a click elsewhere,
+    // calls `done` with the text; Escape leaves without it. While it's open it
+    // takes every key (subclasses call UiWidget::onKeyboard first).
+    void editText(float x, float y, float w, float h, std::string text, std::size_t maxBytes,
+                  std::function<void(const std::string&)> done);
+    void moveTextField(float x, float y, float w, float h);   // keep it on what it edits, as that moves
+    bool editingText() const noexcept { return field.has_value(); }
+    void endTextEdit(bool keep);
+
     // --- menus
     void openMenu(Menu m);
     void closeMenu() { menu.reset(); }
@@ -104,9 +115,22 @@ protected:
     bool onMouse(const MouseEvent& ev) override;
     bool onMotion(const MotionEvent& ev) override;
     bool onScroll(const ScrollEvent& ev) override;
+    bool onKeyboard(const KeyboardEvent& ev) override;
+    bool onCharacterInput(const CharacterInputEvent& ev) override;
 
 private:
     void drawMenu();
+    void drawTextField();
+
+    struct TextField {
+        float                                   x = 0, y = 0, w = 0, h = 0;
+        std::string                             text;
+        std::size_t                             caret    = 0;      // a byte index, on a character boundary
+        bool                                    all      = true;   // everything selected
+        std::size_t                             maxBytes = 64;
+        std::function<void(const std::string&)> done;
+    };
+    std::optional<TextField> field;
 
     std::vector<Region> regions;   // from the last draw
     std::optional<Menu> menu;

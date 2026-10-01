@@ -16,10 +16,16 @@ namespace {
 // number, velocity ranges to note-ons; other channel messages pass on source,
 // group, and channel alone. (M5 adds the held-note table, so a note-off always
 // follows its note-on even if a filter changed in between.)
-bool accepts(const MidiFilter& filter, MidiSourceHandle source, const MidiMessage& m) noexcept {
-    // "All" means every MIDI input, not every sequence: a sequence plays only
-    // where it's chosen.
-    if (filter.allSources ? isSequenceSource(source) : filter.source != source) return false;
+bool accepts(const SlotConfig& slot, MidiSourceHandle source, const MidiMessage& m) noexcept {
+    const MidiFilter& filter = slot.midiFilter;
+    // A sequence plays only into the slots that list it (its targets); "all"
+    // means every MIDI input, never a sequence. A live input is the slot's own.
+    if (isSequenceSource(source)) {
+        if (std::find(slot.sequenceSources.begin(), slot.sequenceSources.end(), source) == slot.sequenceSources.end())
+            return false;
+    } else if (!filter.allSources && filter.source != source) {
+        return false;
+    }
 
     const ump::MessageType type = ump::messageType(m);
     if (type == ump::MessageType::Utility || type == ump::MessageType::Stream ||
@@ -527,7 +533,7 @@ void Engine::route(const QueuedMidi& item, std::uint32_t offset) noexcept {
     HeldNote* const noteOn = ump::isNoteOn(original) ? claimHeld(item.source, original) : nullptr;
     for (std::size_t i = 0; i < currentGraph->configs.size(); ++i) {
         const SlotConfig& config = currentGraph->configs[i];
-        if (currentGraph->states[i].dialects == 0 || !accepts(config.midiFilter, item.source, original))
+        if (currentGraph->states[i].dialects == 0 || !accepts(config, item.source, original))
             continue;
         std::uint8_t deliveredNote = 0;
         if (deliver(i, original, upconverted, upconvertedCount, offset, -1, &deliveredNote) &&

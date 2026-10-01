@@ -123,7 +123,8 @@ struct SequenceRowModel {
     std::uint32_t            lastNoteEnd = 0;  // the length can't go below this
     SequenceState            state    = SequenceState::Stopped;
     double                   position = 0.0;  // units into the loop
-    std::vector<std::string> usedBy;          // names of the rows that play it
+    std::vector<std::string> usedBy;          // names of the rows it plays into (its targets)
+    std::vector<std::string> targetIds;       // the same rows, by id (Sequence::targets)
     // MIDI triggers, described ("Play/Stop: KeyLab 88, note C1, ch 10"), in
     // Sequence::triggers order; `learning` while MIDI learn waits for one.
     std::vector<std::string> triggers;
@@ -144,7 +145,7 @@ struct RackViewModel {
     bool                      modified = false;
     TransportModel            transport;
     std::vector<RowModel>     rows;
-    std::vector<SourceChoice> sources;   // for the source menu: All, virtual inputs, devices, sequences
+    std::vector<SourceChoice> sources;   // for a row's input menu: All, None, devices, virtual inputs
     std::vector<InputChipModel>   inputs;      // the dock's inputs row
     std::vector<SequenceRowModel> sequences;   // the dock's sequence rows
     StatusModel               status;

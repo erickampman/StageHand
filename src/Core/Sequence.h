@@ -59,7 +59,7 @@ struct SequenceTrigger {
 };
 
 struct Sequence {
-    std::string  id;     // unique in the rack; a slot plays it as source "sequence:<id>"
+    std::string  id;     // unique in the rack; rows play it by being in `targets`
     std::string  name;
     MidiProtocol protocol      = MidiProtocol::Midi2;   // changeable only while `notes` is empty
     int          edo           = 12;                    // MIDI 2.0: steps per octave
@@ -74,11 +74,14 @@ struct Sequence {
     std::vector<SequenceNote> notes;
     std::vector<SequenceTrigger> triggers;              // MIDI controls that start or stop it
     bool            atStart         = false;            // starts on beat 1 whenever the transport starts
+    // The rows (slot ids) it plays into. A row hears these on top of its own live
+    // input, so a sequence never takes a row away from the keyboard.
+    std::vector<std::string> targets;
 };
 
 // A sequence's MidiSourceHandle lives above the range MIDI inputs use, so the
 // engine can tell a sequence from a device: a row listening to "all inputs"
-// hears every device but no sequence (a sequence plays only where chosen).
+// hears every device but no sequence (a sequence plays only into its targets).
 inline constexpr MidiSourceHandle kSequenceSourceBase = 0x80000000u;
 constexpr bool isSequenceSource(MidiSourceHandle handle) noexcept {
     return handle >= kSequenceSourceBase;

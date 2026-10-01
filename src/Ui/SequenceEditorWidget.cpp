@@ -441,6 +441,7 @@ void SequenceEditorWidget::wheelUnclaimed(float x, float, float notches, std::ui
 }
 
 bool SequenceEditorWidget::onKeyboard(const KeyboardEvent& ev) {
+    if (UiWidget::onKeyboard(ev)) return true;   // a text field has the keys
     if (!ev.press) return false;
     const Sequence* seq = editor.sequence();
     if (seq == nullptr) return false;

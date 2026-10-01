@@ -2,6 +2,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <cctype>
 #include <cstdlib>
 #include <filesystem>
@@ -19,7 +20,7 @@ using Json   = nlohmann::ordered_json;   // keeps fields in the order written
 
 namespace {
 
-constexpr int         kFormatVersion = 1;
+constexpr int         kFormatVersion = 2;   // 2: sequences' "targets", "none" source
 constexpr const char* kFormatName    = "stagehand-rack";
 
 [[noreturn]] void fail(const std::string& message) {
@@ -91,6 +92,10 @@ const char* formatName(PluginFormat format) {
 MidiSourceRef parseSource(const std::string& text) {
     MidiSourceRef ref;
     if (text == "all") return ref;
+    if (text == "none") {
+        ref.kind = MidiSourceRef::Kind::None;
+        return ref;
+    }
     if (text.rfind("device:", 0) == 0 && text.size() > 7) {
         ref.kind = MidiSourceRef::Kind::Device;
         ref.name = text.substr(7);
@@ -106,7 +111,7 @@ MidiSourceRef parseSource(const std::string& text) {
         ref.name = text.substr(9);
         return ref;
     }
-    fail("midi.source '" + text + "' should be \"all\", \"device:<id>\", \"virtual:<name>\" or \"sequence:<id>\"");
+    fail("midi.source '" + text + "' should be \"all\", \"none\", \"device:<id>\" or \"virtual:<name>\"");
 }
 
 std::string sourceText(const MidiSourceRef& ref) {
@@ -114,7 +119,8 @@ std::string sourceText(const MidiSourceRef& ref) {
         case MidiSourceRef::Kind::All:     return "all";
         case MidiSourceRef::Kind::Device:  return "device:" + ref.name;
         case MidiSourceRef::Kind::Virtual: return "virtual:" + ref.name;
-        case MidiSourceRef::Kind::Sequence: return "sequence:" + ref.name;
+        case MidiSourceRef::Kind::Sequence: return "sequence:" + ref.name;   // never saved (converted on load)
+        case MidiSourceRef::Kind::None:    return "none";
     }
     return "all";
 }
@@ -231,6 +237,13 @@ Sequence parseSequence(const Json& s) {
         if (!s.at("triggers").is_array()) fail("triggers should be a list");
         for (const Json& t : s.at("triggers")) seq.triggers.push_back(parseTrigger(t));
     }
+    if (s.contains("targets")) {   // slot ids; checked against the slots once they're read
+        if (!s.at("targets").is_array()) fail("targets should be a list of slot ids");
+        for (const Json& t : s.at("targets")) {
+            const std::string id = t.get<std::string>();
+            if (std::find(seq.targets.begin(), seq.targets.end(), id) == seq.targets.end()) seq.targets.push_back(id);
+        }
+    }
     return seq;
 }
 
@@ -259,6 +272,7 @@ Json sequenceJson(const Sequence& seq) {
         for (const SequenceTrigger& t : seq.triggers) triggers.push_back(triggerJson(t));
         s["triggers"] = triggers;
     }
+    if (!seq.targets.empty()) s["targets"] = seq.targets;
     return s;
 }
 
@@ -493,13 +507,24 @@ RackFileResult loadRack(const std::string& bundlePath, Rack& rack) {
             try {
                 RackSlot slot = parseSlot(s, bundle, result.warnings);
                 if (!ids.insert(slot.id).second) fail("duplicate slot id '" + slot.id + "'");
-                if (slot.source.kind == MidiSourceRef::Kind::Sequence && sequenceIds.count(slot.source.name) == 0)
-                    fail("there's no sequence '" + slot.source.name + "' in this rack");
+                if (slot.source.kind == MidiSourceRef::Kind::Sequence) {
+                    // Format 1: the slot played that sequence and nothing else. It
+                    // becomes one of the sequence's targets, with no live input.
+                    auto seq = std::find_if(loaded.sequences.begin(), loaded.sequences.end(),
+                                            [&](const Sequence& q) { return q.id == slot.source.name; });
+                    if (seq == loaded.sequences.end()) fail("there's no sequence '" + slot.source.name + "' in this rack");
+                    if (std::find(seq->targets.begin(), seq->targets.end(), slot.id) == seq->targets.end())
+                        seq->targets.push_back(slot.id);
+                    slot.source = MidiSourceRef{MidiSourceRef::Kind::None, {}};
+                }
                 loaded.slots.push_back(std::move(slot));
             } catch (const std::exception& e) {
                 fail("slot " + std::to_string(index) + ": " + e.what());
             }
         }
+        for (const Sequence& seq : loaded.sequences)   // a target must be one of the rack's slots
+            for (const std::string& target : seq.targets)
+                if (ids.count(target) == 0) fail("sequence '" + seq.id + "': there's no slot '" + target + "' to play into");
     } catch (const std::exception& e) {   // nlohmann's errors are std::exceptions too
         result.error = jsonPath.string() + ": " + e.what();
         return result;

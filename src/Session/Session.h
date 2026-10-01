@@ -107,12 +107,13 @@ public:
     // rack and derived from the plugin's name, or "" with `problem` set.
     std::string addSlot(const PluginDescriptor& plugin, std::size_t index, std::string& problem);
     // Close the slot's editor first. Its plugin is deactivated and destroyed
-    // once no graph holds it (Engine::collect()).
+    // once no graph holds it (Engine::collect()). It leaves every sequence's targets.
     bool removeSlot(const std::string& id);
 
     // --- sequences (docs/sequences.md). A sequence is a MIDI source the rack
-    // owns: a slot plays it with source {Sequence, id}. Edits are committed by
-    // flush(), like structural edits, and playback carries on through them.
+    // owns. It plays into the rows listed in its `targets` (on top of their own
+    // live input). Edits are committed by flush(), like structural edits, and
+    // playback carries on through them.
     struct SequenceEntry {
         Sequence                         sequence;
         MidiSourceHandle                 source = kInvalidMidiSource;   // never reused in a session
@@ -126,11 +127,12 @@ public:
     // A new, empty sequence (MIDI 2.0 in 12-EDO unless told otherwise); returns its id.
     std::string addSequence(MidiProtocol protocol = MidiProtocol::Midi2);
     // Replace a sequence's content and settings (matched by id). New triggers
-    // open their devices if needed; one that isn't connected hears nothing. Refused, with
+    // open their devices if needed; one that isn't connected hears nothing.
+    // Targets are kept to rows that exist, each once. Refused, with
     // `problem` set, if it would change the protocol of a sequence that has
     // notes: that's a conversion, not an edit.
     bool setSequence(const Sequence& sequence, std::string& problem);
-    // Rows that played it then hear nothing (with a source problem).
+    // Its rows simply stop hearing it.
     bool removeSequence(const std::string& id);
     bool startSequence(const std::string& id);   // at its launch boundary
     bool stopSequence(const std::string& id);    // at its launch boundary

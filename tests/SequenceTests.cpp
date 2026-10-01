@@ -40,8 +40,9 @@ struct Rig {
     explicit Rig(bool listenToAll = false, bool startTransport = true) {
         SlotConfig slot;
         slot.plugin                = plugin;
-        slot.midiFilter.allSources = listenToAll;
-        slot.midiFilter.source     = listenToAll ? kInvalidMidiSource : kSeq;
+        slot.midiFilter.allSources = listenToAll;          // "all inputs" never hears a sequence...
+        slot.midiFilter.source     = kInvalidMidiSource;
+        if (!listenToAll) slot.sequenceSources = {kSeq};   // ...it plays into the slots that target it
         std::vector<SlotConfig> slots{slot};
         engine->commit(std::make_unique<EngineGraph>(std::move(slots)));
         if (startTransport) engine->sendTransportCommand(Engine::TransportCommand::Start);   // beat 0 at frame 0

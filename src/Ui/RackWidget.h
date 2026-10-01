@@ -72,10 +72,20 @@ private:
 
     // --- actions
     void openSequenceMenu(const SequenceRowModel& seq, float x, float y);
+    void startRename(const std::string& id, const std::string& name);
     void openTriggerMenu(const SequenceRowModel& seq, float x, float y);
     void openSourceMenu(const RowModel& row, float x, float y);
     void openRowMenu(const RowModel& row, float x, float y);
     void openAddMenu(float x, float y);
+    // The plugin list (scans once). `none`, if not empty, is a first item that
+    // calls `chosen` with an empty descriptor (e.g. "No instrument for now").
+    void openPluginMenu(float x, float y, const std::string& title,
+                        std::function<void(const PluginDescriptor&)> chosen, const std::string& none = {});
+    // Where a sequence plays: its rows (ticked = playing into), and New row....
+    void openTargetsMenu(const std::string& seqId, float x, float y);
+    // "+ Sequence": after the protocol, choose where it plays (a row, a new row,
+    // or nowhere yet); with no rows yet, straight to the plugin list. Then name it.
+    void newSequence(MidiProtocol protocol, float x, float y);
     void openFileMenu(float x, float y);
     void openTransportMenu(float x, float y);
     void openMetronomeMenu(float x, float y);
@@ -99,6 +109,7 @@ private:
     std::uint32_t lastFaderTime = 0;
     std::uint32_t lastTempoTime = 0;       // double-click on the tempo...
     bool          tempoClicked  = false;   // ...once there's been a first click
+    std::string   renamingId;   // the sequence whose name is being typed
     std::string   notice;
     double        noticeUntil = 0;
 };

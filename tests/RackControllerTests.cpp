@@ -110,15 +110,17 @@ void testViewModel() {
     CHECK(d.sourceProtocol == SourceProtocol::Midi2 && d.protocolWarning);   // MIDI 2.0 into a MIDI 1.0 plugin
     CHECK(!e.sourceConnected && e.sourceLabel == "Unplugged:Port (not connected)");
 
-    // The source menu: All, hardware before software, then the virtual inputs
-    // (labelled as what they are: where other apps send).
-    CHECK(view.sources.size() == 5);
-    if (view.sources.size() == 5) {
+    // The source menu: All, No live input, hardware before software, then the
+    // virtual inputs (labelled as what they are: where other apps send). No
+    // sequences: a sequence chooses its rows.
+    CHECK(view.sources.size() == 6);
+    if (view.sources.size() == 6) {
         CHECK(view.sources[0].ref.kind == MidiSourceRef::Kind::All);
-        CHECK(view.sources[1].label == "Keys" && view.sources[1].hardware);
-        CHECK(view.sources[2].label == "Midi Through" && !view.sources[2].hardware);
-        CHECK(view.sources[3].label == "From other apps (MIDI 2.0)" && view.sources[3].protocol == SourceProtocol::Midi2);
-        CHECK(view.sources[4].label == "From other apps (MIDI 1.0)" && view.sources[4].ref.name == "MIDI 1.0 In");
+        CHECK(view.sources[1].ref.kind == MidiSourceRef::Kind::None && view.sources[1].label == "No live input");
+        CHECK(view.sources[2].label == "Keys" && view.sources[2].hardware);
+        CHECK(view.sources[3].label == "Midi Through" && !view.sources[3].hardware);
+        CHECK(view.sources[4].label == "From other apps (MIDI 2.0)" && view.sources[4].protocol == SourceProtocol::Midi2);
+        CHECK(view.sources[5].label == "From other apps (MIDI 1.0)" && view.sources[5].ref.name == "MIDI 1.0 In");
     }
     CHECK(view.status.sampleRate == 48000.0 && view.status.bufferSize == 256 && view.status.xruns == 3);
     CHECK(view.status.outputs == 4);
@@ -289,9 +291,11 @@ void testDock() {
     arp.length   = 8;
     arp.notes    = {{0, 1, 60, 100}, {4, 2, 64, 100}, {4, 1, 67, 100}};
     rack.sequences = {arp};
+    arp.targets    = {"lead"};
+    rack.sequences = {arp};
     RackSlot lead  = slot("lead", "synth", "/clap/Synth.clap");
     lead.name      = "Lead";
-    lead.source    = MidiSourceRef{MidiSourceRef::Kind::Sequence, "arp"};
+    lead.source    = MidiSourceRef{MidiSourceRef::Kind::None, {}};   // plays only the sequence
     rack.slots     = {lead};
     Session::LoadReport report;
     rig.session->load(rack, 48000.0, report);
@@ -305,11 +309,11 @@ void testDock() {
     CHECK(row.name == "Arp" && row.protocol == MidiProtocol::Midi1 && row.length == 8 && row.noteCount == 3);
     CHECK((row.noteStarts == std::vector<std::uint32_t>{0, 4}) && row.lastNoteEnd == 6);
     CHECK(row.usedBy == std::vector<std::string>{"Lead"} && row.state == SequenceState::Stopped);
-    CHECK(view.rows[0].sourceLabel == "Arp" && view.rows[0].sourceProtocol == SourceProtocol::Midi1);
+    CHECK(row.targetIds == std::vector<std::string>{"lead"});
+    CHECK(view.rows[0].sourceLabel == "No live input" && view.rows[0].sourceConnected);
 
-    // It's in the source menu, after the devices.
-    CHECK(!view.sources.empty() && view.sources.back().ref.kind == MidiSourceRef::Kind::Sequence &&
-          view.sources.back().label == "Sequence: Arp");
+    // Not in the rows' source menu: the sequence chooses its rows.
+    for (const SourceChoice& choice : view.sources) CHECK(choice.ref.kind != MidiSourceRef::Kind::Sequence);
 
     // Play/Stop toggles; the state follows the engine.
     controller.togglePlay("arp");
@@ -333,13 +337,27 @@ void testDock() {
     CHECK(view.sequences[0].rate.denominator == 2 && view.sequences[0].launch == LaunchQuantize::Beat);
     CHECK(!view.sequences[0].repeat && view.sequences[0].length == 6);
 
-    // Adding and removing.
-    const std::string id = controller.addSequence(MidiProtocol::Midi2);
+    // Adding (into a row, or nowhere yet), aiming, a new row for one, and removing.
+    const std::string id = controller.addSequence(MidiProtocol::Midi2, "lead");
     controller.tick(1.3);
     CHECK(id == "seq" && view.sequences.size() == 2 && view.sequences[1].protocol == MidiProtocol::Midi2);
+    CHECK(view.sequences[1].targetIds == std::vector<std::string>{"lead"});
+    const std::string loose = controller.addSequence(MidiProtocol::Midi1);
+    controller.tick(1.31);
+    CHECK(view.sequences[2].usedBy.empty());
+    controller.setSequenceTarget(loose, "lead", true);
+    controller.setSequenceTarget(loose, "lead", true);   // once only
+    controller.tick(1.32);
+    CHECK(view.sequences[2].targetIds == std::vector<std::string>{"lead"});
+    controller.setSequenceTarget(loose, "lead", false);
+    controller.tick(1.33);
+    CHECK(view.sequences[2].usedBy.empty());
+    const std::string newRow = controller.addRowForSequence(loose, PluginDescriptor{PluginFormat::Clap, "synth", "Synth", "", "", "/clap/Synth.clap"});
+    controller.tick(1.34);
+    CHECK(!newRow.empty() && view.rows.size() == 2 && view.sequences[2].targetIds == std::vector<std::string>{newRow});
     controller.removeSequence("arp");
     controller.tick(1.4);
-    CHECK(view.sequences.size() == 1 && !view.rows[0].sourceConnected);
+    CHECK(view.sequences.size() == 2 && view.rows[0].sourceConnected);   // its row just stops hearing it
 
     // The inputs row: one chip per open input, lit briefly by its messages.
     CHECK(view.inputs.size() == 1 && view.inputs[0].label == "From other apps (MIDI 2.0)" && view.inputs[0].isVirtual);
@@ -575,6 +593,39 @@ void testClickRouting() {
     CHECK(routing.connected.empty() && rig.session->metronome().clickOutput.empty());
 }
 
+// Renaming a sequence: trimmed, never empty, at most 64 bytes (cut on a
+// character), the id kept, and the source menus follow.
+void testRenameSequence() {
+    Rig      rig;
+    Rack     rack;
+    Sequence arp;
+    arp.id         = "arp";
+    arp.name       = "Arp";
+    rack.sequences = {arp};
+    rack.sequences[0].targets = {"lead"};
+    RackSlot lead  = slot("lead", "synth", "/clap/Synth.clap");
+    rack.slots     = {lead};
+    Session::LoadReport report;
+    rig.session->load(rack, 48000.0, report);
+    RackController       controller(*rig.session, *rig.engine, rig.midi, rig.factory, rig.config());
+    const RackViewModel& view = controller.view();
+
+    controller.renameSequence("arp", "  Verse arp ");
+    controller.tick(1.0);
+    CHECK(view.sequences[0].name == "Verse arp" && view.sequences[0].id == "arp");
+    CHECK(view.sequences[0].usedBy == std::vector<std::string>{"lead"});   // still plays into its row
+
+    controller.takeNotices();
+    controller.renameSequence("arp", "   ");
+    CHECK(controller.sequence("arp")->name == "Verse arp" && controller.takeNotices().size() == 1);
+
+    std::string longName(63, 'x');
+    longName += "\xC3\xA9\xC3\xA9";   // "éé": the first é straddles byte 64
+    controller.renameSequence("arp", longName);
+    CHECK(controller.sequence("arp")->name == std::string(63, 'x'));
+    CHECK(rig.session->modified());
+}
+
 void testSave() {
     const std::filesystem::path dir = std::filesystem::temp_directory_path() / "stagehand-controller-test";
     std::filesystem::remove_all(dir);
@@ -703,5 +754,6 @@ int main() {
     testTransportControls();
     testFindPlaybackDevice();
     testClickRouting();
+    testRenameSequence();
     return test::finish("RackController");
 }

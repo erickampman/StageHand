@@ -31,7 +31,10 @@ struct SlotConfig {
     // slot. Null = the graph creates one at unity gain (tests, one-off graphs).
     std::shared_ptr<SlotRuntime> runtime;
 
-    MidiFilter    midiFilter;           // which MIDI this slot hears
+    MidiFilter    midiFilter;           // which MIDI this slot hears (its live input)
+    // The sequences that play into this slot, heard on top of its live input
+    // (and through the same filter). Preallocated here; read-only on the audio thread.
+    std::vector<MidiSourceHandle> sequenceSources;
     std::uint16_t notePort    = 0;      // plugin note-input port that receives it
     std::uint32_t firstOutput = 0;      // backend output for the plugin's first channel
 };

@@ -208,7 +208,7 @@ void expectFailure(const fs::path& dir, const std::string& name, const std::stri
 }
 
 void testFailures(const fs::path& dir) {
-    expectFailure(dir, "Newer.rack", R"({"format":"stagehand-rack","version":2,"slots":[]})", "newer StageHand");
+    expectFailure(dir, "Newer.rack", R"({"format":"stagehand-rack","version":3,"slots":[]})", "newer StageHand");
     expectFailure(dir, "NotARack.rack", R"({"version":1,"slots":[]})", "not a StageHand rack");
     expectFailure(dir, "BadJson.rack", R"({"format": "stagehand-rack", )", "parse");
     expectFailure(dir, "Dup.rack",
@@ -278,6 +278,35 @@ void testMissingStateWarns(const fs::path& dir) {
     CHECK(rack.slots.size() == 1 && rack.slots[0].state.empty());
 }
 
+// Where sequences play (format 2): a sequence's "targets" and a slot's "none"
+// source round-trip; a format-1 "sequence:<id>" slot converts to a target with
+// no live input; a target that isn't a slot is an error.
+void testSequenceTargets(const fs::path& dir) {
+    writeText(dir / "Old.rack/rack.json", R"({"format":"stagehand-rack","version":1,
+        "sequences":[{"id":"arp"}],
+        "slots":[{"id":"a","plugin":{"format":"clap","id":"x"},"midi":{"source":"sequence:arp"}},
+                 {"id":"b","plugin":{"format":"clap","id":"x"}}]})");
+    Rack old;
+    CHECK(loadRack((dir / "Old.rack").string(), old).ok);
+    CHECK(old.sequences.size() == 1 && (old.sequences[0].targets == std::vector<std::string>{"a"}));
+    CHECK(old.slots[0].source.kind == MidiSourceRef::Kind::None && old.slots[1].source.kind == MidiSourceRef::Kind::All);
+
+    old.sequences[0].targets.push_back("b");   // b plays it and keeps its live input
+    const std::string path = (dir / "Targets.rack").string();
+    CHECK(saveRack(path, old).ok);
+    Rack reloaded;
+    CHECK(loadRack(path, reloaded).ok);
+    CHECK((reloaded.sequences[0].targets == std::vector<std::string>{"a", "b"}));
+    CHECK(reloaded.slots[0].source.kind == MidiSourceRef::Kind::None);
+    CHECK(reloaded.slots[1].source.kind == MidiSourceRef::Kind::All);
+
+    writeText(dir / "BadTarget.rack/rack.json", R"({"format":"stagehand-rack","version":2,
+        "sequences":[{"id":"arp","targets":["ghost"]}],"slots":[]})");
+    Rack bad;
+    const RackFileResult result = loadRack((dir / "BadTarget.rack").string(), bad);
+    CHECK(!result.ok && result.error.find("no slot 'ghost'") != std::string::npos);
+}
+
 } // namespace
 
 int main() {
@@ -286,6 +315,7 @@ int main() {
     testDefaults(dir);
     testFailures(dir);
     testMissingStateWarns(dir);
+    testSequenceTargets(dir);
     fs::remove_all(dir);
     return test::finish("RackFile");
 }

@@ -62,6 +62,7 @@ struct RackUi::Impl {
         std::unique_ptr<TrackedWindow>        window;
         std::unique_ptr<SequenceEditor>       editor;
         std::unique_ptr<SequenceEditorWidget> widget;
+        std::string                           name;   // in its title
     };
 
     void openEditor(const std::string& id);
@@ -122,6 +123,7 @@ void RackUi::Impl::openEditor(const std::string& id) {
     const auto        px    = [sf](double logical) { return static_cast<unsigned>(std::lround(logical * sf)); };
     const std::string title = seq->name + " - sequence (StageHand)";
     e.window->setTitle(title.c_str());
+    e.name = seq->name;
     e.window->setResizable(true);
     e.window->setGeometryConstraints(px(760.0), px(640.0));
     e.window->setSize(px(1040.0), px(660.0));
@@ -216,6 +218,11 @@ void RackUi::refresh() {
     impl->followRack();
     if (impl->window.isVisible()) impl->widget->repaint();
     for (auto& [id, e] : impl->editors) {
+        if (const Sequence* seq = impl->controller.sequence(id); seq != nullptr && seq->name != e.name) {
+            e.name                  = seq->name;   // renamed in the dock
+            const std::string title = e.name + " - sequence (StageHand)";
+            e.window->setTitle(title.c_str());
+        }
         e.editor->sync();
         if (e.window->isVisible()) e.widget->repaint();
     }

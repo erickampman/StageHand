@@ -64,7 +64,7 @@ rack or the new one intact, never a mix.
 ```json
 {
   "format": "stagehand-rack",
-  "version": 1,
+  "version": 2,
   "name": "Split: bass + pad",
   "tempo": 120.0,
   "timeSignature": [4, 4],
@@ -155,7 +155,13 @@ round-trip them).
 | `"all"` | Every open input: all hardware by default, plus the virtual inputs |
 | `"device:<id>"` | One MIDI device, by its `--list-midi` id, e.g. `device:KeyLab 88:KeyLab 88 MIDI 1` |
 | `"virtual:<name>"` | One of StageHand's virtual inputs: `virtual:MIDI 2.0 In`, `virtual:MIDI 1.0 In` |
-| `"sequence:<id>"` | One of the rack's sequences, by id (see "Sequences"). A slot set to `"all"` never hears sequences |
+| `"none"` | No live input: the slot hears only the sequences that play into it (see "Sequences") |
+
+Sequences aren't a slot's source: a sequence lists the slots it plays into
+(`targets`), and a slot hears those on top of its source. A slot set to
+`"all"` never hears a sequence it isn't a target of. (Format 1 had
+`"sequence:<id>"` here instead; such a slot loads as one of that sequence's
+targets with source `"none"`, so it plays exactly as before.)
 
 If a named device isn't connected when the rack loads, the slot still loads,
 hears nothing from that source, and StageHand warns loudly at startup. It
@@ -172,9 +178,10 @@ the slot exactly.
 ## Sequences
 
 Step sequences the rack owns (docs/sequences.md). A sequence is a MIDI
-*source*: it doesn't make sound, it feeds the slots that choose it with
-`"source": "sequence:<id>"`. One sequence can feed several slots, and each
-slot's filter applies to it as to any source. They're kept separate from
+*source*: it doesn't make sound, it plays into the slots listed in its
+`targets`, on top of each slot's own source (so a slot keeps its keyboard). One
+sequence can feed several slots, one slot can be fed by several sequences, and
+each slot's filter applies to it as to any source. They're kept separate from
 `slots` in the file, and live in a sources dock below the rack in the UI.
 
 ```json
@@ -212,10 +219,16 @@ slot's filter applies to it as to any source. They're kept separate from
 | `notes` | `[]` | `[start, length, pitch, velocity]`: start and length in units, within `length`; pitch is a note number (1.0) or an EDO step relative to `referenceNote` (2.0, may be negative); velocity 1-127 (1.0) or 1-65535 (2.0) |
 | `atStart` | `false` | Starts on beat 1 whenever the transport starts |
 | `triggers` | `[]` | MIDI controls that start or stop it; see "Triggers" |
+| `targets` | `[]` | The slot ids it plays into (format 2). Empty: it plays nowhere yet |
 
-A slot naming a sequence the rack doesn't have is an error, not a silent
-slot: the file is inconsistent. Removing a sequence in the UI leaves its slots
-hearing nothing, with a reason shown.
+A target naming a slot the rack doesn't have is an error, not a silent gap:
+the file is inconsistent. In the UI, removing a slot takes it out of every
+sequence's targets, and removing a sequence simply stops its slots hearing it.
+
+**Format versions.** 2 added `targets` and the `"none"` source. StageHand
+reads format 1 (converting `"sequence:<id>"` sources, above) and writes 2; an
+older StageHand refuses a format-2 rack ("made by a newer StageHand") rather
+than loading it with its sequences silently playing nowhere.
 
 ### Triggers
 

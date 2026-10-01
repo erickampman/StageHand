@@ -115,7 +115,15 @@ public:
 
     // --- sequences (the sources dock) ---
     const Sequence* sequence(const std::string& id) const;   // as the Session has it; null if none
-    std::string addSequence(MidiProtocol protocol);   // returns its id
+    // A new sequence, playing into `target` (a row's id; "" = no row yet).
+    // Returns its id.
+    std::string addSequence(MidiProtocol protocol, const std::string& target = {});
+    // A new row for `plugin` (at the bottom), played by sequence `id`. Returns
+    // the row's id, or "" (with a notice) if the plugin couldn't be added.
+    std::string addRowForSequence(const std::string& id, const PluginDescriptor& plugin);
+    // Where a sequence plays (docs/sequences.md, "Where a sequence plays"): add
+    // or remove a row from its targets. Rows keep their own live input.
+    void        setSequenceTarget(const std::string& id, const std::string& row, bool on);
     void        removeSequence(const std::string& id);
     // Play/Stop: start if stopped, stop if playing; a pending start or stop is
     // cancelled.
@@ -144,6 +152,10 @@ public:
     void cancelLearn();
     void removeTrigger(const std::string& id, std::size_t index);   // index into Sequence::triggers
     void setSequenceAtStart(const std::string& id, bool atStart);
+    // Leading and trailing spaces go; an empty name is refused (with a notice);
+    // at most kMaxNameBytes. The id stays: rows keep playing it.
+    void renameSequence(const std::string& id, const std::string& name);
+    static constexpr std::size_t kMaxNameBytes = 64;
 
     // --- the beat lights and the click (docs/sequences.md, section 7) ---
     void setMetronomeCount(bool everyNote);   // every note (6/8: six), or the counted beats (6/8: two)

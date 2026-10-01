@@ -436,6 +436,7 @@ std::string sourceLabel(const MidiSourceRef& ref) {
         case MidiSourceRef::Kind::Device:  return ref.name;
         case MidiSourceRef::Kind::Virtual: return "virtual " + ref.name;
         case MidiSourceRef::Kind::Sequence: return "sequence " + ref.name;
+        case MidiSourceRef::Kind::None:    return "no live input";
     }
     return "?";
 }
@@ -639,7 +640,6 @@ int runPlay(const Options& options) {
     // console reporting that stands in for a UI.
     Engine::Stats lastStats;
     std::uint64_t lastXruns       = 0;
-    std::uint64_t lastMidiCount   = 0;
     std::uint32_t lastBuffer      = negotiated.bufferSize;
     bool          restartReported = false;
     std::size_t   openEditors     = controller.openEditorCount();
@@ -678,15 +678,6 @@ int runPlay(const Options& options) {
             ui->idle();
             if (ui->closed()) loop.requestQuit();   // closing it quits, like Ctrl-Q
         });
-    loop.addTimer(500, [&] {   // twice a second: level and MIDI activity
-        const std::uint64_t midi = engine->stats().midiReceived;
-        const StatusModel&  status = controller.view().status;
-        const float         db     = std::max(status.outputDb[0], status.outputDb[1]);
-        if (db > -60.0f || midi != lastMidiCount)
-            std::printf("output %6.1f dBFS   MIDI received %llu\n", static_cast<double>(db),
-                        static_cast<unsigned long long>(midi));
-        lastMidiCount = midi;
-    });
 
     activeLoop.store(&loop);
     if (quitRequested.load()) loop.requestQuit();   // a signal that beat the line above

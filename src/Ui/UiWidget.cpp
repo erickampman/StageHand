@@ -103,6 +103,11 @@ void UiWidget::onNanoDisplay() {
     const float sf = scaleFactor();
     scale(sf, sf);
     draw();
+    if (field) {   // a click elsewhere keeps what's typed, and does nothing else
+        region(0, 0, width(), height(), [this](const Press&) { endTextEdit(true); }, [](float) {}, true);
+        drawTextField();
+        return;
+    }
     if (menu || overlayOpen()) {
         // A click anywhere else dismisses the overlay (and does nothing else).
         region(0, 0, width(), height(),
@@ -114,6 +119,154 @@ void UiWidget::onNanoDisplay() {
         drawOverlays();
         drawMenu();
     }
+}
+
+// --- text entry ------------------------------------------------------------------------
+
+namespace {
+
+bool continuation(char c) {
+    return (static_cast<unsigned char>(c) & 0xC0) == 0x80;
+}
+
+std::size_t previousChar(const std::string& s, std::size_t at) {
+    if (at == 0) return 0;
+    do --at;
+    while (at > 0 && continuation(s[at]));
+    return at;
+}
+
+std::size_t nextChar(const std::string& s, std::size_t at) {
+    if (at >= s.size()) return s.size();
+    do ++at;
+    while (at < s.size() && continuation(s[at]));
+    return at;
+}
+
+} // namespace
+
+void UiWidget::editText(float x, float y, float w, float h, std::string text, std::size_t maxBytes,
+                        std::function<void(const std::string&)> done) {
+    menu.reset();
+    field           = TextField{x, y, w, h, std::move(text), 0, true, maxBytes, std::move(done)};
+    field->caret    = field->text.size();
+    repaint();
+}
+
+void UiWidget::moveTextField(float x, float y, float w, float h) {
+    if (!field) return;
+    field->x = x;
+    field->y = y;
+    field->w = w;
+    field->h = h;
+}
+
+void UiWidget::endTextEdit(bool keep) {
+    if (!field) return;
+    TextField ended = std::move(*field);
+    field.reset();   // before `done`, which may start another
+    if (keep && ended.done) ended.done(ended.text);
+    repaint();
+}
+
+void UiWidget::drawTextField() {
+    TextField& f = *field;
+    box(f.x, f.y, f.w, f.h, kBarBg, 4.0f);
+    outline(f.x, f.y, f.w, f.h, kAccent, 4.0f);
+    const float tx = f.x + 6.0f, ty = f.y + f.h / 2;
+    save();
+    scissor(f.x + 2.0f, f.y, f.w - 4.0f, f.h);
+    if (f.all && !f.text.empty()) box(tx - 1.0f, f.y + 4.0f, labelWidth(f.text, 14.0f) + 2.0f, f.h - 8.0f, kAccent, 2.0f);
+    label(tx, ty, f.text, 14.0f, f.all && !f.text.empty() ? kBarBg : kText);
+    if (!f.all && std::fmod(nowSeconds(), 1.0) < 0.6) {   // the caret, blinking
+        const float cx = tx + (f.caret == 0 ? 0.0f : labelWidth(f.text.substr(0, f.caret), 14.0f));
+        box(cx, f.y + 5.0f, 1.5f, f.h - 10.0f, kText);
+    }
+    restore();
+    // A click in the field puts the caret at the nearest character boundary.
+    region(f.x, f.y, f.w, f.h, [this, tx](const Press& p) {
+        TextField&  t    = *field;
+        std::size_t best = 0;
+        float       dist = std::fabs(p.x - tx);
+        for (std::size_t at = nextChar(t.text, 0); at <= t.text.size(); at = nextChar(t.text, at)) {
+            const float d = std::fabs(p.x - tx - labelWidth(t.text.substr(0, at), 14.0f));
+            if (d < dist) {
+                dist = d;
+                best = at;
+            }
+            if (at == t.text.size()) break;
+        }
+        t.caret = best;
+        t.all   = false;
+    });
+}
+
+bool UiWidget::onKeyboard(const KeyboardEvent& ev) {
+    if (!field) return false;
+    if (!ev.press) return true;
+    TextField& f = *field;
+    auto clearAll = [&f] {   // a key that replaces the selection
+        if (!f.all) return;
+        f.text.clear();
+        f.caret = 0;
+        f.all   = false;
+    };
+    const bool ctrl = (ev.mod & dgl::kModifierControl) != 0;
+    switch (ev.key) {
+        case dgl::kKeyEnter: endTextEdit(true); return true;
+        case dgl::kKeyEscape: endTextEdit(false); return true;
+        case dgl::kKeyBackspace:
+            if (f.all) clearAll();
+            else if (f.caret > 0) {
+                const std::size_t from = previousChar(f.text, f.caret);
+                f.text.erase(from, f.caret - from);
+                f.caret = from;
+            }
+            break;
+        case dgl::kKeyDelete:
+            if (f.all) clearAll();
+            else f.text.erase(f.caret, nextChar(f.text, f.caret) - f.caret);
+            break;
+        case dgl::kKeyLeft:
+            f.caret = f.all ? 0 : previousChar(f.text, f.caret);
+            f.all   = false;
+            break;
+        case dgl::kKeyRight:
+            f.caret = f.all ? f.text.size() : nextChar(f.text, f.caret);
+            f.all   = false;
+            break;
+        case dgl::kKeyHome:
+            f.caret = 0;
+            f.all   = false;
+            break;
+        case dgl::kKeyEnd:
+            f.caret = f.text.size();
+            f.all   = false;
+            break;
+        default:
+            if (ctrl && (ev.key == 'a' || ev.key == 'A' || ev.key == 0x01)) f.all = true;
+            break;   // characters arrive through onCharacterInput
+    }
+    repaint();
+    return true;   // every key is the field's while it's open
+}
+
+bool UiWidget::onCharacterInput(const CharacterInputEvent& ev) {
+    if (!field) return false;
+    if (ev.character < 32 || ev.character == 127 || (ev.mod & dgl::kModifierControl) != 0) return true;
+    TextField&        f   = *field;
+    const std::string add = ev.string;
+    if (f.all) {
+        f.text.clear();
+        f.caret = 0;
+        f.all   = false;
+    }
+    if (f.text.size() + add.size() <= f.maxBytes) {
+        f.text.insert(f.caret, add);
+        f.caret += add.size();
+    }
+    repaint();
+    return true;
 }
 
 // --- menus ---------------------------------------------------------------------------

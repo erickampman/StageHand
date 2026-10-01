@@ -14,6 +14,7 @@ std::string keyOf(const MidiSourceRef& ref) {
         case MidiSourceRef::Kind::Device:  return "device:" + ref.name;
         case MidiSourceRef::Kind::Virtual: return "virtual:" + ref.name;
         case MidiSourceRef::Kind::Sequence: return "sequence:" + ref.name;
+        case MidiSourceRef::Kind::None:    return "none";
     }
     return "all";
 }
@@ -30,7 +31,7 @@ Session::Session(PluginFactory& pluginFactory, HostServices& hostServices, MidiI
 
 void Session::addOpenSource(const MidiSourceRef& ref, MidiSourceHandle handle) {
     if (ref.kind == MidiSourceRef::Kind::All || ref.kind == MidiSourceRef::Kind::Sequence ||
-        handle == kInvalidMidiSource)
+        ref.kind == MidiSourceRef::Kind::None || handle == kInvalidMidiSource)
         return;
     if (openSources.emplace(keyOf(ref), handle).second) inputs.push_back(OpenInput{ref, handle});
 }
@@ -40,9 +41,17 @@ bool Session::load(const Rack& rack, double rate, LoadReport& report) {
     std::vector<PluginDescriptor> scanned;
     bool                          haveScan = false;
 
-    // Sequences first: slots resolve "sequence:<id>" sources against them.
+    // Sequences first. A slot saved with the old "sequence:<id>" source becomes
+    // one of that sequence's targets with no live input: it plays as before.
     sequenceList.clear();
-    for (const Sequence& seq : rack.sequences) {
+    std::vector<Sequence> sequencesIn = rack.sequences;
+    for (const RackSlot& saved : rack.slots)
+        if (saved.source.kind == MidiSourceRef::Kind::Sequence)
+            for (Sequence& seq : sequencesIn)
+                if (seq.id == saved.source.name &&
+                    std::find(seq.targets.begin(), seq.targets.end(), saved.id) == seq.targets.end())
+                    seq.targets.push_back(saved.id);
+    for (const Sequence& seq : sequencesIn) {
         sequenceList.push_back(SequenceEntry{seq, nextSequenceSource++, std::make_shared<SequenceRuntime>(), {}});
         for (const std::string& problem : resolveTriggers(sequenceList.back()))
             report.warnings.push_back("sequence '" + seq.id + "': a MIDI trigger won't act: " + problem);
@@ -56,6 +65,8 @@ bool Session::load(const Rack& rack, double rate, LoadReport& report) {
     for (const RackSlot& saved : rack.slots) {
         Slot slot;
         slot.saved = saved;
+        if (slot.saved.source.kind == MidiSourceRef::Kind::Sequence)
+            slot.saved.source = MidiSourceRef{MidiSourceRef::Kind::None, {}};   // converted above
         const std::string where = "slot '" + saved.id + "': ";
 
         std::string                   problem;
@@ -241,6 +252,10 @@ bool Session::removeSlot(const std::string& id) {
     const auto it = std::find_if(loaded.begin(), loaded.end(), [&](const Slot& s) { return s.saved.id == id; });
     if (it == loaded.end()) return false;
     loaded.erase(it);   // the running graph still holds the plugin until flush() replaces it
+    for (SequenceEntry& entry : sequenceList) {   // no sequence plays into it any more
+        auto& targets = entry.sequence.targets;
+        targets.erase(std::remove(targets.begin(), targets.end(), id), targets.end());
+    }
     graphDirty = dirty = true;
     return true;
 }
@@ -290,8 +305,16 @@ bool Session::setSequence(const Sequence& updated, std::string& problem) {
         return false;
     }
     const bool newTriggers = updated.triggers != entry->sequence.triggers;
+    const bool newTargets  = updated.targets != entry->sequence.targets;
     entry->sequence        = updated;
     if (newTriggers) resolveTriggers(*entry);
+    if (newTargets) {   // only rows that exist; each once
+        std::vector<std::string> kept;
+        for (const std::string& id : entry->sequence.targets)
+            if (find(id) != nullptr && std::find(kept.begin(), kept.end(), id) == kept.end()) kept.push_back(id);
+        entry->sequence.targets = std::move(kept);
+        graphDirty              = true;   // which rows hear it is part of the graph
+    }
     sequencesDirty = dirty = true;
     return true;
 }
@@ -301,12 +324,7 @@ bool Session::removeSequence(const std::string& id) {
                                  [&](const SequenceEntry& e) { return e.sequence.id == id; });
     if (it == sequenceList.end()) return false;
     sequenceList.erase(it);   // the engine releases its notes when it adopts the new set
-    for (Slot& slot : loaded)
-        if (slot.saved.source.kind == MidiSourceRef::Kind::Sequence && slot.saved.source.name == id) {
-            resolveSource(slot);   // now unresolved: hears nothing, with the reason
-            graphDirty = true;
-        }
-    sequencesDirty = dirty = true;
+    graphDirty = sequencesDirty = dirty = true;   // its rows stop hearing it
     return true;
 }
 
@@ -402,7 +420,11 @@ void Session::commitGraph() {
         config.runtime               = slot.runtime;
         config.midiFilter            = slot.saved.filter;
         config.midiFilter.allSources = slot.saved.source.kind == MidiSourceRef::Kind::All;
-        config.midiFilter.source     = slot.source;   // invalid when unresolved: hears nothing
+        config.midiFilter.source     = slot.source;   // invalid when unresolved or None: hears no live input
+        for (const SequenceEntry& entry : sequenceList)   // the sequences that play into it
+            if (std::find(entry.sequence.targets.begin(), entry.sequence.targets.end(), slot.saved.id) !=
+                entry.sequence.targets.end())
+                config.sequenceSources.push_back(entry.source);
         config.notePort              = slot.saved.notePort;
         config.firstOutput           = slot.saved.firstOutput;
         configs.push_back(std::move(config));
@@ -414,7 +436,11 @@ void Session::commitGraph() {
 void Session::resolveSource(Slot& slot) {
     slot.source = kInvalidMidiSource;
     slot.sourceProblem.clear();
-    if (slot.saved.source.kind != MidiSourceRef::Kind::All)
+    if (slot.saved.source.kind == MidiSourceRef::Kind::Sequence) {   // load() converts these; never kept
+        slot.saved.source = MidiSourceRef{MidiSourceRef::Kind::None, {}};
+        return;
+    }
+    if (slot.saved.source.kind != MidiSourceRef::Kind::All && slot.saved.source.kind != MidiSourceRef::Kind::None)
         slot.source = resolve(slot.saved.source, slot.sourceProblem);
 }
 

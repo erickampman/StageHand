@@ -291,9 +291,11 @@ void RackController::buildDock(double now) {
         row.noteStarts.erase(std::unique(row.noteStarts.begin(), row.noteStarts.end()), row.noteStarts.end());
         row.state    = session.sequenceState(seq.id);
         row.position = session.sequencePosition(seq.id);
-        for (const Session::Slot& slot : session.slots())
-            if (slot.saved.source.kind == MidiSourceRef::Kind::Sequence && slot.saved.source.name == seq.id)
+        for (const Session::Slot& slot : session.slots())   // in rack order
+            if (std::find(seq.targets.begin(), seq.targets.end(), slot.saved.id) != seq.targets.end()) {
                 row.usedBy.push_back(slot.saved.name);
+                row.targetIds.push_back(slot.saved.id);
+            }
         for (std::size_t i = 0; i < seq.triggers.size(); ++i) {
             std::string text = triggerText(seq.triggers[i]);
             if (i < entry.triggerSources.size() && entry.triggerSources[i] == kInvalidMidiSource &&
@@ -318,6 +320,9 @@ void RackController::refreshSources() {
 
     model.sources.clear();
     model.sources.push_back(SourceChoice{"All inputs", MidiSourceRef{}, SourceProtocol::Mixed, false});
+    // A row that only plays the sequences aimed at it.
+    model.sources.push_back(SourceChoice{sourceLabel(MidiSourceRef{MidiSourceRef::Kind::None, {}}),
+                                         MidiSourceRef{MidiSourceRef::Kind::None, {}}, SourceProtocol::Mixed, false});
     // Hardware first: it's what a player picks; then software, then the
     // virtual inputs other apps send to.
     std::vector<const MidiSourceInfo*> ordered;
@@ -334,15 +339,13 @@ void RackController::refreshSources() {
         const MidiSourceRef ref{MidiSourceRef::Kind::Virtual, name};
         model.sources.push_back(SourceChoice{sourceLabel(ref), ref, sourceProtocolOf(ref), false});
     }
-    for (const Session::SequenceEntry& entry : session.sequences()) {   // last: the rack's own sources
-        const MidiSourceRef ref{MidiSourceRef::Kind::Sequence, entry.sequence.id};
-        model.sources.push_back(SourceChoice{"Sequence: " + entry.sequence.name, ref, sourceProtocolOf(ref), false});
-    }
+    // Sequences aren't here: a sequence chooses its rows (Sequence::targets).
 }
 
 std::string RackController::sourceLabel(const MidiSourceRef& ref) const {
     switch (ref.kind) {
         case MidiSourceRef::Kind::All:     return "All inputs";
+        case MidiSourceRef::Kind::None:    return "No live input";
         case MidiSourceRef::Kind::Virtual:
             // A port other apps send to, not a protocol setting: say so. The
             // port keeps its name ("MIDI 2.0 In"), so racks and connections don't change.
@@ -371,6 +374,7 @@ SourceProtocol RackController::sourceProtocolOf(const MidiSourceRef& ref) const 
     if (config.protocolPreference == MidiProtocol::Midi1) return SourceProtocol::Midi1;
     switch (ref.kind) {
         case MidiSourceRef::Kind::All:
+        case MidiSourceRef::Kind::None:
         case MidiSourceRef::Kind::Sequence: return SourceProtocol::Mixed;
         case MidiSourceRef::Kind::Virtual:
             for (const auto& [name, protocol] : config.virtualInputs)
@@ -516,15 +520,30 @@ const Sequence* RackController::sequence(const std::string& id) const {
     return entry != nullptr ? &entry->sequence : nullptr;
 }
 
-std::string RackController::addSequence(MidiProtocol protocol) {
+std::string RackController::addSequence(MidiProtocol protocol, const std::string& target) {
     const std::string id = session.addSequence(protocol);
-    refreshSources();   // it's a source now
+    if (!target.empty()) setSequenceTarget(id, target, true);
     return id;
+}
+
+std::string RackController::addRowForSequence(const std::string& id, const PluginDescriptor& plugin) {
+    const std::string row = addPlugin(plugin, session.slots().size());
+    if (!row.empty()) setSequenceTarget(id, row, true);
+    return row;
+}
+
+void RackController::setSequenceTarget(const std::string& id, const std::string& row, bool on) {
+    editSequence(id, [&](Sequence& seq) {
+        auto& t = seq.targets;
+        const auto it = std::find(t.begin(), t.end(), row);
+        if (on && it == t.end()) t.push_back(row);
+        if (!on && it != t.end()) t.erase(it);
+    });
 }
 
 void RackController::removeSequence(const std::string& id) {
     if (id == learningId) cancelLearn();
-    if (session.removeSequence(id)) refreshSources();
+    session.removeSequence(id);
 }
 
 void RackController::togglePlay(const std::string& id) {
@@ -572,7 +591,6 @@ void RackController::setSequenceNotes(const std::string& id, std::vector<Sequenc
 
 void RackController::setSequenceProtocol(const std::string& id, MidiProtocol protocol) {
     editSequence(id, [protocol](Sequence& seq) { seq.protocol = protocol; });   // the Session refuses it with notes
-    refreshSources();                                                           // the menu shows protocols
 }
 
 void RackController::setSequenceTuning(const std::string& id, int edo, int referenceNote) {
@@ -592,6 +610,21 @@ void RackController::setSequenceGroup(const std::string& id, int group) {
 
 void RackController::setSequenceNoteOffOffset(const std::string& id, double ms) {
     editSequence(id, [ms](Sequence& seq) { seq.noteOffOffsetMs = std::clamp(ms, -1000.0, 1000.0); });
+}
+
+void RackController::renameSequence(const std::string& id, const std::string& name) {
+    const std::size_t first = name.find_first_not_of(" \t");
+    if (first == std::string::npos) {
+        notice("A sequence needs a name; it keeps its old one");
+        return;
+    }
+    std::string trimmed = name.substr(first, name.find_last_not_of(" \t") - first + 1);
+    if (trimmed.size() > kMaxNameBytes) {   // cut on a character boundary
+        std::size_t end = kMaxNameBytes;
+        while (end > 0 && (static_cast<unsigned char>(trimmed[end]) & 0xC0) == 0x80) --end;
+        trimmed.resize(end);
+    }
+    editSequence(id, [&trimmed](Sequence& seq) { seq.name = trimmed; });
 }
 
 void RackController::setSequenceAtStart(const std::string& id, bool atStart) {
