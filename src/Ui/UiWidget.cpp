@@ -88,7 +88,18 @@ void UiWidget::removeButton(float x, float y, float size) {
 
 void UiWidget::region(float x, float y, float w, float h, std::function<void(const Press&)> press,
                       std::function<void(float)> wheel, bool rightToo) {
-    regions.push_back(Region{x, y, w, h, std::move(press), std::move(wheel), rightToo});
+    regions.push_back(Region{x, y + regionDy, w, h, std::move(press), std::move(wheel), rightToo});
+}
+
+void UiWidget::beginShift(float dy) {
+    save();
+    translate(0.0f, dy);
+    regionDy += dy;
+}
+
+void UiWidget::endShift(float dy) {
+    regionDy -= dy;
+    restore();
 }
 
 void UiWidget::stepper(float x, float y, const std::string& value,
@@ -105,6 +116,7 @@ void UiWidget::stepper(float x, float y, const std::string& value,
 
 void UiWidget::onNanoDisplay() {
     regions.clear();
+    regionDy       = 0;
     const float sf = scaleFactor();
     scale(sf, sf);
     draw();

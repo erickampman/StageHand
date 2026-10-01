@@ -1203,6 +1203,11 @@ void RackController::buildSetlist(double now) {
             m.next = static_cast<int>(i);
             break;
         }
+    for (std::size_t i = song; i-- > 0;)
+        if (!songCache[i].missing) {
+            m.previous = static_cast<int>(i);
+            break;
+        }
 }
 
 } // namespace stagehand

@@ -22,6 +22,7 @@ namespace {
 // dark, high contrast, big enough to hit.
 
 constexpr float kToolbarH   = 44.0f;
+constexpr float kSetlistH   = 40.0f;   // the setlist row, above the toolbar while a setlist is open
 constexpr float kRowH       = 64.0f;
 constexpr float kStatusH    = 30.0f;
 constexpr float kInputW     = 330.0f;
@@ -106,8 +107,15 @@ float RackWidget::outputX() const {
 float RackWidget::outputW() {
     return std::max(kMinOutputW, width() - outputX());
 }
+// The setlist row (when open), then the toolbar, then the rows.
+float RackWidget::toolbarY() const {
+    return controller.view().setlist.open ? kSetlistH : 0.0f;
+}
+float RackWidget::topH() const {
+    return toolbarY() + kToolbarH;
+}
 float RackWidget::rowsHeight() {
-    return dockTop() - kToolbarH;
+    return dockTop() - topH();
 }
 // The dock grows with its sequences, up to a little over half the space; past
 // that its sequence rows scroll.
@@ -115,7 +123,7 @@ float RackWidget::dockHeight() {
     // At least one sequence row's height: an empty dock shows how to add one.
     const float rows = static_cast<float>(std::max<std::size_t>(controller.view().sequences.size(), 1));
     const float want = kDockHeadH + kInputsH + rows * kSeqRowH;
-    const float most = std::max(kDockHeadH + kInputsH + kSeqRowH, (height() - kToolbarH - kStatusH) * 0.55f);
+    const float most = std::max(kDockHeadH + kInputsH + kSeqRowH, (height() - topH() - kStatusH) * 0.55f);
     return std::min(want, most);
 }
 float RackWidget::dockTop() {
@@ -126,7 +134,7 @@ float RackWidget::dockMaxScroll() {
     return std::max(0.0f, content - (dockHeight() - kDockHeadH - kInputsH));
 }
 float RackWidget::rowY(std::size_t row) const {
-    return kToolbarH + static_cast<float>(row) * kRowH - scrollY;
+    return topH() + static_cast<float>(row) * kRowH - scrollY;
 }
 float RackWidget::faderX0() const {
     return outputX() + kPad + 30.0f + 14.0f;
@@ -166,21 +174,129 @@ void RackWidget::draw() {
     const RackViewModel& view = controller.view();
     scrollY = std::clamp(scrollY, 0.0f, maxScroll());
 
-    scissor(0, kToolbarH, width(), rowsHeight());
+    scissor(0, topH(), width(), rowsHeight());
     for (std::size_t i = 0; i < view.rows.size(); ++i) {
         const float y = rowY(i);
-        if (y + kRowH < kToolbarH || y > kToolbarH + rowsHeight()) continue;
+        if (y + kRowH < topH() || y > topH() + rowsHeight()) continue;
         drawRow(view.rows[i], i);
     }
     if (view.rows.empty())
-        label(width() / 2, kToolbarH + rowsHeight() / 2, "This rack has no plugins yet. Add one with + Add plugin.",
+        label(width() / 2, topH() + rowsHeight() / 2, "This rack has no plugins yet. Add one with + Add plugin.",
               16.0f, kDim, ALIGN_CENTER | ALIGN_MIDDLE);
     resetScissor();
 
     // Drawn after the rows, so their regions cover rows scrolled under them.
     drawDock();
+    beginShift(toolbarY());   // the toolbar draws itself at the top
     drawToolbar();
+    endShift(toolbarY());
+    if (view.setlist.open) drawSetlistRow();
     drawStatus();
+}
+
+// --- the setlist row (docs/setlists.md, "The setlist row") ----------------------------------
+
+// ◀ 3/12 Song name ▾ ▶, then where Next goes; the setlist's name at the right.
+void RackWidget::drawSetlistRow() {
+    const SetlistModel& set = controller.view().setlist;
+    box(0, 0, width(), kSetlistH, kPanel);
+    box(0, kSetlistH - 1.0f, width(), 1.0f, kTrack);
+    region(0, 0, width(), kSetlistH, nullptr);
+
+    const float y = 6.0f, h = 28.0f, arrowW = 44.0f;
+    // Skip shapes (|◀ and ▶|), so they can't be taken for the transport's Start.
+    auto arrow = [&](float x, bool left, bool enabled) {
+        box(x, y, arrowW, h, enabled ? kTrack : kBarBg, 4.0f);
+        const float   cx = x + arrowW / 2 + (left ? 2.0f : -2.0f), cy = y + h / 2;
+        const UiColor c  = enabled ? kText : kTrack;
+        beginPath();
+        moveTo(cx + (left ? 5.0f : -5.0f), cy - 7.0f);
+        lineTo(cx + (left ? -5.0f : 5.0f), cy);
+        lineTo(cx + (left ? 5.0f : -5.0f), cy + 7.0f);
+        closePath();
+        fill(c);
+        NanoVG::fill();
+        box(left ? cx - 8.0f : cx + 6.0f, cy - 7.0f, 2.5f, 14.0f, c);
+    };
+
+    // Previous.
+    float x = kPad;
+    arrow(x, true, set.previous >= 0);
+    if (set.previous >= 0)
+        region(x, y, arrowW, h, [this](const Press&) { switchSong([this] { controller.previousSong(); }); });
+    x += arrowW + 10.0f;
+
+    // Where we are, and the song: a click opens the song list.
+    const int         count = static_cast<int>(set.songs.size());
+    const std::string where = set.current >= 0 ? std::to_string(set.current + 1) + "/" + std::to_string(count)
+                                               : "-/" + std::to_string(count);
+    label(x, kSetlistH / 2, where, 13.0f, kDim);
+    const float nameX = x + std::max(44.0f, labelWidth(where, 13.0f) + 10.0f);
+    std::string song;
+    UiColor     songColor = kText;
+    if (set.songs.empty()) {
+        song      = "No songs yet";
+        songColor = kDim;
+    } else if (set.current >= 0) {
+        song = set.songs[static_cast<std::size_t>(set.current)].name;
+    } else {
+        song      = "Not a song in this set: " + controller.view().rackName;
+        songColor = kAmber;
+    }
+    const float nameW = std::min(labelWidth(song, 17.0f), std::max(80.0f, width() * 0.3f));
+    save();
+    scissor(nameX, 0, nameW, kSetlistH);
+    label(nameX, kSetlistH / 2, song, 17.0f, songColor);
+    restore();
+    label(nameX + nameW + 6.0f, kSetlistH / 2, "\xE2\x96\xBE", 14.0f, kDim);   // U+25BE small down triangle
+    region(nameX - 4.0f, y, nameW + 24.0f, h, [this, nameX](const Press&) { openSongMenu(nameX, kSetlistH); });
+    x = nameX + nameW + 28.0f;
+
+    // Next, and where it goes.
+    arrow(x, false, set.next >= 0);
+    if (set.next >= 0) region(x, y, arrowW, h, [this](const Press&) { switchSong([this] { controller.nextSong(); }); });
+    x += arrowW + 12.0f;
+    const std::string next = set.next >= 0 ? "next: " + set.songs[static_cast<std::size_t>(set.next)].name
+                                           : count > 0 ? "end of the set" : "";
+    const std::string name = set.name;
+    const float       nameRight = width() - kPad;
+    const float       setW      = labelWidth(name, 13.0f);
+    save();
+    scissor(x, 0, std::max(0.0f, nameRight - setW - 16.0f - x), kSetlistH);
+    label(x, kSetlistH / 2, next, 13.0f, kDim);
+    restore();
+    label(nameRight, kSetlistH / 2, name, 13.0f, kDim, ALIGN_RIGHT | ALIGN_MIDDLE);
+}
+
+// Every song: its number and name, the playing one ticked, a missing rack
+// greyed out (it can't be played until it's back).
+void RackWidget::openSongMenu(float x, float y) {
+    const SetlistModel& set = controller.view().setlist;
+    Menu                m;
+    m.x     = x;
+    m.y     = y;
+    m.w     = 360.0f;
+    m.title = set.name;
+    for (std::size_t i = 0; i < set.songs.size(); ++i) {
+        const SongModel&  s    = set.songs[i];
+        const std::string text = std::to_string(i + 1) + "   " + s.name + (s.missing ? "   (rack missing)" : "");
+        m.items.push_back(MenuItem{
+            text,
+            s.missing ? std::function<void()>{}
+                      : [this, i] { switchSong([this, i] { controller.goToSong(i); }); },
+            static_cast<int>(i) == set.current});
+    }
+    if (set.songs.empty()) m.items.push_back(MenuItem{"No songs yet", {}});
+    openMenu(std::move(m));
+}
+
+void RackWidget::switchSong(std::function<void()> go) {
+    closeMenu();
+    if (!controller.unsavedUntitled()) {
+        go();
+        return;
+    }
+    keepChangesThen(std::move(go), false);
 }
 
 void RackWidget::drawToolbar() {
@@ -198,11 +314,11 @@ void RackWidget::drawToolbar() {
 
     const float fileX = width() - kPad - 70.0f;
     button(fileX, 8.0f, 70.0f, 28.0f, "File", false, true, kAccent);
-    region(fileX, 8.0f, 70.0f, 28.0f, [this, fileX](const Press&) { openFileMenu(fileX - 150.0f, kToolbarH); });
+    region(fileX, 8.0f, 70.0f, 28.0f, [this, fileX](const Press&) { openFileMenu(fileX - 150.0f, topH()); });
 
     const float addX = fileX - 10.0f - 118.0f;
     button(addX, 8.0f, 118.0f, 28.0f, "+ Add plugin", false, true, kAccent);
-    region(addX, 8.0f, 118.0f, 28.0f, [this, addX](const Press&) { openAddMenu(addX, kToolbarH); });
+    region(addX, 8.0f, 118.0f, 28.0f, [this, addX](const Press&) { openAddMenu(addX, topH()); });
 }
 
 // Tempo (drag up/down, Shift for fine; wheel; double-click for 120), Tap, time
@@ -257,7 +373,7 @@ void RackWidget::drawTransport(float x) {
     const bool  mapped  = !t.triggers.empty() || !t.startOnNote.empty();
     button(midiX, 8.0f, 50.0f, 28.0f, "MIDI", t.learning ? blinkOn : mapped, true,
            t.learning || !t.startOnNoteConnected ? kAmber : kAccent);
-    region(midiX, 8.0f, 50.0f, 28.0f, [this, midiX](const Press&) { openTransportMenu(midiX, kToolbarH); });
+    region(midiX, 8.0f, 50.0f, 28.0f, [this, midiX](const Press&) { openTransportMenu(midiX, topH()); });
 
     const float sigX = midiX + 56.0f;
     std::snprintf(text, sizeof text, "%d/%d", t.numerator, t.denominator);
@@ -265,7 +381,7 @@ void RackWidget::drawTransport(float x) {
     region(sigX, 8.0f, 52.0f, 28.0f, [this, sigX](const Press&) {
         Menu m;
         m.x     = sigX;
-        m.y     = kToolbarH;
+        m.y     = topH();
         m.w     = 140.0f;
         m.title = "Time signature";
         const TransportModel& now = controller.view().transport;
@@ -296,7 +412,7 @@ void RackWidget::drawTransport(float x) {
         fill(!t.click ? kText : t.clickConnected ? kAccent : kAmber);
         NanoVG::fill();
     }
-    region(dotsX, 8.0f, moreX + 14.0f - dotsX, 28.0f, [this, moreX](const Press&) { openMetronomeMenu(moreX, kToolbarH); });
+    region(dotsX, 8.0f, moreX + 14.0f - dotsX, 28.0f, [this, moreX](const Press&) { openMetronomeMenu(moreX, topH()); });
 }
 
 // The lights' count, and the click: on, level, and its output device.
@@ -813,14 +929,17 @@ void RackWidget::fileAction(FileAction action) {
         proceed(action);
         return;
     }
+    keepChangesThen([this, action] { proceed(action); }, action == FileAction::Quit);
+}
+
+void RackWidget::keepChangesThen(std::function<void()> then, bool quitting) {
     Menu m;
     m.x     = width() / 2 - 150.0f;
-    m.y     = kToolbarH + 20.0f;
+    m.y     = topH() + 20.0f;
     m.w     = 300.0f;
     m.title = "Keep the changes to " + controller.view().rackName + "?";
-    m.items.push_back(MenuItem{"Save As...", [this, action] { saveAsThen([this, action] { proceed(action); }); }});
-    m.items.push_back(MenuItem{action == FileAction::Quit ? "Quit without saving" : "Discard the changes",
-                               [this, action] { proceed(action); }, false, true});
+    m.items.push_back(MenuItem{"Save As...", [this, then] { saveAsThen(then); }});
+    m.items.push_back(MenuItem{quitting ? "Quit without saving" : "Discard the changes", then, false, true});
     m.items.push_back(MenuItem{"Cancel", [] {}});
     openMenu(std::move(m));
 }
@@ -853,7 +972,7 @@ void RackWidget::saveAsThen(std::function<void()> then) {
         if (result != RackController::SaveAsResult::NeedsReplace) return;
         Menu m;
         m.x     = width() / 2 - 170.0f;
-        m.y     = kToolbarH + 20.0f;
+        m.y     = topH() + 20.0f;
         m.w     = 340.0f;
         m.title = "Replace the existing rack " + std::filesystem::path(saveAsPath(path)).filename().string() + "?";
         m.items.push_back(MenuItem{"Replace it", [this, path, then] {
@@ -1087,7 +1206,7 @@ void RackWidget::drawFilterPanel() {
     const float     ry = rowY(static_cast<std::size_t>(it - rows.begin()));
     float           y  = ry + kRowH + 4.0f;
     if (y + h > height() - kStatusH) y = ry - h - 4.0f;
-    y             = std::clamp(y, kToolbarH + 4.0f, std::max(kToolbarH + 4.0f, height() - kStatusH - h - 4.0f));
+    y             = std::clamp(y, topH() + 4.0f, std::max(topH() + 4.0f, height() - kStatusH - h - 4.0f));
     const float x = kPad;
 
     box(x, y, w, h, kPanel, 6.0f);

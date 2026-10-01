@@ -152,7 +152,8 @@ struct SetlistModel {
     // The song playing, or -1: none yet (an empty set), or its song was removed
     // (the rack still plays; Next goes to the song that followed it).
     int                    current = -1;
-    int                    next    = -1;  // where Next goes (missing songs skipped), or -1
+    int                    next     = -1;  // where Next goes (missing songs skipped), or -1
+    int                    previous = -1;  // where Previous goes, or -1
 };
 
 struct RackViewModel {

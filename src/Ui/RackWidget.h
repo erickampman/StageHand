@@ -46,6 +46,8 @@ protected:
 
 private:
     // --- geometry (logical pixels)
+    float toolbarY() const;   // below the setlist row, when one is open
+    float topH() const;       // where the rows start
     float outputX() const;
     float outputW();
     float rowsHeight();
@@ -59,6 +61,7 @@ private:
 
     // --- parts
     void meterBars(float x0, float x1, float y, const float db[2], const float hold[2]);
+    void drawSetlistRow();
     void drawToolbar();
     void drawTransport(float x);
     void drawRow(const RowModel& row, std::size_t index);
@@ -88,6 +91,14 @@ private:
     // "+ Sequence": after the protocol, choose where it plays (a row, a new row,
     // or nowhere yet); with no rows yet, straight to the plugin list. Then name it.
     void newSequence(MidiProtocol protocol, float x, float y);
+    // The setlist's songs, to go to one (docs/setlists.md, "The setlist row").
+    void openSongMenu(float x, float y);
+    // Go to another song: if an untitled rack's changes would be lost, ask
+    // first (as New and Open do). `go` switches.
+    void switchSong(std::function<void()> go);
+    // Ask whether to keep an untitled rack's changes, then `then` (unless
+    // cancelled). `quitting` words the discard choice for quitting.
+    void keepChangesThen(std::function<void()> then, bool quitting);
     void openFileMenu(float x, float y);
     void openTransportMenu(float x, float y);
     void openMetronomeMenu(float x, float y);

@@ -154,10 +154,14 @@ rows.
 
 - **Only when a setlist is open.** A rack opened on its own looks as it does
   today.
-- **Contents:** ◀ 3/12 *Song name* ▾ ▶, then "next: So what" with a dot
+- **Contents:** |◀ 3/12 *Song name* ▾ ▶|, then "next: So what" with a dot
   showing whether it's prepared (section 2). On the right: the setlist's
-  name, and its MIDI button (learn, section 4). The ◀ ▶ buttons are large,
-  for the stage.
+  name, and its MIDI button (learn, section 4). The arrows are large, for the
+  stage, and drawn as skip shapes (|◀ ▶|) so they can't be taken for the
+  transport's Start just below. An arrow with nowhere to go is greyed out.
+- **No song playing:** after the playing song is removed from the set, the
+  row shows "-/12" and "Not a song in this set: <rack>" in amber until a song
+  is chosen.
 - **The song list:** a click on the song name opens every song as a menu,
   each with its number, its prepared or missing state, and the current one
   marked. A click on a song goes there. The editing items are at the bottom
@@ -445,7 +449,16 @@ data model or the engine); the rest can come with later milestones.
 
 7. **Check setlist,** and showing problems in the song list (edge case 9).
 
-Milestones 2 and 3 are what make it safe for a gig. Edge cases 10 to 12 are
+Milestones 2 and 3 are what make it safe for a gig.
+
+**Progress on milestone 1 (2026-10-01):** done: the model and file
+(`Session/Setlist.h`, `Session/SetlistFile.cpp`), the controller's setlist
+state and intents, `--setlist` and reopening the last setlist (playing is now
+the default mode), and the setlist row with Previous / Next and the song list
+(going to a song). Switching asks first if an untitled rack's changes would
+be lost, as New and Open do. Still to do: the File menu items (New setlist
+with this rack..., New setlist..., Open setlist..., Close setlist) and the
+song list's editing items. Edge cases 10 to 12 are
 checks and measurements to do along the way, not features.
 
 ## Open questions

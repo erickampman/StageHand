@@ -86,6 +86,10 @@ protected:
     void  removeButton(float x, float y, float size);       // a red X, for "remove this row"
     void  region(float x, float y, float w, float h, std::function<void(const Press&)> press,
                  std::function<void(float)> wheel = {}, bool rightToo = false);
+    // Draw a part `dy` lower than its own coordinates say: drawing and the
+    // regions it records move together. Pair each beginShift with an endShift.
+    void  beginShift(float dy);
+    void  endShift(float dy);
     // [-] value [+]; `change` gets the direction and whether Shift made it a big step.
     void stepper(float x, float y, const std::string& value, const std::function<void(int dir, bool big)>& change);
 
@@ -132,7 +136,8 @@ private:
     };
     std::optional<TextField> field;
 
-    std::vector<Region> regions;   // from the last draw
+    std::vector<Region> regions;    // from the last draw
+    float               regionDy = 0;   // beginShift()
     std::optional<Menu> menu;
 };
 
