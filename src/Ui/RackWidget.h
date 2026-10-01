@@ -71,11 +71,13 @@ private:
     void drawFilterPanel();
 
     // --- actions
-    void openSequenceMenu(const SequenceRowModel& seq, float x, float y);
+    // The red X: Remove / Cancel, right-aligned to `right` (the X's right edge).
+    void confirmRemoveSequence(const std::string& id, const std::string& name, float right, float y);
     void startRename(const std::string& id, const std::string& name);
     void openTriggerMenu(const SequenceRowModel& seq, float x, float y);
     void openSourceMenu(const RowModel& row, float x, float y);
-    void openRowMenu(const RowModel& row, float x, float y);
+    void confirmRemoveRow(const std::string& id, const std::string& name, float right, float y);
+    void openOutputMenu(const RowModel& row, float x, float y);
     void openAddMenu(float x, float y);
     // The plugin list (scans once). `none`, if not empty, is a first item that
     // calls `chosen` with an empty descriptor (e.g. "No instrument for now").

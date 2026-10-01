@@ -203,7 +203,7 @@ RowModel RackController::rowFor(const Session::Slot& slot, double now, double dt
     if (slot.plugin) {
         row.pluginName = slot.plugin->descriptor().name;
         row.vendor     = slot.plugin->descriptor().vendor;
-        row.state      = saved.enabled ? RowState::Running : RowState::Disabled;
+        row.state      = RowState::Running;
     } else {
         row.pluginName = saved.plugin.id;
         row.state      = RowState::Placeholder;
@@ -404,10 +404,6 @@ void RackController::setGainDb(const std::string& id, float db) {
 void RackController::setMuted(const std::string& id, bool muted) {
     if (session.setMuted(id, muted))
         if (RowModel* row = modelRow(id)) row->muted = muted;
-}
-
-void RackController::setEnabled(const std::string& id, bool enabled) {
-    session.setEnabled(id, enabled);
 }
 
 void RackController::setFilter(const std::string& id, const MidiFilter& filter) {

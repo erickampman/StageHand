@@ -50,12 +50,19 @@ private:
 // slot rather than to its index in a graph. Like the plugin, it's held by
 // shared_ptr and released only on the main thread.
 struct SlotRuntime {
-    explicit SlotRuntime(float initialGain = 1.0f) noexcept
-        : targetGain(initialGain), currentGain(initialGain), rampTarget(initialGain) {}
+    explicit SlotRuntime(float initialGain = 1.0f, bool initiallyMuted = false) noexcept
+        : targetGain(initialGain), muted(initiallyMuted), currentGain(initialGain), rampTarget(initialGain) {}
 
     // Main thread writes, audio thread reads. Linear; 0 when muted. The audio
     // thread ramps to each new value over Engine::kGainRampSeconds.
     std::atomic<float> targetGain;
+    // Main thread writes, audio thread reads (docs/rack-view.md, "Mute"). Muted:
+    // the plugin's held notes are released and no new note-ons reach it; once
+    // its output has been quiet for Engine::kQuietSeconds (or it has been
+    // muted for Engine::kMaxMutedSeconds) it is suspended: not processed, but
+    // for blocks that bring it events (controllers, note-offs). Unmuting
+    // resumes it at the next block. Set targetGain to 0 with it.
+    std::atomic<bool>  muted;
 
     LevelMeter meter;                            // post-gain; audio writes, main takes
     std::atomic<std::uint32_t> midiEvents{0};    // events delivered; audio adds, main compares
@@ -65,6 +72,12 @@ struct SlotRuntime {
     float         rampTarget;          // the target the running ramp heads for
     float         rampStep      = 0.0f;
     std::uint32_t rampRemaining = 0;   // frames left in the ramp; 0 = at rampTarget
+
+    // --- audio thread only: muting ---
+    bool          muteApplied = false;   // its notes released for this mute
+    bool          suspended   = false;
+    std::uint64_t quietFrames = 0;       // muted and at gain 0: frames of quiet output in a row
+    std::uint64_t mutedFrames = 0;       // muted and at gain 0, in all
 };
 
 } // namespace stagehand

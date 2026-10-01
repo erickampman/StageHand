@@ -165,7 +165,9 @@ main window:
   - A rate menu (1/4 to 16) and a length stepper. The stepper won't go below
     the last note's end and says why; notes are deleted in the editor, never
     by the length control.
-  - A launch menu, a Repeat toggle, and a "•••" menu with Remove (confirmed).
+  - A launch menu, a Repeat toggle, and a red X at the row's right end that
+    removes it after a Remove / Cancel confirmation (a "•••" menu until
+    2026-10-01, which also held Edit notes... and Rename...).
 - **Rows' source menus** list the sequences after the devices.
 - **Size:** the dock grows with its sequences up to a little over half the
   window, then scrolls with the wheel.
@@ -173,7 +175,9 @@ main window:
   offset or renaming (the editor, milestone 4).
 - **Naming (added 2026-09-30):** a new sequence opens a name field on its row
   at once (typing replaces "Sequence N"; Enter or a click elsewhere keeps it,
-  Escape keeps the old name), and the row's "•••" menu has Rename.... Leading
+  Escape keeps the old name). A click on the row's name opens the same field
+  (from 2026-10-01; it used to open the editor, and Rename... was in the row's
+  "•••" menu, now gone). Leading
   and trailing spaces go, an empty name is refused, 64 bytes at most; the id
   doesn't change, so rows keep playing it. The field is UiWidget's own text
   entry (DGL has none): UTF-8 typing, Backspace, Delete, arrows, Home/End,
@@ -260,8 +264,9 @@ Implemented 2026-09-29 (milestone 4):
 - **Where it lives:** `src/App/SequenceEditor` is the editing logic, tested
   headless: working notes, selection, gestures, undo and the trimming rule.
   `src/Ui/SequenceEditorWidget` is the window.
-- **Opening:** one window per sequence, from the dock (a click on the
-  sequence's name, or "Edit notes..."). Opening an open one brings it forward.
+- **Opening:** one window per sequence, from the dock (the Edit button or a
+  click on the mini-map; from 2026-10-01 a click on the name renames it, and
+  the "•••" menu's "Edit notes..." is gone). Opening an open one brings it forward.
 - **Closing:** closing an editor closes just that window. Closing the rack
   window quits even while editors are open (DGL alone would wait for every
   window).

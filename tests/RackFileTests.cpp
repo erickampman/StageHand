@@ -5,6 +5,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 
 #include "Check.h"
@@ -101,7 +102,6 @@ Rack sampleRack() {
     pad.name          = "Pad";
     pad.plugin.format = PluginFormat::Clap;
     pad.plugin.id     = "com.example.pad";
-    pad.enabled       = false;
     pad.muted         = true;
     pad.source.kind   = MidiSourceRef::Kind::Virtual;
     pad.source.name   = "MIDI 2.0 In";
@@ -154,7 +154,7 @@ void testRoundTrip(const fs::path& dir) {
     CHECK(b.plugin.format == PluginFormat::Clap && b.plugin.id == "com.example.synth");
     CHECK(b.plugin.path == "/opt/clap/Synth.clap");
     CHECK(b.state == saved.slots[0].state);                 // opaque bytes, exactly
-    CHECK(b.enabled && !b.muted && b.gainDb == -3.5f && b.firstOutput == 2 && b.notePort == 1);
+    CHECK(!b.muted && b.gainDb == -3.5f && b.firstOutput == 2 && b.notePort == 1);
     CHECK(b.source.kind == MidiSourceRef::Kind::Device && b.source.name == "KeyLab 88:KeyLab 88 MIDI 1");
     CHECK(b.filter.channelMask == 0x0003 && b.filter.groupMask == 0xFFFF);
     CHECK(b.filter.noteLow == 0 && b.filter.noteHigh == 59);
@@ -162,7 +162,7 @@ void testRoundTrip(const fs::path& dir) {
     CHECK(b.filter.transpose == 12);
 
     const RackSlot& p = loaded.slots[1];
-    CHECK(!p.enabled && p.muted && p.state.empty());
+    CHECK(p.muted && p.state.empty());
     CHECK(p.source.kind == MidiSourceRef::Kind::Virtual && p.source.name == "MIDI 2.0 In");
     CHECK(p.filter.noteLow == 60 && p.filter.noteHigh == 127);
 
@@ -174,6 +174,22 @@ void testRoundTrip(const fs::path& dir) {
     CHECK(!fs::exists(dir / "Split.rack.tmp") && !fs::exists(dir / "Split.rack.old"));
     Rack reloaded;
     CHECK(loadRack(path, reloaded).ok && reloaded.name == "Split v2" && reloaded.slots.size() == 1);
+}
+
+// "enabled": false, from before mute replaced it, loads as muted.
+void testEnabledBecomesMuted(const fs::path& dir) {
+    writeText(dir / "Old.rack/rack.json", R"({
+        "format": "stagehand-rack", "version": 1,
+        "slots": [ { "id": "off", "plugin": { "format": "clap", "id": "x.y" }, "enabled": false },
+                   { "id": "on", "plugin": { "format": "clap", "id": "x.y" }, "enabled": true } ] })");
+    Rack rack;
+    CHECK(loadRack((dir / "Old.rack").string(), rack).ok && rack.slots.size() == 2);
+    if (rack.slots.size() != 2) return;
+    CHECK(rack.slots[0].muted && !rack.slots[1].muted);
+    CHECK(saveRack((dir / "Old.rack").string(), rack).ok);
+    std::ifstream in(dir / "Old.rack/rack.json");
+    const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    CHECK(text.find("\"enabled\"") == std::string::npos);   // not written any more
 }
 
 void testDefaults(const fs::path& dir) {
@@ -190,7 +206,7 @@ void testDefaults(const fs::path& dir) {
         return;
     }
     const RackSlot& s = rack.slots[0];
-    CHECK(s.name == "one" && s.enabled && !s.muted && s.gainDb == 0.0f && s.firstOutput == 0 && s.notePort == 0);
+    CHECK(s.name == "one" && !s.muted && s.gainDb == 0.0f && s.firstOutput == 0 && s.notePort == 0);
     CHECK(s.source.kind == MidiSourceRef::Kind::All);
     CHECK(s.filter.channelMask == 0xFFFF && s.filter.noteLow == 0 && s.filter.noteHigh == 127);
     CHECK(s.filter.velocityLow == 0 && s.filter.velocityHigh == 0xFFFF && s.filter.transpose == 0);
@@ -313,6 +329,7 @@ int main() {
     const fs::path dir = scratch();
     testRoundTrip(dir);
     testDefaults(dir);
+    testEnabledBecomesMuted(dir);
     testFailures(dir);
     testMissingStateWarns(dir);
     testSequenceTargets(dir);

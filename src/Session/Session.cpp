@@ -85,15 +85,12 @@ bool Session::load(const Rack& rack, double rate, LoadReport& report) {
             continue;
         }
         slot.plugin            = plugin;
-        slot.runtime           = std::make_shared<SlotRuntime>(targetGainOf(saved));
+        slot.runtime           = std::make_shared<SlotRuntime>(targetGainOf(saved), saved.muted);
         slot.saved.plugin.path = plugin->descriptor().path;   // where it was actually found
 
-        // Only a running slot opens its device; a disabled one resolves when enabled.
-        if (saved.enabled) {
-            resolveSource(slot);
-            if (!slot.sourceProblem.empty())   // no fallback to "all"
-                report.warnings.push_back(where + slot.sourceProblem + "; this slot will hear nothing from it");
-        }
+        resolveSource(slot);
+        if (!slot.sourceProblem.empty())   // no fallback to "all"
+            report.warnings.push_back(where + slot.sourceProblem + "; this slot will hear nothing from it");
         next.push_back(std::move(slot));
     }
 
@@ -106,7 +103,7 @@ bool Session::load(const Rack& rack, double rate, LoadReport& report) {
     commitSequences();
     commitGraph();
     return std::any_of(loaded.begin(), loaded.end(),
-                       [](const Slot& s) { return s.plugin && s.saved.enabled; });
+                       [](const Slot& s) { return s.plugin != nullptr; });
 }
 
 Rack Session::capture() const {
@@ -158,7 +155,10 @@ bool Session::setMuted(const std::string& id, bool muted) {
     Slot* s = find(id);
     if (s == nullptr) return false;
     s->saved.muted = muted;
-    if (s->runtime) s->runtime->targetGain.store(targetGainOf(s->saved), std::memory_order_relaxed);
+    if (s->runtime) {
+        s->runtime->targetGain.store(targetGainOf(s->saved), std::memory_order_relaxed);
+        s->runtime->muted.store(muted, std::memory_order_relaxed);
+    }
     dirty = true;
     return true;
 }
@@ -180,16 +180,6 @@ bool Session::setTimeSignature(int numerator, int denominator) {
 }
 
 // --- structural edits --------------------------------------------------------------
-
-bool Session::setEnabled(const std::string& id, bool enabled) {
-    Slot* s = find(id);
-    if (s == nullptr) return false;
-    s->saved.enabled = enabled;
-    // A slot loaded disabled hasn't resolved its source yet.
-    if (enabled && s->plugin && s->source == kInvalidMidiSource && s->sourceProblem.empty()) resolveSource(*s);
-    graphDirty = dirty = true;
-    return true;
-}
 
 bool Session::setFilter(const std::string& id, const MidiFilter& filter) {
     Slot* s = find(id);
@@ -239,7 +229,7 @@ std::string Session::addSlot(const PluginDescriptor& plugin, std::size_t index, 
     slot.saved.id          = base;
     for (int n = 2; find(slot.saved.id) != nullptr; ++n) slot.saved.id = base + "-" + std::to_string(n);
     slot.plugin  = std::move(created);
-    slot.runtime = std::make_shared<SlotRuntime>(targetGainOf(slot.saved));
+    slot.runtime = std::make_shared<SlotRuntime>(targetGainOf(slot.saved), slot.saved.muted);
     resolveSource(slot);   // "all": nothing to open
 
     const std::string id = slot.saved.id;
@@ -444,7 +434,7 @@ void Session::commitSequences() {
 void Session::commitGraph() {
     std::vector<SlotConfig> configs;
     for (const Slot& slot : loaded) {
-        if (!slot.plugin || !slot.saved.enabled) continue;
+        if (!slot.plugin) continue;
         SlotConfig config;
         config.plugin                = slot.plugin;
         config.runtime               = slot.runtime;

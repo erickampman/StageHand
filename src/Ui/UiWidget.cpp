@@ -71,14 +71,19 @@ void UiWidget::button(float x, float y, float w, float h, const std::string& tex
     label(x + w / 2, y + h / 2, text, 13.0f, !enabled ? kDim : on ? kBarBg : kText, ALIGN_CENTER | ALIGN_MIDDLE);
 }
 
-void UiWidget::dotsButton(float x, float y, float w, float h) {
-    box(x, y, w, h, kTrack, 4.0f);
-    for (int i = -1; i <= 1; ++i) {
-        beginPath();
-        circle(x + w / 2 + static_cast<float>(i) * 6.0f, y + h / 2, 2.0f);
-        fill(kText);
-        NanoVG::fill();
-    }
+void UiWidget::removeButton(float x, float y, float size) {
+    box(x, y, size, size, kTrack, 4.0f);
+    const float in = size * 0.3f;
+    beginPath();
+    moveTo(x + in, y + in);
+    lineTo(x + size - in, y + size - in);
+    moveTo(x + size - in, y + in);
+    lineTo(x + in, y + size - in);
+    strokeColor(kRed.r, kRed.g, kRed.b);
+    strokeWidth(2.5f);
+    lineCap(ROUND);
+    stroke();
+    lineCap(BUTT);
 }
 
 void UiWidget::region(float x, float y, float w, float h, std::function<void(const Press&)> press,

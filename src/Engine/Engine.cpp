@@ -570,6 +570,7 @@ void Engine::takeMidi(const AudioCallbackContext& ctx) noexcept {
 void Engine::routeMidi(std::uint32_t frames) noexcept {
     if (currentGraph == nullptr) return;
     for (EngineGraph::SlotState& state : currentGraph->states) state.eventCount = 0;
+    applyMutes();
 
     std::size_t nextSequenceEvent = 0;
     auto routeSequencesUpTo = [&](std::uint32_t offset) {
@@ -587,6 +588,40 @@ void Engine::routeMidi(std::uint32_t frames) noexcept {
         route(staged[i].item, staged[i].offset);
     }
     routeSequencesUpTo(frames);
+}
+
+// A slot newly muted gets note-offs (at the block's start) for every note it
+// holds, and leaves those notes' held entries; one unmuted is resumed.
+void Engine::applyMutes() noexcept {
+    for (std::size_t i = 0; i < currentGraph->configs.size(); ++i) {
+        const SlotConfig& config  = currentGraph->configs[i];
+        SlotRuntime&      runtime = *config.runtime;
+        if (!runtime.muted.load(std::memory_order_relaxed)) {
+            runtime.muteApplied = runtime.suspended = false;
+            runtime.quietFrames = runtime.mutedFrames = 0;
+            continue;
+        }
+        if (runtime.muteApplied) continue;
+        runtime.muteApplied = true;
+        if (currentGraph->states[i].dialects == 0) continue;
+        for (HeldNote& held : heldNotes) {
+            if (!held.used) continue;
+            for (std::uint8_t k = 0; k < held.count; ++k) {
+                if (held.plugins[k] != config.plugin.get()) continue;
+                MidiMessage off;   // MIDI 2.0: deliver() translates it for the slot's port
+                off.words[0]  = 0x40000000u | (std::uint32_t{held.group} << 24) | ((0x80u | held.channel) << 16) |
+                                (std::uint32_t{held.note} << 8);
+                off.wordCount = 2;
+                deliver(i, off, nullptr, 0, 0, held.deliveredNotes[k], nullptr);
+                for (std::uint8_t j = k; j + 1 < held.count; ++j) {   // it no longer holds that note
+                    held.plugins[j]        = held.plugins[j + 1];
+                    held.deliveredNotes[j] = held.deliveredNotes[j + 1];
+                }
+                --held.count;
+                --k;
+            }
+        }
+    }
 }
 
 void Engine::route(const QueuedMidi& item, std::uint32_t offset) noexcept {
@@ -618,6 +653,7 @@ void Engine::route(const QueuedMidi& item, std::uint32_t offset) noexcept {
         const SlotConfig& config = currentGraph->configs[i];
         if (currentGraph->states[i].dialects == 0 || !accepts(config, item.source, original))
             continue;
+        if (noteOn != nullptr && config.runtime->muteApplied) continue;   // muted: no new notes
         std::uint8_t deliveredNote = 0;
         if (deliver(i, original, upconverted, upconvertedCount, offset, -1, &deliveredNote) &&
             noteOn != nullptr && noteOn->count < kMaxLayers) {
@@ -756,14 +792,20 @@ void Engine::runSlots(const AudioCallbackContext& ctx) noexcept {
                     ++state.cursor;
                 }
 
+                SlotRuntime& runtime = *config.runtime;
+                if (runtime.suspended && state.cursor == first) continue;   // nothing for it: not run, silent
+
                 ProcessContext pc;
                 pc.frameCount           = chunk;
                 pc.time                 = timeAt(ctx, chunkStart);
                 pc.audioOut             = AudioBuffer{state.channels.data(), state.audioChannels, chunk};
                 pc.eventsIn             = EventBlock{state.events.data() + first, state.cursor - first};
                 config.plugin->process(pc);
+                if (runtime.suspended) {   // run only for its events (a controller, a note-off), and unheard
+                    config.plugin->stopProcessing();
+                    continue;
+                }
 
-                SlotRuntime& runtime  = *config.runtime;
                 float        constant = 1.0f;
                 const float* gains    = advanceGain(runtime, chunk, ctx.time.sampleRate, constant);
                 auto destination = [&](std::uint32_t out) {
@@ -775,6 +817,18 @@ void Engine::runSlots(const AudioCallbackContext& ctx) noexcept {
                 if (state.audioChannels == 1) {   // mono feeds two outputs and shows on both meters
                     runtime.meter.add(1, mixInto(destination(config.firstOutput + 1), state.channels[0], chunk,
                                                  gains, constant));
+                }
+                if (runtime.muteApplied && runtime.rampRemaining == 0 && runtime.currentGain == 0.0f) {
+                    float peak = 0.0f;   // its own output, before the (zero) gain
+                    for (std::uint32_t c = 0; c < state.audioChannels; ++c)
+                        for (std::uint32_t f = 0; f < chunk; ++f) peak = std::max(peak, std::fabs(state.channels[c][f]));
+                    runtime.quietFrames = peak < kQuietLevel ? runtime.quietFrames + chunk : 0;
+                    runtime.mutedFrames += chunk;
+                    const double rate = ctx.time.sampleRate;
+                    if (runtime.quietFrames >= kQuietSeconds * rate || runtime.mutedFrames >= kMaxMutedSeconds * rate) {
+                        runtime.suspended = true;
+                        config.plugin->stopProcessing();
+                    }
                 }
             }
         }

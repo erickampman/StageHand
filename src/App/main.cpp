@@ -447,7 +447,7 @@ void printRack(const Session& session) {
         const RackSlot& s = slot.saved;
         std::printf("  [%s] %s: %s", s.id.c_str(), s.name.c_str(),
                     slot.plugin ? slot.plugin->descriptor().name.c_str() : "(placeholder: not loaded)");
-        if (!s.enabled) std::printf(", disabled");
+        if (s.muted) std::printf(", muted");
         std::printf(", from %s", sourceLabel(s.source).c_str());
         if (s.filter.noteLow != 0 || s.filter.noteHigh != 127)
             std::printf(", notes %u-%u", s.filter.noteLow, s.filter.noteHigh);
@@ -566,10 +566,10 @@ int runPlay(const Options& options) {
     // With the rack window, an empty or broken rack can be fixed there; the
     // console alone can't.
     if (!runnable && !options.ui) {
-        std::fprintf(stderr, "Nothing to play: no slot could be loaded and enabled.\n");
+        std::fprintf(stderr, "Nothing to play: no slot could be loaded.\n");
         return 1;
     }
-    if (!runnable) std::puts("Nothing plays yet: add or enable plugins in the rack window.");
+    if (!runnable) std::puts("Nothing plays yet: add plugins in the rack window.");
 
     if (!backend.start()) return 1;
     if (const std::uint32_t forced = backend.forcedQuantum(); forced != 0)

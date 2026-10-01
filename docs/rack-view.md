@@ -62,15 +62,24 @@ costs one atomic store and allocates nothing.
 
 - `setGainDb(id, db)`
 - `setMuted(id, muted)`: new rack field `muted`, default false. It's additive,
-  so the format version doesn't change. **Later:** mute also releases the
-  slot's sounding notes, so unmuting doesn't bring back notes (or stuck notes)
-  that were held through the mute. The engine already knows them: its held-note
-  table gives each note sent to that plugin, at the note number the plugin got.
-  After the ramp reaches zero, the engine sends those note-offs, which is more
-  precise than CC 123 and works for CLAP-dialect ports. Those held-note entries
-  are then dropped for that plugin, so the keyboard's later note-offs go
-  nowhere. Delivering it needs a main-to-audio command path (muting is an
-  atomic today, with no event).
+  so the format version doesn't change. **Since 2026-10-01 mute also covers
+  what `enabled` did, and `enabled` is gone** (`SlotRuntime::muted`, read
+  per block):
+  - At the block where the engine sees the mute, it sends the plugin a
+    note-off for every note it holds, at the note number it got, from the
+    held-note table. It then drops the plugin from those entries, so the
+    keyboard's later note-offs go nowhere. The note-offs go at once rather
+    than after the fade, because a release under the fade is inaudible anyway
+    and it frees voices sooner.
+  - While muted, note-ons don't reach the plugin. Other MIDI does, so
+    controller state such as the sustain pedal stays right. Unmuting
+    mid-chord brings back nothing: only notes played after unmuting sound.
+  - Once the gain reaches 0 and the plugin's own output stays under -100 dBFS
+    for 0.2 s, or after 5 s muted whatever it outputs (a drone, noise), it's
+    suspended. It isn't processed (`stopProcessing()`), except for a block
+    that brings it events. It then runs that block unheard and stops again.
+    Unmuting resumes it at the next block. The plugin stays loaded, so its
+    settings and state are kept, and no graph commit is needed.
 
 **Structural (graph commit):** everything that changes which plugins run or
 what they hear. The Session rebuilds the EngineGraph from all its slots and
@@ -84,9 +93,8 @@ second, and only while it moves.
   nothing, as on load.
 - `setFilter(id, MidiFilter)`: channels, groups, note and velocity ranges,
   transpose. The source fields are ignored, as in RackSlot.
-- `setEnabled(id, bool)`: a disabled slot stays loaded and doesn't run. This is
-  a setup action, not a performance one: removing a slot from the graph cuts its
-  sound, and its tails, immediately. Mute is the live equivalent.
+- (`setEnabled(id, bool)` was removed 2026-10-01: mute does its job; see
+  `setMuted`.)
 - `setFirstOutput(id, n)`
 - `addSlot(PluginDescriptor, index) -> id`: create, activate, generate a unique
   id, add to the graph. Activation happens on the main thread, synchronously;
@@ -152,7 +160,7 @@ RackViewModel
   rackName, modified
   rows[]: RowModel
     id, name, pluginName, vendor
-    state          running | disabled | placeholder (+ reason)
+    state          running | placeholder (+ reason)   (disabled: gone 2026-10-01, see setMuted)
     hasEditor, editorOpen
     sourceLabel    "All" | "KeyLab 88" | "MIDI 2.0 In" | "KeyLab 88 (not connected)"
     sourceProtocol mixed | MIDI 1.0 | 2.0 (for the badge)
@@ -218,8 +226,13 @@ Implemented in step 5:
   panel: channels and groups (from "all", a click picks just that one, and the
   last one stays on), key and velocity ranges, and transpose, as steppers
   (Shift for an octave or 10, and the wheel works too), plus Reset.
-- Each row's "..." menu: Enabled, the output pair (when there are more than
-  two outputs), and Remove, which asks for confirmation.
+- Each row: the "out 1-2" text opens the output-pair menu when there are more
+  than two outputs, and a red X at the row's right end removes the row, after
+  a Remove / Cancel confirmation. (Until 2026-10-01 a "..." menu held
+  Enabled, the output pair and Remove. Enabled is gone: Mute does its job.)
+  Sequence rows end with the same red X.
+- A muted row is dimmed like a placeholder (since 2026-10-01), except its M
+  button, which stays bright.
 - "+ Add plugin" lists the scanned plugins (scanned once, on first use) and
   adds the choice at the bottom. `--play --save-rack PATH` alone starts a new,
   empty rack. With the window, a rack with nothing runnable no longer exits.
@@ -276,5 +289,6 @@ plugin editor windows) and Ctrl-Q.
 1. Add and remove are in v1, with a plain list of scanned plugins.
 2. Editors open on demand. `--open-editors` keeps the old behavior.
 3. Mute is its own rack field, separate from `enabled`. Mute also sending
-   note-offs is deferred (see `setMuted`).
+   note-offs is deferred (see `setMuted`). (Superseded 2026-10-01: mute
+   releases notes, and replaced `enabled`.)
 4. The ramp time is fixed at 10 ms.

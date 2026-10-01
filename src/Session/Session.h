@@ -48,7 +48,7 @@ public:
 
     // Replace what's running with `rack`. Every slot's plugin is created,
     // restored (loadState, before activation), and activated at `sampleRate`;
-    // enabled slots go into the committed graph. A plugin that can't be loaded
+    // they all go into the committed graph. A plugin that can't be loaded
     // leaves a placeholder (kept, not run, saved back unchanged). A named device
     // that isn't open is opened; one that isn't connected leaves its slot
     // hearing nothing (no fallback to "all"), with a warning. Clears modified().
@@ -95,7 +95,6 @@ public:
 
     // Structural: take effect at the next flush(), which commits one new graph
     // for any number of edits.
-    bool setEnabled(const std::string& id, bool enabled);
     bool setFilter(const std::string& id, const MidiFilter& filter);   // source fields ignored
     bool setFirstOutput(const std::string& id, std::uint32_t firstOutput);
     // Resolves (opening a named device if needed). If it can't, the slot hears

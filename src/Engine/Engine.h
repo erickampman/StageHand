@@ -181,6 +181,12 @@ public:
 
     // How long a change of slot gain takes to arrive (docs/rack-view.md, section 3).
     static constexpr double kGainRampSeconds = 0.010;
+    // A muted slot is suspended (SlotRuntime::muted) once its output stays under
+    // kQuietLevel (-100 dBFS) for kQuietSeconds, or after kMaxMutedSeconds
+    // whatever it does (a drone, noise).
+    static constexpr float  kQuietLevel      = 1e-5f;
+    static constexpr double kQuietSeconds    = 0.2;
+    static constexpr double kMaxMutedSeconds = 5.0;
 
     // --- audio thread ---
     void process(const AudioCallbackContext& ctx) noexcept override;
@@ -223,6 +229,7 @@ private:
     void generateSequences(const AudioCallbackContext& ctx) noexcept;
     void generateAuditions(const AudioCallbackContext& ctx) noexcept;
     void routeMidi(std::uint32_t frames) noexcept;
+    void applyMutes() noexcept;
     void route(const QueuedMidi& item, std::uint32_t offset) noexcept;
     bool deliver(std::size_t slot, const MidiMessage& original, const MidiMessage* upconverted,
                  std::size_t upconvertedCount, std::uint32_t offset, int noteOverride,

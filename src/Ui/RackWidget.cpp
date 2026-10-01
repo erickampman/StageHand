@@ -28,6 +28,7 @@ constexpr float kInputW     = 330.0f;
 constexpr float kTransportX = 280.0f;   // the toolbar's transport, left of the input column's edge
 constexpr float kPluginW    = 270.0f;
 constexpr float kMinOutputW = 330.0f;
+constexpr float kRemoveSize = 26.0f;   // the red X at each row's right end
 constexpr float kMinDb      = -60.0f;   // one scale for fader and meters, so they line up
 constexpr float kMaxDb      = 6.0f;
 constexpr float kKeyBarX    = kPad + 16.0f;   // 128 keys at 1 logical pixel each
@@ -130,8 +131,8 @@ float RackWidget::rowY(std::size_t row) const {
 float RackWidget::faderX0() const {
     return outputX() + kPad + 30.0f + 14.0f;
 }
-float RackWidget::faderX1() {
-    return outputX() + outputW() - kPad - 76.0f - 22.0f;
+float RackWidget::faderX1() {   // the gain and output text, then the red X, to its right
+    return outputX() + outputW() - kPad - 76.0f - 22.0f - kRemoveSize - 8.0f;
 }
 float RackWidget::maxScroll() {
     return std::max(0.0f, static_cast<float>(controller.view().rows.size()) * kRowH - rowsHeight());
@@ -342,11 +343,19 @@ void RackWidget::drawRow(const RowModel& row, std::size_t index) {
     box(kInputW, y + 8.0f, 1.0f, kRowH - 16.0f, kLine);
     box(outputX(), y + 8.0f, 1.0f, kRowH - 16.0f, kLine);
 
-    globalAlpha(row.state == RowState::Running ? 1.0f : 0.55f);
+    // Dimmed when it can't sound: a placeholder, or muted (its M button stays bright).
+    globalAlpha(row.state == RowState::Running && !row.muted ? 1.0f : 0.55f);
     drawRowInput(row, y);
     drawRowPlugin(row, y);
     if (row.state != RowState::Placeholder) drawRowOutput(row, y);
     globalAlpha(1.0f);
+
+    // Remove: the red X at the right end, asking first.
+    const float rx = outputX() + outputW() - kPad - kRemoveSize, ry = y + (kRowH - kRemoveSize) / 2;
+    removeButton(rx, ry, kRemoveSize);
+    region(rx, ry, kRemoveSize, kRemoveSize, [this, id = row.id, name = row.name, rx, ry](const Press&) {
+        confirmRemoveRow(id, name, rx + kRemoveSize, ry + kRemoveSize + 2.0f);
+    });
 }
 
 // Input: activity light, source (a menu), protocol badge; key range (drag its
@@ -402,32 +411,22 @@ void RackWidget::drawRowInput(const RowModel& row, float y) {
     });
 }
 
-// Plugin: slot name, plugin and vendor (or why it didn't load), the row menu,
-// and the editor button.
+// Plugin: slot name, plugin and vendor (or why it didn't load), and the editor
+// button.
 void RackWidget::drawRowPlugin(const RowModel& row, float y) {
     const float px      = kInputW + kPad;
     const float editorX = kInputW + kPluginW - kPad - 70.0f;
-    const float menuX   = editorX - 8.0f - 26.0f;
     save();
-    scissor(px, y, menuX - px - 6.0f, kRowH);
+    scissor(px, y, editorX - px - 8.0f, kRowH);
     label(px, y + 23.0f, row.name, 16.0f, kText);
     if (row.state == RowState::Placeholder) {
         label(px, y + 44.0f, "not loaded: " + row.problem, 12.0f, kRed);
     } else {
         std::string detail = row.pluginName + (row.vendor.empty() ? "" : " - " + row.vendor);
-        if (row.state == RowState::Disabled) detail = "disabled - " + detail;
         label(px, y + 44.0f, detail, 12.0f, kDim);
     }
     restore();
 
-    box(menuX, y + 19.0f, 26.0f, 26.0f, kTrack, 4.0f);
-    for (int i = -1; i <= 1; ++i) {   // three dots
-        beginPath();
-        circle(menuX + 13.0f + static_cast<float>(i) * 6.0f, y + 32.0f, 2.0f);
-        fill(kText);
-        NanoVG::fill();
-    }
-    region(menuX, y + 19.0f, 26.0f, 26.0f, [this, row, menuX, y](const Press&) { openRowMenu(row, menuX, y + 47.0f); });
 
     button(editorX, y + 19.0f, 70.0f, 26.0f, "Editor", row.editorOpen, row.hasEditor, kAccent);
     if (row.hasEditor)
@@ -439,7 +438,10 @@ void RackWidget::drawRowPlugin(const RowModel& row, float y) {
 // Output: mute, gain fader over the meters, clip light, gain and output text.
 void RackWidget::drawRowOutput(const RowModel& row, float y) {
     const float ox = outputX() + kPad;
+    save();
+    globalAlpha(1.0f);   // the way back from muted is never dimmed
     button(ox, y + 10.0f, 30.0f, 26.0f, "M", row.muted, true, kAmber);
+    restore();
     region(ox, y + 10.0f, 30.0f, 26.0f, [this, id = row.id](const Press&) {
         if (const RowModel* now = rowById(id)) controller.setMuted(id, !now->muted);
     });
@@ -482,8 +484,15 @@ void RackWidget::drawRowOutput(const RowModel& row, float y) {
     box(x1 + 8.0f, y + 36.0f, 14.0f, 14.0f, row.clipped ? kRed : kBarBg, 2.0f);
     region(x1 + 4.0f, y + 32.0f, 22.0f, 22.0f, [this, id = row.id](const Press&) { controller.clearClip(id); });
     label(x1 + 30.0f, y + 21.0f, row.muted ? "muted" : dbText(row.gainDb), 13.0f, row.muted ? kAmber : kText);
-    label(x1 + 30.0f, y + 44.0f,
-          "out " + std::to_string(row.firstOutput + 1) + "-" + std::to_string(row.firstOutput + 2), 12.0f, kDim);
+    // The output pair: a menu when there's more than one pair to choose from.
+    const std::string out = "out " + std::to_string(row.firstOutput + 1) + "-" + std::to_string(row.firstOutput + 2);
+    if (controller.view().status.outputs > 2) {
+        label(x1 + 30.0f, y + 44.0f, out + " \xE2\x96\xBE", 12.0f, kText);   // U+25BE small down triangle
+        region(x1 + 26.0f, y + 34.0f, 70.0f, 20.0f,
+               [this, row, x = x1 + 26.0f, y](const Press&) { openOutputMenu(row, x, y + 56.0f); });
+    } else {
+        label(x1 + 30.0f, y + 44.0f, out, 12.0f, kDim);
+    }
 }
 
 void RackWidget::drawStatus() {
@@ -620,12 +629,13 @@ void RackWidget::drawSequenceRow(const SequenceRowModel& seq, float y) {
     }
     label(nameX, y + 33.0f, detail, 11.0f, seq.usedBy.empty() ? kAmber : kDim);
     restore();
-    // The editor opens from the Edit button, and from a click on the name or
+    // A click on the name renames it; the editor opens from the Edit button and
     // the mini-map; the second line chooses the rows.
     auto openEditor = [this, id = seq.id](const Press&) {
         if (openSequenceEditor) openSequenceEditor(id);
     };
-    region(nameX, y + 4.0f, editX - nameX - 10.0f, 21.0f, openEditor);
+    region(nameX, y + 4.0f, editX - nameX - 10.0f, 21.0f,
+           [this, id = seq.id, name = seq.name](const Press&) { startRename(id, name); });
     region(nameX, y + 25.0f, editX - nameX - 10.0f, kSeqRowH - 29.0f,
            [this, id = seq.id, nameX, y](const Press&) { openTargetsMenu(id, nameX, y + kSeqRowH - 4.0f); });
     button(editX, y + 10.0f, 44.0f, 24.0f, "Edit", false, true, kAccent);
@@ -644,7 +654,8 @@ void RackWidget::drawSequenceRow(const SequenceRowModel& seq, float y) {
     if (running)
         box(mapX + static_cast<float>(seq.position) * unitW - 1.0f, y + 8.0f, 2.0f, 28.0f, kAmber);
 
-    // At Start (starts with the transport), rate, length, launch, Repeat, the row menu.
+    // At Start (starts with the transport), rate, length, launch, Repeat, MIDI;
+    // the red X at the right end.
     float x = mapX + mapW + 8.0f;
     button(x, y + 10.0f, 62.0f, 24.0f, "At Start", seq.atStart, true, kAccent);
     region(x, y + 10.0f, 62.0f, 24.0f,
@@ -701,38 +712,21 @@ void RackWidget::drawSequenceRow(const SequenceRowModel& seq, float y) {
            seq.learning ? kAmber : kAccent);
     region(x, y + 10.0f, 50.0f, 24.0f, [this, seq, x, y](const Press&) { openTriggerMenu(seq, x, y + 36.0f); });
     x += 56.0f;
-    box(x, y + 10.0f, 26.0f, 24.0f, kTrack, 4.0f);
-    for (int i = -1; i <= 1; ++i) {
-        beginPath();
-        circle(x + 13.0f + static_cast<float>(i) * 6.0f, y + 22.0f, 2.0f);
-        fill(kText);
-        NanoVG::fill();
-    }
-    region(x, y + 10.0f, 26.0f, 24.0f, [this, seq, x, y](const Press&) { openSequenceMenu(seq, x, y + 36.0f); });
+    const float rx = std::max(x + 8.0f, width() - kPad - kRemoveSize), ry = y + (kSeqRowH - kRemoveSize) / 2;
+    removeButton(rx, ry, kRemoveSize);
+    region(rx, ry, kRemoveSize, kRemoveSize, [this, id = seq.id, name = seq.name, rx, ry](const Press&) {
+        confirmRemoveSequence(id, name, rx + kRemoveSize, ry + kRemoveSize + 2.0f);
+    });
 }
 
-void RackWidget::openSequenceMenu(const SequenceRowModel& seq, float x, float y) {
+void RackWidget::confirmRemoveSequence(const std::string& id, const std::string& name, float right, float y) {
     Menu m;
-    m.x     = x;
-    m.y     = y;
     m.w     = 230.0f;
-    m.title = seq.name;
-    m.items.push_back(MenuItem{"Edit notes...", [this, id = seq.id] {
-                                   if (openSequenceEditor) openSequenceEditor(id);
-                               }});
-    m.items.push_back(MenuItem{"Rename...", [this, id = seq.id, name = seq.name] { startRename(id, name); }});
-    m.items.push_back(MenuItem{"Remove...", [this, id = seq.id, name = seq.name, x, y] {
-                                   Menu confirm;
-                                   confirm.x     = x;
-                                   confirm.y     = y;
-                                   confirm.w     = 230.0f;
-                                   confirm.title = "Remove " + name + "?";
-                                   confirm.items.push_back(
-                                       MenuItem{"Remove", [this, id] { controller.removeSequence(id); }, false, true});
-                                   confirm.items.push_back(MenuItem{"Cancel", [] {}});
-                                   openMenu(std::move(confirm));
-                               },
-                               false, true});
+    m.x     = std::max(8.0f, right - m.w);
+    m.y     = y;
+    m.title = "Remove " + name + "?";
+    m.items.push_back(MenuItem{"Remove", [this, id] { controller.removeSequence(id); }, false, true});
+    m.items.push_back(MenuItem{"Cancel", [] {}});
     openMenu(std::move(m));
 }
 
@@ -922,40 +916,32 @@ void RackWidget::openSourceMenu(const RowModel& row, float x, float y) {
     openMenu(std::move(m));
 }
 
-void RackWidget::openRowMenu(const RowModel& row, float x, float y) {
+void RackWidget::confirmRemoveRow(const std::string& id, const std::string& name, float right, float y) {
     Menu m;
-    m.x     = x;
-    m.y     = y;
     m.w     = 220.0f;
-    m.title = row.name;
-    const bool placeholder = row.state == RowState::Placeholder;
-    const bool enabled     = row.state == RowState::Running;
-    m.items.push_back(MenuItem{"Enabled",
-                               placeholder ? std::function<void()>{}
-                                           : [this, id = row.id, enabled] { controller.setEnabled(id, !enabled); },
-                               row.state != RowState::Disabled, false});
-    const std::uint32_t outputs = controller.view().status.outputs;
-    if (!placeholder && outputs > 2)
-        for (std::uint32_t o = 0; o + 1 < outputs; o += 2)
-            m.items.push_back(MenuItem{"Output " + std::to_string(o + 1) + "-" + std::to_string(o + 2),
-                                       [this, id = row.id, o] { controller.setFirstOutput(id, o); },
-                                       row.firstOutput == o, false});
-    // Removing asks again: this menu is replaced by a confirmation.
-    m.items.push_back(MenuItem{"Remove...", [this, id = row.id, name = row.name, x, y] {
-                                   Menu confirm;
-                                   confirm.x     = x;
-                                   confirm.y     = y;
-                                   confirm.w     = 220.0f;
-                                   confirm.title = "Remove " + name + "?";
-                                   confirm.items.push_back(MenuItem{"Remove", [this, id] {
-                                                                        if (filterId == id) filterId.clear();
-                                                                        controller.removeSlot(id);
-                                                                    },
-                                                                    false, true});
-                                   confirm.items.push_back(MenuItem{"Cancel", [] {}, false, false});
-                                   openMenu(std::move(confirm));
+    m.x     = std::max(8.0f, right - m.w);
+    m.y     = y;
+    m.title = "Remove " + name + "?";
+    m.items.push_back(MenuItem{"Remove", [this, id] {
+                                   if (filterId == id) filterId.clear();
+                                   controller.removeSlot(id);
                                },
                                false, true});
+    m.items.push_back(MenuItem{"Cancel", [] {}});
+    openMenu(std::move(m));
+}
+
+// Which backend output pair the row plays into.
+void RackWidget::openOutputMenu(const RowModel& row, float x, float y) {
+    Menu m;
+    m.w     = 180.0f;
+    m.x     = std::min(x, width() - m.w - 8.0f);
+    m.y     = y;
+    m.title = row.name + " plays into";
+    const std::uint32_t outputs = controller.view().status.outputs;
+    for (std::uint32_t o = 0; o + 1 < outputs; o += 2)
+        m.items.push_back(MenuItem{"Output " + std::to_string(o + 1) + "-" + std::to_string(o + 2),
+                                   [this, id = row.id, o] { controller.setFirstOutput(id, o); }, row.firstOutput == o});
     openMenu(std::move(m));
 }
 

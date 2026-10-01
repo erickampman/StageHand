@@ -40,7 +40,7 @@ void testLoad() {
     RackSlot b = slot("b", "not.installed");                // placeholder
     b.state    = bytes("keep-me");
     RackSlot c = slot("c", "pad", "/old/place/Pad.clap");   // wrong hint: found by scan
-    c.enabled  = false;
+    c.muted    = true;
     RackSlot d = slot("d", "synth", "/clap/Synth.clap");
     d.source   = MidiSourceRef{MidiSourceRef::Kind::Device, "Unplugged:Port"};
     rack.slots = {a, b, c, d};
@@ -61,11 +61,11 @@ void testLoad() {
     CHECK(fa != nullptr && fa->state == bytes("saved-a"));
     if (fa == nullptr) return;
 
-    // Enabled, loaded slots run; the disabled one doesn't.
+    // Loaded slots run, muted ones too (until they've been quiet a while).
     runBlock(*engine);
     auto* fc = dynamic_cast<FakePlugin*>(slots[2].plugin.get());
     CHECK(fa != nullptr && fa->calls.size() == 1);
-    CHECK(fc != nullptr && fc->calls.empty());
+    CHECK(fc != nullptr && fc->calls.size() == 1);
 
     // capture(): fresh state from running plugins; the placeholder unchanged.
     fa->state = bytes("edited-a");
@@ -74,7 +74,7 @@ void testLoad() {
     if (captured.slots.size() == 4) {
         CHECK(captured.slots[0].state == bytes("edited-a"));
         CHECK(captured.slots[1].state == bytes("keep-me") && captured.slots[1].plugin.id == "not.installed");
-        CHECK(!captured.slots[2].enabled);
+        CHECK(captured.slots[2].muted);
     }
 
     session.unload();
@@ -181,25 +181,22 @@ void testStructuralEdits() {
 
     Rack rack;
     RackSlot b = slot("b", "synth", "/clap/Synth.clap");
-    b.enabled  = false;
     b.source   = MidiSourceRef{MidiSourceRef::Kind::Device, "Keys:Keys MIDI 1"};
     rack.slots = {slot("a", "synth", "/clap/Synth.clap"), b};
     Session::LoadReport report;
     CHECK(session.load(rack, 48000.0, report));
-    CHECK(midi.opened.empty());   // disabled: its device isn't opened yet
+    CHECK(midi.opened.size() == 1);   // b's device, opened on load
     runBlock(*engine);
     engine->collect();
     FakePlugin* fa = fakeOf(session, "a");
     FakePlugin* fb = fakeOf(session, "b");
     if (fa == nullptr || fb == nullptr) return;
 
-    // Three edits, one commit: a split at 59, and b joins on its device.
+    // Two edits, one commit: a split at 59.
     MidiFilter lower;
     lower.noteHigh = 59;
     CHECK(session.setFilter("a", lower));
     CHECK(session.setFirstOutput("a", 0));
-    CHECK(session.setEnabled("b", true));
-    CHECK(midi.opened.size() == 1);   // resolved on enabling
     CHECK(session.flushPending() && engine->committedGraphAdopted());
     session.flush();
     CHECK(!session.flushPending() && !engine->committedGraphAdopted());
@@ -217,11 +214,7 @@ void testStructuralEdits() {
     std::string problem;
     CHECK(session.setSource("b", MidiSourceRef{MidiSourceRef::Kind::Device, "Unplugged:Port"}, problem));
     CHECK(!problem.empty() && session.slot("b")->sourceProblem == problem);
-    CHECK(session.setEnabled("a", false));
     session.flush();
-    runBlock(*engine);
-    CHECK(fa->stops == 1);   // disabled: stopped on the audio thread, still loaded
-    CHECK(fa->active);
     fb->calls.clear();
     engine->onMidi(42, noteOn(61));
     runBlock(*engine);

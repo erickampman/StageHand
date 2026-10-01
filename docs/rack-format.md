@@ -78,7 +78,6 @@ rack or the new one intact, never a mix.
         "path": "~/.clap/PolygraphModular.clap"
       },
       "state": "state/bass.bin",
-      "enabled": true,
       "muted": false,
       "gainDb": 0.0,
       "output": 1,
@@ -131,8 +130,7 @@ get a **layer**.
 | `plugin.id` | required | The plugin's own id (as `--list-plugins` shows it) |
 | `plugin.path` | none | Where it was last found. A hint only: if it's wrong, StageHand scans for the id |
 | `state` | none | Path of the state blob, relative to the bundle. Absent means the plugin's defaults |
-| `enabled` | `true` | A disabled slot is loaded but not run (quick to re-enable) |
-| `muted` | `false` | A muted slot runs but is silent. Muting and unmuting fade over 10 ms. It's the live-safe way to silence a slot, since disabling cuts it off, tails included |
+| `muted` | `false` | Silent: muting and unmuting fade over 10 ms. Muting also ends the plugin's held notes. Once its output has gone quiet (or after 5 s), the plugin isn't run, so it costs no CPU. It's still loaded, so unmuting is instant. This replaced `enabled` on 2026-10-01: `"enabled": false` in an older file loads as muted, and `enabled` isn't written any more. The format version is unchanged |
 | `gainDb` | `0.0` | Level when summed into the outputs |
 | `output` | `1` | First output channel (1-based) for the plugin's first channel. A mono plugin feeds two |
 | `midi.source` | `"all"` | See "Sources" |

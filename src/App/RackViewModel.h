@@ -18,8 +18,7 @@ namespace stagehand {
 // it and send intents back to the controller; they never edit it.
 
 enum class RowState {
-    Running,       // loaded, enabled, in the engine
-    Disabled,      // loaded, not run
+    Running,       // loaded, in the engine (muted or not)
     Placeholder,   // the plugin couldn't be loaded; settings kept, saved back unchanged
 };
 

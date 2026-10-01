@@ -89,7 +89,6 @@ public:
     // --- intents (docs/rack-view.md, section 4). Unknown ids are ignored. ---
     void setGainDb(const std::string& id, float db);
     void setMuted(const std::string& id, bool muted);
-    void setEnabled(const std::string& id, bool enabled);
     void setFilter(const std::string& id, const MidiFilter& filter);
     void setSource(const std::string& id, const MidiSourceRef& source);
     void setFirstOutput(const std::string& id, std::uint32_t firstOutput);

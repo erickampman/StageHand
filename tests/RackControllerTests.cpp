@@ -81,7 +81,7 @@ Rack testRack() {
     a.source   = MidiSourceRef{MidiSourceRef::Kind::Device, "Keys:Keys MIDI 1"};
     RackSlot b = slot("b", "missing");
     RackSlot c = slot("c", "bass", "/clap/Bass.clap");
-    c.enabled  = false;
+    c.muted    = true;
     RackSlot d = slot("d", "old", "/clap/Old.clap");
     d.source   = MidiSourceRef{MidiSourceRef::Kind::Virtual, "MIDI 2.0 In"};
     RackSlot e = slot("e", "synth", "/clap/Synth.clap");
@@ -106,7 +106,7 @@ void testViewModel() {
     CHECK(a.sourceLabel == "Keys" && a.sourceConnected && a.sourceProtocol == SourceProtocol::Midi2);
     CHECK(!a.protocolWarning);   // the synth takes MIDI 2.0
     CHECK(b.state == RowState::Placeholder && b.pluginName == "missing" && !b.problem.empty());
-    CHECK(c.state == RowState::Disabled);
+    CHECK(c.state == RowState::Running && c.muted);   // muted rows run (until quiet)
     CHECK(d.sourceProtocol == SourceProtocol::Midi2 && d.protocolWarning);   // MIDI 2.0 into a MIDI 1.0 plugin
     CHECK(!e.sourceConnected && e.sourceLabel == "Unplugged:Port (not connected)");
 

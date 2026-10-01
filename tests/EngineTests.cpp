@@ -327,6 +327,85 @@ void testGainRamp() {
     engine->collect();
 }
 
+// Mute: the plugin's held notes end at once, new note-ons don't reach it, and
+// once it's quiet (or after kMaxMutedSeconds) it isn't run, except for a block
+// that brings it events. Unmuting resumes it.
+void testMute() {
+    auto engine  = std::make_unique<Engine>();
+    auto loud    = std::make_shared<FakePlugin>(2, NoteDialect::Midi, 1.0f);   // never quiet
+    auto quiet   = std::make_shared<FakePlugin>(2, NoteDialect::Midi, 0.0f);
+    SlotConfig a = slotFor(loud), b = slotFor(quiet);
+    a.runtime    = std::make_shared<SlotRuntime>(1.0f);
+    b.runtime    = std::make_shared<SlotRuntime>(1.0f);
+    engine->commit(graphOf({a, b}));
+    auto block = [&] {
+        Block blk(64, 48000.0, T);
+        engine->process(blk.ctx);
+    };
+    auto mute = [](SlotConfig& s, bool on) {
+        s.runtime->targetGain.store(on ? 0.0f : 1.0f);
+        s.runtime->muted.store(on);
+    };
+
+    engine->onMidi(1, note(T - 5 * ms, 60));
+    block();
+    CHECK(loud->calls.back().events.size() == 1);   // 60 is held
+
+    // Muted: a note-off for 60 at the block's start, MIDI 1.0 as the port takes it.
+    mute(a, true);
+    mute(b, true);
+    loud->calls.clear();
+    block();
+    CHECK(loud->calls.size() == 1 && loud->calls[0].events.size() == 1);
+    if (!loud->calls.empty() && !loud->calls[0].events.empty()) {
+        const MidiMessage& off = loud->calls[0].events[0].midi;
+        CHECK(ump::isNoteOff(off) && ump::noteNumber(off) == 60 && loud->calls[0].events[0].sampleOffset == 0);
+        CHECK(ump::messageType(off) == ump::MessageType::Midi1ChannelVoice);
+    }
+    CHECK(quiet->calls.back().events.size() == 1);   // it held 60 too
+
+    // A note-on while muted reaches neither.
+    loud->calls.clear();
+    quiet->calls.clear();
+    engine->onMidi(1, note(T - 5 * ms, 62));
+    block();
+    CHECK(loud->calls.size() == 1 && loud->calls[0].events.empty());
+    CHECK(quiet->calls.size() == 1 && quiet->calls[0].events.empty());
+
+    // The quiet one stops being run after 0.2 s (plus the 10 ms fade); the loud
+    // one only after 5 s.
+    for (int i = 0; i < 48000 * 3 / 10 / 64; ++i) block();   // 0.3 s
+    quiet->calls.clear();
+    block();
+    CHECK(quiet->calls.empty() && quiet->stops == 1 && !quiet->processing);
+    CHECK(loud->stops == 0);
+    for (int i = 0; i < 48000 * 5 / 64; ++i) block();
+    loud->calls.clear();
+    block();
+    CHECK(loud->calls.empty() && loud->stops == 1);
+
+    // Suspended, it still runs for a block that brings it something (a sustain
+    // pedal), then stops again.
+    TimedMidiMessage pedal;
+    pedal.captureTime       = T - 5 * ms;
+    pedal.message.words[0]  = 0x20B04000u;   // CC 64, value 0
+    pedal.message.wordCount = 1;
+    engine->onMidi(1, pedal);
+    block();
+    CHECK(quiet->calls.size() == 1 && quiet->calls[0].events.size() == 1 && quiet->stops == 2);
+
+    // Unmuted: run again, and notes reach it.
+    mute(b, false);
+    quiet->calls.clear();
+    engine->onMidi(1, note(T - 5 * ms, 64));
+    block();
+    CHECK(quiet->calls.size() == 1 && quiet->calls[0].events.size() == 1 && quiet->processing);
+
+    engine->commit(nullptr);
+    block();
+    engine->collect();
+}
+
 void testSlotMeters() {
     auto engine = std::make_unique<Engine>();
     auto stereo = std::make_shared<FakePlugin>(2, NoteDialect::Midi, 1.0f);
@@ -575,6 +654,7 @@ int main() {
     testMixing();
     testGainRamp();
     testSlotMeters();
+    testMute();
     testTransport();
     testGraphLifecycle();
     return test::finish("Engine");

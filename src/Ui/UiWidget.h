@@ -83,7 +83,7 @@ protected:
     void  label(float x, float y, const std::string& text, float size, UiColor c, int align = ALIGN_LEFT | ALIGN_MIDDLE);
     float labelWidth(const std::string& text, float size);
     void  button(float x, float y, float w, float h, const std::string& text, bool on, bool enabled, UiColor onColor);
-    void  dotsButton(float x, float y, float w, float h);   // "•••"
+    void  removeButton(float x, float y, float size);       // a red X, for "remove this row"
     void  region(float x, float y, float w, float h, std::function<void(const Press&)> press,
                  std::function<void(float)> wheel = {}, bool rightToo = false);
     // [-] value [+]; `change` gets the direction and whether Shift made it a big step.
