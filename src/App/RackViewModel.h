@@ -139,6 +139,22 @@ struct InputChipModel {
     bool           active    = false;   // messages arrived a moment ago
 };
 
+// The open setlist (docs/setlists.md), for the setlist row and its song list.
+struct SongModel {
+    std::string name;      // the song's name in the set, else its rack's
+    std::string rackName;  // the rack bundle's name
+    bool        missing = false;   // no rack at its path: skipped by Next and Previous
+};
+struct SetlistModel {
+    bool                   open = false;
+    std::string            name;          // the file's name
+    std::vector<SongModel> songs;
+    // The song playing, or -1: none yet (an empty set), or its song was removed
+    // (the rack still plays; Next goes to the song that followed it).
+    int                    current = -1;
+    int                    next    = -1;  // where Next goes (missing songs skipped), or -1
+};
+
 struct RackViewModel {
     std::string               rackName;
     bool                      modified = false;
@@ -148,6 +164,7 @@ struct RackViewModel {
     std::vector<InputChipModel>   inputs;      // the dock's inputs row
     std::vector<SequenceRowModel> sequences;   // the dock's sequence rows
     StatusModel               status;
+    SetlistModel              setlist;
 };
 
 } // namespace stagehand

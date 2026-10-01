@@ -4,9 +4,11 @@
 #include <cctype>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 
 #include "Core/Ump.h"
 #include "Session/RackFile.h"
+#include "Session/SetlistFile.h"
 
 namespace stagehand {
 
@@ -98,6 +100,7 @@ void RackController::tick(double now) {
 
     model.rackName = session.rackName();
     model.modified = session.modified();
+    buildSetlist(now);
 
     TransportModel&         transport = model.transport;
     const Engine::Transport clock     = engine.transport();
@@ -894,6 +897,10 @@ RackController::SaveAsResult RackController::saveAs(const std::string& chosen, b
     target = path;
     session.markSaved();
     notice("Saved the rack to " + target);
+    if (setlistOpen && onSong && song < setlist.songs.size()) {   // the song now plays the new bundle
+        setlist.songs[song].rack = path;
+        writeSetlist();
+    }
     return SaveAsResult::Saved;
 }
 
@@ -908,7 +915,9 @@ bool RackController::unsavedUntitled() const {
 bool RackController::newRack() {
     Rack rack;
     rack.name = "Untitled";
-    return replaceRack(rack, {}, {});
+    if (!replaceRack(rack, {}, {})) return false;
+    if (setlistOpen) closeSetlist();   // a rack opened on its own leaves the set
+    return true;
 }
 
 bool RackController::openRack(const std::string& chosen) {
@@ -917,6 +926,12 @@ bool RackController::openRack(const std::string& chosen) {
         notice("Couldn't open " + chosen + ": it isn't a rack (no rack.json)");
         return false;
     }
+    if (!loadRackAt(bundle)) return false;
+    if (setlistOpen) closeSetlist();   // a rack opened on its own leaves the set
+    return true;
+}
+
+bool RackController::loadRackAt(const std::string& bundle) {
     Rack                 rack;
     const RackFileResult result = loadRack(bundle, rack);
     if (!result.ok) {
@@ -951,6 +966,243 @@ bool RackController::replaceRack(const Rack& rack, const std::string& path, cons
 
 void RackController::quit() {
     if (config.quit) config.quit();
+}
+
+// --- the setlist (docs/setlists.md) -----------------------------------------------------
+
+namespace {
+
+bool rackMissing(const SetlistSong& song) {
+    return rackBundleOf(song.rack).empty();
+}
+
+std::string trimmed(const std::string& text) {
+    const std::size_t first = text.find_first_not_of(" \t");
+    if (first == std::string::npos) return {};
+    return text.substr(first, text.find_last_not_of(" \t") - first + 1);
+}
+
+} // namespace
+
+RackController::NewSetlistResult RackController::newSetlist(const std::string& chosen, bool withThisRack,
+                                                            bool replace) {
+    const std::string path = setlistPathOf(chosen);
+    if (path.empty()) return NewSetlistResult::Failed;
+    if (withThisRack && target.empty()) {
+        notice("Save the rack first (Save As): a song must be a rack on disk");
+        return NewSetlistResult::Failed;
+    }
+    std::error_code ec;
+    if (std::filesystem::exists(path, ec)) {
+        if (!isSetlistFile(path)) {
+            notice("Not created: " + path + " exists and isn't a setlist; choose another name");
+            return NewSetlistResult::Failed;
+        }
+        if (!replace) return NewSetlistResult::NeedsReplace;
+    }
+    Setlist fresh;
+    if (withThisRack) fresh.songs.push_back(SetlistSong{target, ""});
+    const RackFileResult result = saveSetlist(path, fresh);
+    if (!result.ok) {
+        notice("Couldn't create the setlist: " + result.error);
+        return NewSetlistResult::Failed;
+    }
+    setlistOpen = true;
+    setlist     = std::move(fresh);
+    setlistFile = resolveRackPath(path);
+    song        = 0;
+    onSong      = withThisRack;
+    rememberPosition();
+    notice("New setlist " + setlistFile);
+    return NewSetlistResult::Created;
+}
+
+bool RackController::openSetlist(const std::string& chosen, std::size_t start) {
+    Setlist              loaded;
+    const RackFileResult result = loadSetlist(chosen, loaded);
+    if (!result.ok) {
+        notice("Couldn't open the setlist: " + result.error);
+        return false;
+    }
+    for (const std::string& warning : result.warnings) notice(warning);
+    setlistOpen = true;
+    setlist     = std::move(loaded);
+    setlistFile = resolveRackPath(chosen);
+    songCache.clear();
+    song        = std::min(start, setlist.songs.size());
+    onSong      = false;
+    if (setlist.songs.empty()) {
+        rememberPosition();
+        notice("Opened the setlist " + setlistFile + " (no songs yet)");
+        return true;
+    }
+    song      = std::min(start, setlist.songs.size() - 1);
+    int first = nextPlayable(song, 1);
+    if (first < 0) first = nextPlayable(song, -1);
+    if (first < 0) {
+        rememberPosition();
+        notice("Opened the setlist " + setlistFile + ", but none of its racks were found");
+        return true;
+    }
+    goToSong(static_cast<std::size_t>(first));
+    return true;
+}
+
+void RackController::closeSetlist() {
+    if (!setlistOpen) return;
+    setlistOpen = false;
+    setlist     = {};
+    setlistFile.clear();
+    song   = 0;
+    onSong = false;
+    rememberPosition();
+}
+
+bool RackController::goToSong(std::size_t index) {
+    if (!setlistOpen || index >= setlist.songs.size()) return false;
+    const SetlistSong& s = setlist.songs[index];
+    if (rackMissing(s)) {
+        notice("Song " + std::to_string(index + 1) + "'s rack is missing: " + s.rack);
+        return false;
+    }
+    if (!loadRackAt(rackBundleOf(s.rack))) return false;
+    song   = index;
+    onSong = true;
+    rememberPosition();
+    return true;
+}
+
+bool RackController::nextSong() {
+    if (!setlistOpen) return false;
+    const int to = nextPlayable(onSong ? song + 1 : song, 1);
+    return to >= 0 && goToSong(static_cast<std::size_t>(to));
+}
+
+bool RackController::previousSong() {
+    if (!setlistOpen || song == 0) return false;
+    const int to = nextPlayable(song - 1, -1);
+    return to >= 0 && goToSong(static_cast<std::size_t>(to));
+}
+
+// The first song from `from` on (step 1) or back (step -1) whose rack is there.
+int RackController::nextPlayable(std::size_t from, int step) const {
+    for (auto i = static_cast<long>(from); i >= 0 && i < static_cast<long>(setlist.songs.size()); i += step)
+        if (!rackMissing(setlist.songs[static_cast<std::size_t>(i)])) return static_cast<int>(i);
+    return -1;
+}
+
+std::size_t RackController::insertionPoint() const {
+    return std::min(onSong ? song + 1 : song, setlist.songs.size());
+}
+
+bool RackController::addRackToSetlist(const std::string& chosen) {
+    if (!setlistOpen) return false;
+    const std::string bundle = rackBundleOf(chosen);
+    if (bundle.empty()) {
+        notice("Not added: " + chosen + " isn't a rack (no rack.json)");
+        return false;
+    }
+    const std::size_t at = insertionPoint();
+    setlist.songs.insert(setlist.songs.begin() + static_cast<std::ptrdiff_t>(at), SetlistSong{bundle, ""});
+    notice("Added " + rackNameOf(bundle) + " as song " + std::to_string(at + 1));
+    return writeSetlist();
+}
+
+bool RackController::addNewRackToSetlist(const std::string& chosen) {
+    if (!setlistOpen) return false;
+    const std::string path = saveAsPath(chosen);
+    if (path.empty()) return false;
+    if (classifySaveTarget(path, {}) != SaveTarget::New) {
+        notice("Not added: " + path + " already exists (Add a rack... adds an existing one)");
+        return false;
+    }
+    Rack fresh;
+    fresh.name                  = rackNameOf(path);
+    const RackFileResult result = saveRack(path, fresh);
+    if (!result.ok) {
+        notice("Couldn't create the rack: " + result.error);
+        return false;
+    }
+    const std::size_t at = insertionPoint();
+    setlist.songs.insert(setlist.songs.begin() + static_cast<std::ptrdiff_t>(at), SetlistSong{path, ""});
+    if (!writeSetlist()) return false;
+    return goToSong(at);
+}
+
+bool RackController::addThisRackAgain() {
+    if (!setlistOpen || !onSong) return false;
+    const SetlistSong again = setlist.songs[song];
+    setlist.songs.insert(setlist.songs.begin() + static_cast<std::ptrdiff_t>(song + 1), again);
+    notice("Added " + rackNameOf(again.rack) + " again as song " + std::to_string(song + 2));
+    return writeSetlist();
+}
+
+bool RackController::moveSong(std::size_t index, int delta) {
+    if (!setlistOpen || index >= setlist.songs.size()) return false;
+    const long to = static_cast<long>(index) + delta;
+    if (to < 0 || to >= static_cast<long>(setlist.songs.size())) return false;
+    const auto other = static_cast<std::size_t>(to);
+    std::swap(setlist.songs[index], setlist.songs[other]);
+    if (onSong && song == index) song = other;   // the playing song moves with it
+    else if (onSong && song == other) song = index;
+    return writeSetlist();
+}
+
+bool RackController::renameSong(std::size_t index, const std::string& name) {
+    if (!setlistOpen || index >= setlist.songs.size()) return false;
+    std::string text = trimmed(name);
+    if (text.size() > kMaxNameBytes) text.resize(kMaxNameBytes);
+    if (text == rackNameOf(setlist.songs[index].rack)) text.clear();   // just the rack's name
+    setlist.songs[index].name = text;
+    return writeSetlist();
+}
+
+bool RackController::removeSong(std::size_t index) {
+    if (!setlistOpen || index >= setlist.songs.size()) return false;
+    setlist.songs.erase(setlist.songs.begin() + static_cast<std::ptrdiff_t>(index));
+    if (onSong && index == song) onSong = false;   // the rack still plays; Next goes to the one that followed
+    else if (index < song) --song;
+    song = std::min(song, setlist.songs.size());
+    rememberPosition();
+    return writeSetlist();
+}
+
+bool RackController::writeSetlist() {
+    songCache.clear();   // checked again at the next tick
+    const RackFileResult result = saveSetlist(setlistFile, setlist);
+    if (!result.ok) notice("Couldn't save the setlist: " + result.error);
+    return result.ok;
+}
+
+void RackController::rememberPosition() {
+    if (config.lastPositionPath.empty()) return;
+    saveLastPosition(config.lastPositionPath, LastPosition{setlistOpen ? setlistFile : std::string{}, song});
+}
+
+void RackController::buildSetlist(double now) {
+    SetlistModel& m = model.setlist;
+    m               = {};
+    if (!setlistOpen) return;
+    if (songCache.size() != setlist.songs.size() || now - missingCheckedAt >= 1.0 || now < missingCheckedAt) {
+        songCache.clear();
+        for (const SetlistSong& s : setlist.songs) {
+            SongModel sm;
+            sm.rackName = rackNameOf(s.rack);
+            sm.name     = s.name.empty() ? sm.rackName : s.name;
+            sm.missing  = rackMissing(s);
+            songCache.push_back(std::move(sm));
+        }
+        missingCheckedAt = now;
+    }
+    m.open    = true;
+    m.name    = setlistNameOf(setlistFile);
+    m.songs   = songCache;
+    m.current = onSong ? static_cast<int>(song) : -1;
+    for (std::size_t i = onSong ? song + 1 : song; i < setlist.songs.size(); ++i)
+        if (!songCache[i].missing) {
+            m.next = static_cast<int>(i);
+            break;
+        }
 }
 
 } // namespace stagehand

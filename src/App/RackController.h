@@ -15,6 +15,7 @@
 #include "Midi/MidiInput.h"
 #include "Plugin/PluginFactory.h"
 #include "Session/Session.h"
+#include "Session/Setlist.h"
 
 namespace stagehand {
 
@@ -64,6 +65,10 @@ public:
         // names it). `savingOff` (--no-save-rack): nothing is ever saved.
         std::string saveTarget;
         bool        savingOff = false;
+
+        // Where the last setlist and song are remembered, for reopening there
+        // (docs/setlists.md, "Reopening"); empty = not remembered (tests).
+        std::string lastPositionPath;
     };
 
     RackController(Session& session, Engine& engine, MidiInput& midiInput, PluginFactory& pluginFactory,
@@ -214,6 +219,34 @@ public:
     std::uint64_t rackGeneration() const noexcept { return generation; }
     void quit();
 
+    // --- the setlist (docs/setlists.md, section 1). Its edits are saved at
+    // once (a setlist has no unsaved state); a rack's are saved as always. ---
+    bool               hasSetlist() const noexcept { return setlistOpen; }
+    const std::string& setlistPath() const noexcept { return setlistFile; }
+    // A new setlist at `chosen` (".setlist" added), opened at once. With
+    // `withThisRack`, the running rack is its first song: it must be saved
+    // somewhere (an untitled rack can't be a song). An existing setlist is
+    // replaced only with `replace`; anything else there never is.
+    enum class NewSetlistResult { Created, Failed, NeedsReplace };
+    NewSetlistResult newSetlist(const std::string& chosen, bool withThisRack, bool replace = false);
+    // Open a setlist and go to `song` (clamped; a missing song: the next one
+    // there is). A set with no songs opens with the running rack left as is.
+    bool openSetlist(const std::string& chosen, std::size_t song = 0);
+    void closeSetlist();   // the running rack stays open, on its own
+    // Switch to a song's rack (as Open does today: the running rack is saved
+    // first). False, with a notice, if its rack is missing or won't load.
+    bool goToSong(std::size_t index);
+    bool nextSong();       // skipping missing songs; false at the end
+    bool previousSong();
+    // Edits, all saved to the setlist file at once. "After the current song":
+    // after the song playing, or where its song was if that was removed.
+    bool addRackToSetlist(const std::string& chosen);          // after the current song; no switch
+    bool addNewRackToSetlist(const std::string& chosen);       // a new, empty rack saved there; goes to it
+    bool addThisRackAgain();                                   // the current song's rack, after it
+    bool moveSong(std::size_t index, int delta);               // -1 up, +1 down
+    bool renameSong(std::size_t index, const std::string& name);   // "" = the rack's own name
+    bool removeSong(std::size_t index);                        // the rack stays on disk
+
 private:
     // A meter's display state between ticks.
     struct Ballistics {
@@ -249,6 +282,13 @@ private:
     template <typename Change>
     void           editSequence(const std::string& id, Change change);
     bool           replaceRack(const Rack& rack, const std::string& path, const std::vector<std::string>& warnings);
+    // Open the rack bundle at `bundle` (with replaceRack()); false, with a notice, if it can't.
+    bool           loadRackAt(const std::string& bundle);
+    bool           writeSetlist();          // to setlistFile; a notice if it fails
+    void           rememberPosition();      // config.lastPositionPath
+    void           buildSetlist(double now);   // model.setlist
+    std::size_t    insertionPoint() const;  // where "after the current song" is
+    int            nextPlayable(std::size_t from, int step) const;   // -1: none
     void           setMetronome(const MetronomeSettings& settings);
     // Connect the click to its saved output, if it's on and the device is
     // there; `report`: say so when it isn't (once, until it connects).
@@ -281,6 +321,18 @@ private:
     bool                                                  scanned  = false;
     double                                                lastTick = -1.0;
     std::vector<std::string>                              notices;
+
+    // The open setlist. `song` is the song playing when `onSong`; otherwise
+    // where the next song is (its song was removed, or nothing is played yet).
+    bool                                                  setlistOpen = false;
+    Setlist                                               setlist;
+    std::string                                           setlistFile;
+    std::size_t                                           song   = 0;
+    bool                                                  onSong = false;
+    // The songs as the view shows them (names, missing racks): checked on
+    // disk at most once a second, and again after any change to the set.
+    std::vector<SongModel>                                songCache;
+    double                                                missingCheckedAt = -1.0;
 };
 
 } // namespace stagehand
