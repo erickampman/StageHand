@@ -143,7 +143,8 @@ public:
     // before: a note dragged to a new pitch stops sounding at the old one. A
     // few at most: a big selection moved at once would be a cluster, not a
     // check of the pitch.
-    void auditionNotes(const std::string& id, const std::vector<SequenceNote>& notes);
+    // `hold`: they sound until endAuditions() (Session::auditionNote).
+    void auditionNotes(const std::string& id, const std::vector<SequenceNote>& notes, bool hold = false);
     // Now, whatever auditionNotes() left sounding; `allNotesOff` as Session::endAuditions.
     void endAuditions(const std::string& id, bool allNotesOff = false);
     static constexpr std::size_t kMaxAuditionNotes = 8;

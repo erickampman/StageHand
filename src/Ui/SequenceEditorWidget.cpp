@@ -149,7 +149,7 @@ void SequenceEditorWidget::drawGrid(const Sequence& seq) {
         const float         y = rowY(n.pitch);
         const float         nw = static_cast<float>(n.length) * uw;
         if (x + nw < x0 || x > x0 + w || y + kRowH < y0 || y > y0 + h) continue;
-        const int alpha = 110 + static_cast<int>(145.0 * n.velocity / maxVelocity);   // brighter is louder
+        const int alpha = 45 + static_cast<int>(210.0 * n.velocity / maxVelocity);   // brighter is louder
         beginPath();
         roundedRect(x + 1.0f, y + 1.0f, std::max(2.0f, nw - 2.0f), kRowH - 2.0f, 2.0f);
         fill(kAccent, alpha);
@@ -161,12 +161,37 @@ void SequenceEditorWidget::drawGrid(const Sequence& seq) {
         if (row.id == seq.id && (row.state == SequenceState::Playing || row.state == SequenceState::Stopping))
             box(x0 + static_cast<float>(row.position) * uw - scrollX - 1.0f, y0, 2.0f, h, kAmber);
 
+    if (velocityDrag) drawVelocityReadout(seq);
     if (banding) {
         const float bx = std::min(bandX0, bandX1), by = std::min(bandY0, bandY1);
         outline(bx, by, std::fabs(bandX1 - bandX0), std::fabs(bandY1 - bandY0), kAccent, 0.0f);
     }
     restore();
     region(x0, y0, w, h, [this](const Press& p) { pressCanvas(p); }, {}, true);
+}
+
+// While Ctrl-dragging: the grabbed note's velocity, in a tag above it (below it
+// at the top of the grid), with a bar for how far up its range it is.
+void SequenceEditorWidget::drawVelocityReadout(const Sequence& seq) {
+    const int index = editor.noteAt(velocityStart, velocityPitch);
+    if (index < 0) return;
+    const SequenceNote& n     = editor.items()[static_cast<std::size_t>(index)].note;
+    const bool          midi2 = seq.protocol == MidiProtocol::Midi2;
+    const double        top   = midi2 ? 65535.0 : 127.0;
+    const double        frac  = n.velocity / top;
+    const std::string   text  = midi2 ? "Velocity " + std::to_string(static_cast<int>(std::lround(frac * 100.0))) + "%"
+                                      : "Velocity " + std::to_string(n.velocity);
+
+    const float w = 112.0f, h = 30.0f;
+    const float x = std::clamp(canvasX() + static_cast<float>(n.start) * unitWidth() - scrollX, canvasX() + 2.0f,
+                               canvasX() + canvasW() - w - 2.0f);
+    float       y = rowY(n.pitch) - h - 4.0f;
+    if (y < canvasY() + 2.0f) y = rowY(n.pitch) + kRowH + 4.0f;
+    box(x, y, w, h, kPanel, 4.0f);
+    outline(x, y, w, h, kAccent, 4.0f);
+    label(x + 8.0f, y + 11.0f, text, 11.0f, kText);
+    box(x + 8.0f, y + 21.0f, w - 16.0f, 4.0f, kTrack, 2.0f);
+    box(x + 8.0f, y + 21.0f, std::max(2.0f, (w - 16.0f) * static_cast<float>(frac)), 4.0f, kAccent, 2.0f);
 }
 
 void SequenceEditorWidget::drawRuler(const Sequence& seq) {
@@ -373,14 +398,27 @@ void SequenceEditorWidget::pressCanvas(const Press& p) {
             return;
         }
         if (!editor.items()[static_cast<std::size_t>(index)].selected) editor.select(index, false);
-        editor.soundNote(index);   // a click on a note plays it (whatever the drag does next)
+        editor.soundNote(index, ctrl);   // a click on a note plays it; Ctrl (velocity) holds it until release
         editor.beginGesture();
         dragEnd = [this] {
             editor.endGesture();
             editor.stopSounding();   // the note sounds only while it's held
+            velocityDrag = false;
         };
 
         if (ctrl) {   // velocity: up is louder, 200 px for the whole range
+            velocityDrag  = true;
+            velocityStart = note.start;
+            velocityPitch = note.pitch;
+            dragEnd       = [this, before = note.velocity] {
+                editor.endGesture();
+                editor.stopSounding();
+                velocityDrag = false;
+                // Changed: hear it again at the new velocity (after the note-offs above).
+                const int now = editor.noteAt(velocityStart, velocityPitch);
+                if (now >= 0 && editor.items()[static_cast<std::size_t>(now)].note.velocity != before)
+                    editor.soundNote(now);
+            };
             drag = [this, startY = p.y](float, float y, std::uint32_t) { editor.changeVelocity((startY - y) / 200.0); };
             return;
         }

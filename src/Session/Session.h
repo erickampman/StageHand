@@ -140,8 +140,10 @@ public:
     SequenceState sequenceState(const std::string& id) const noexcept;
     // Sound `note` of sequence `id` once in the rows it plays into, for its own
     // length at the current tempo (kept between kMinAudition and kMaxAudition
-    // seconds), as the editor adds or moves it. Playing or not.
-    bool auditionNote(const std::string& id, const SequenceNote& note);
+    // seconds), as the editor adds or moves it. Playing or not. `hold`: until
+    // endAuditions() instead (kHeldAudition at most, should that never come).
+    bool auditionNote(const std::string& id, const SequenceNote& note, bool hold = false);
+    static constexpr double kHeldAudition = 30.0;
     // End what auditionNote() started and is still sounding; `allNotesOff`: then
     // send a note-off for every key and All Notes Off (CC 123) on the
     // sequence's channel into its rows, which ends any note left on there,

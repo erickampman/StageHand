@@ -593,9 +593,9 @@ void RackController::endAuditions(const std::string& id, bool allNotesOff) {
     session.endAuditions(id, allNotesOff);
 }
 
-void RackController::auditionNotes(const std::string& id, const std::vector<SequenceNote>& notes) {
+void RackController::auditionNotes(const std::string& id, const std::vector<SequenceNote>& notes, bool hold) {
     session.endAuditions(id);
-    for (std::size_t i = 0; i < notes.size() && i < kMaxAuditionNotes; ++i) session.auditionNote(id, notes[i]);
+    for (std::size_t i = 0; i < notes.size() && i < kMaxAuditionNotes; ++i) session.auditionNote(id, notes[i], hold);
 }
 
 void RackController::setSequenceProtocol(const std::string& id, MidiProtocol protocol) {

@@ -70,8 +70,9 @@ public:
     void resize(int index, std::uint32_t length);                  // `index` at the gesture's start
     void changeVelocity(double fractionOfRange);                   // relative to the gesture's start
 
-    // Sound one note (a click on it), as an added or moved note sounds.
-    void soundNote(int index);
+    // Sound one note (a click on it), as an added or moved note sounds; `hold`:
+    // until stopSounding() (a Ctrl-click, held while velocity is dragged).
+    void soundNote(int index, bool hold = false);
     // End what the editor is sounding (the mouse released), then send a
     // note-off for every key and All Notes Off on the sequence's channel into
     // its rows, so nothing is left stuck.

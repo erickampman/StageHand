@@ -251,6 +251,19 @@ void testAudition() {
     CHECK(rig.sounded() == std::vector<int>{65});
     ed.soundNote(99);                 // no such note: nothing
     CHECK(rig.sounded().empty());
+
+    // Held (Ctrl-click): past its own length and the cap, until released.
+    rig.sounded();                    // the plain click above has ended
+    ed.soundNote(ed.noteAt(9, 65), true);
+    CHECK(rig.sounded() == std::vector<int>{65});
+    bool endedEarly = false;
+    for (int block = 0; block < 48000 * 2 / 64; ++block) {   // 2 s
+        rig.sounded();
+        endedEarly = endedEarly || !rig.ended.empty();
+    }
+    CHECK(!endedEarly);
+    ed.stopSounding();
+    CHECK(rig.sounded().empty() && rig.ended.size() == 1 + 128 && rig.ended[0] == 65);
 }
 
 } // namespace

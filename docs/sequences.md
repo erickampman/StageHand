@@ -270,7 +270,11 @@ Implemented 2026-09-29 (milestone 4):
   each other. Edits are heard as you make them.
 - **Gestures:** each drag is one gesture, recomputed from its start on every
   move, and one undo step. The right-edge zone is 6 px. Ctrl-drag changes
-  velocity over 200 px for the full range.
+  velocity over 200 px for the full range. While it does, a tag above the
+  grabbed note shows the velocity (MIDI 1.0: 1-127; MIDI 2.0: a percentage)
+  with a bar for how far up its range it is (added 2026-10-01). A note's
+  brightness shows its velocity all the time: its fill's alpha runs from 45
+  (quietest) to 255 (loudest).
 - **Keys:**
   - Arrows move the selection; Shift moves by a beat, or by an octave (one EDO
     period) vertically.
@@ -306,7 +310,10 @@ Implemented 2026-09-29 (milestone 4):
   anything left on there, whoever started it, including notes the sequence
   itself is playing. It was added after a drag left a note stuck. All of it
   arrives at the start of the next block (about 130 events per row). So a note sounds only while it's held,
-  for at most its own length (capped as above). The arrow keys have no
+  for at most its own length (capped as above). A Ctrl-click (velocity) holds
+  its note until release instead (`Session::kHeldAudition`, 30 s, is only a
+  safety net). If the velocity changed, the release then plays the note again
+  at its new velocity, for its own length. The arrow keys have no
   release, so their notes play for that time.
 
 ### Drag and click rules (accepted)

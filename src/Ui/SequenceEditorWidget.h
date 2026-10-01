@@ -39,6 +39,7 @@ private:
     void drawStrip(const Sequence& seq);
     void drawRuler(const Sequence& seq);
     void drawGrid(const Sequence& seq);
+    void drawVelocityReadout(const Sequence& seq);
     void settingRow(float y, const char* name);
 
     // --- input
@@ -53,6 +54,10 @@ private:
     // A rubber band being dragged (canvas coordinates), while `banding`.
     bool          banding = false;
     float         bandX0 = 0, bandY0 = 0, bandX1 = 0, bandY1 = 0;
+    // A Ctrl-drag (velocity), and the note it grabbed: its readout follows it.
+    bool          velocityDrag  = false;
+    std::uint32_t velocityStart = 0;
+    int           velocityPitch = 0;
     // Double-click on a note.
     std::uint32_t lastClickTime  = 0;
     std::int64_t  lastClickUnit  = -1;

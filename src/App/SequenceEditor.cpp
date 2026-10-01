@@ -236,9 +236,9 @@ void SequenceEditor::changeVelocity(double fraction) {
     apply(std::move(next));
 }
 
-void SequenceEditor::soundNote(int index) {
+void SequenceEditor::soundNote(int index, bool hold) {
     if (index >= 0 && static_cast<std::size_t>(index) < notes.size())
-        controller.auditionNotes(sequenceId, {notes[static_cast<std::size_t>(index)].note});
+        controller.auditionNotes(sequenceId, {notes[static_cast<std::size_t>(index)].note}, hold);
 }
 
 void SequenceEditor::stopSounding() {

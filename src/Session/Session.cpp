@@ -359,14 +359,15 @@ bool Session::endAuditions(const std::string& id, bool allNotesOff) {
     return engine.endAuditions(entry->source, &cc);
 }
 
-bool Session::auditionNote(const std::string& id, const SequenceNote& note) {
+bool Session::auditionNote(const std::string& id, const SequenceNote& note, bool hold) {
     const SequenceEntry* entry = sequence(id);
     if (entry == nullptr) return false;
     const Sequence&        seq          = entry->sequence;
     const double           unitsPerBeat = seq.rate.unitsPerBeat() > 0.0 ? seq.rate.unitsPerBeat() : 4.0;
     const double           seconds      = note.length / unitsPerBeat * 60.0 / std::max(1.0, tempo);
     const AuditionMessages m            = auditionMessages(seq, note);
-    return engine.auditionNote(entry->source, m.on, m.off, std::clamp(seconds, kMinAudition, kMaxAudition));
+    return engine.auditionNote(entry->source, m.on, m.off,
+                               hold ? kHeldAudition : std::clamp(seconds, kMinAudition, kMaxAudition));
 }
 
 void Session::setTransportSettings(const TransportSettings& settings) {
