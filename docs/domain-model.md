@@ -406,6 +406,7 @@ directory bundle needs none. (Exact choice tracked in open questions.)
 - A single-plugin **preset** is just one slot's `saveState`/`loadState` — reuses
   the seam, no new mechanism.
 - A **setlist** is an ordered list of Racks. Leave room; don't build.
+  (Designed 2026-10-01 in docs/setlists.md.)
 
 ## Threading & ownership
 
