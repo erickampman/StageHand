@@ -1,6 +1,6 @@
 # StageHand — The looper (design)
 
-Proposed 2026-10-02; nothing built yet. A looper records what's played into a
+Proposed 2026-10-02; milestone 1 (the engine) built. A looper records what's played into a
 loop, live, and plays it back in time, with overdubs. It's a cousin of a
 sequence (docs/sequences.md) but it isn't one: what it records is made on
 stage and isn't saved, and it's driven by a footswitch. Builds on:
@@ -147,6 +147,20 @@ ended by a press (rounded up to the bar, or the beat, as `"start"`).
    transport and song-switch behaviour.
 3. **Convert to sequence.**
 4. **Later:** controllers and pitch bend in loops (with sequences).
+
+**Milestone 1 implemented (2026-10-02):** `Engine/Looper.h` (`LooperRuntime`:
+the notes, preallocated to the cap, the pass stack and what the row will read;
+`CompiledLooper`: its settings) and `Engine/Looper.cpp`, as `SequenceSet`
+members: loopers ride in the sequence snapshot (`SequenceSet`'s third
+argument) and play into their targets as a sequence does, through the held
+note table. The engine records each block's live input at its own beat before
+the loops play (`Engine::recordLoops()`), and takes the footswitch and the
+buttons through `Engine::sendLooperCommand()` (Press, Release, Stop, Clear,
+Undo). A press arming a looper while the transport is stopped starts it,
+unless the transport has a start of its own. A note-off ends a loop's note
+after the length it was played, from its quantized start. Tests:
+`tests/LooperTests.cpp`. Not yet: making loopers, saving them and the
+footswitch's MIDI (milestone 2).
 
 ## Open questions
 

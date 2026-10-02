@@ -232,6 +232,10 @@ void Engine::countSource(MidiSourceHandle source) noexcept {
     }
 }
 
+bool Engine::sendLooperCommand(MidiSourceHandle looper, LooperCommand command) noexcept {
+    return looperCommands.push(QueuedLooperCommand{looper, command});
+}
+
 bool Engine::sendSequenceCommand(MidiSourceHandle source, SequenceCommand command) noexcept {
     return sequenceCommands.push(QueuedCommand{source, command});
 }
@@ -314,6 +318,7 @@ void Engine::process(const AudioCallbackContext& ctx) noexcept {
     advanceTransport(ctx);
     adoptSequences(ctx, switching);
     takeMidi(ctx);
+    recordLoops();
     generateSequences(ctx);
     routeMidi(ctx.frameCount);
     runSlots(ctx);
@@ -399,8 +404,10 @@ void Engine::startTransport(const AudioCallbackContext& ctx, std::uint32_t frame
 // Every sequence ends at `frame`; the clock returns to beat 0 after this block.
 void Engine::stopTransport(std::uint32_t frame) noexcept {
     if (!clock.running || clock.stopPending) return;
-    if (currentSequences != nullptr)
+    if (currentSequences != nullptr) {
         currentSequences->command(kInvalidMidiSource, SequenceCommand::StopNow, sequenceBlock.from(frame));
+        currentSequences->stopLoopers(sequenceBlock.from(frame));   // and back to their start
+    }
     clock.stopPending = true;
     clock.stopFrame   = frame;
 }
@@ -442,6 +449,22 @@ void Engine::adoptSequences(const AudioCallbackContext& ctx, bool switching) noe
     while (transportCommands.pop(transport)) transportAction(ctx, transport, 0);
     QueuedCommand queued;
     while (sequenceCommands.pop(queued)) sequenceCommand(ctx, queued.source, queued.command, 0);
+    for (QueuedLooperCommand looper; looperCommands.pop(looper);) {
+        if (currentSequences == nullptr) continue;
+        const bool running = clock.running && !clock.stopPending;
+        if (currentSequences->looperCommand(looper.looper, looper.command, sequenceBlock, running) &&
+            !currentSequences->hasTransportStart())
+            startTransport(ctx, 0);   // armed while stopped: the recording starts on its first beat
+    }
+}
+
+// The loopers record what they hear of this block's input, each message at
+// its own beat, before they play (docs/looper.md).
+void Engine::recordLoops() noexcept {
+    if (currentSequences == nullptr || currentSequences->looperList().empty()) return;
+    for (std::size_t i = 0; i < stagedCount; ++i)
+        currentSequences->recordLoops(staged[i].item.source, staged[i].item.message.message,
+                                      sequenceBlock.from(staged[i].offset));
 }
 
 // This block's sequence events, sorted by (offset, order) for routeMidi() to

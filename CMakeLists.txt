@@ -57,7 +57,8 @@ target_link_libraries(stagehand-core PRIVATE stagehand-warnings)
 add_library(stagehand-engine STATIC
     src/Engine/Engine.cpp
     src/Engine/EngineGraph.cpp
-    src/Engine/SequenceSet.cpp)
+    src/Engine/SequenceSet.cpp
+    src/Engine/Looper.cpp)
 target_link_libraries(stagehand-engine
     PUBLIC  stagehand-core
     PRIVATE stagehand-warnings)
@@ -123,6 +124,7 @@ stagehand_add_test(test-ump    tests/UmpTests.cpp       stagehand-core)
 stagehand_add_test(test-spsc   tests/SpscQueueTests.cpp stagehand-core)
 stagehand_add_test(test-engine tests/EngineTests.cpp    stagehand-engine)
 stagehand_add_test(test-sequence tests/SequenceTests.cpp stagehand-engine)
+stagehand_add_test(test-looper  tests/LooperTests.cpp    stagehand-engine)
 stagehand_add_test(test-rackfile tests/RackFileTests.cpp stagehand-session)
 stagehand_add_test(test-setlistfile tests/SetlistFileTests.cpp stagehand-session)
 stagehand_add_test(test-rigfile tests/RigFileTests.cpp stagehand-session)
