@@ -19,7 +19,10 @@ stage and isn't saved, and it's driven by a footswitch. Builds on:
    and MIDI 2.0 per-note data later; they need the sequence model extended.
 5. **Quantize:** to the beat times a division or multiple (1/4, 1/2, 1, 2...
    beats), or off (the played timing kept, for loops with feel), set when
-   it's made. Applied as notes are recorded.
+   it's made. Applied as the loop plays (revised 2026-10-02): the notes keep
+   their played timing, so changing it re-quantizes the loop from its next
+   pass, and off brings the played timing back. Notes played just before the
+   start (7a) are on the start, whatever the setting.
 6. **It always stays in time.** Recording starts at the next beat or the next
    bar after the start press (a setting); a length ended by a press is rounded
    up to the next beat or bar the same way.

@@ -61,6 +61,15 @@ struct Rig {
         engine->collect();
     }
 
+    // New settings for the same looper (a new snapshot; what it recorded is kept).
+    void set(CompiledLooper looper) {
+        looper.source  = kLoop;
+        looper.runtime = rt;
+        looper.input   = kKeys;
+        engine->commitSequences(std::make_unique<SequenceSet>(std::vector<CompiledSequence>{}, TransportControl{},
+                                                              std::vector<CompiledLooper>{looper}));
+    }
+
     void block() {
         std::vector<float>   left(kBlock), right(kBlock);
         float*               channels[2] = {left.data(), right.data()};
@@ -330,6 +339,39 @@ void testLoopToSequence() {
           std::fabs(copy.notes[0].on - 0.5) < 1e-9);
 }
 
+// Quantize applies as the loop plays, not as it records: changing it moves
+// the notes from the next pass, and off brings back the played timing. A note
+// played just before the start is on the start whatever the setting, off too.
+void testRequantize() {
+    CompiledLooper settings;
+    settings.atBar       = false;
+    settings.quantize    = 0.0;
+    settings.fixedLength = 4;
+    settings.fixedInBars = false;
+    Rig rig(settings);
+    rig.command(LooperCommand::Press, 0.5);   // beats 1-5; cycles from 5, 9, 13, 17...
+    rig.play(55, 0.9, 1.2);    // just early: on the start, 0.3 long
+    rig.play(60, 1.3, 1.6);    // 0.3 into the loop, 0.3 long
+    rig.play(62, 3.85, 4.1);   // 2.85 in
+    rig.runTo(9.0);
+    CHECK(rig.heardAt(true, 60, 5.3) && rig.heardAt(false, 60, 5.6) && rig.heardAt(true, 62, 7.85));
+    CHECK(rig.heardAt(true, 55, 5.0) && rig.heardAt(false, 55, 5.3));
+
+    settings.quantize = 0.5;   // eighths: 0.3 -> 0.5, 2.85 -> 3.0; lengths kept
+    rig.set(settings);
+    rig.runTo(13.0);
+    CHECK(rig.heardAt(true, 60, 9.5) && rig.heardAt(false, 60, 9.8) && rig.heardAt(true, 62, 12.0));
+    settings.quantize = 1.0;   // beats: 0.3 -> 0, 2.85 -> 3
+    rig.set(settings);
+    rig.runTo(17.0);
+    CHECK(rig.heardAt(true, 60, 13.0) && rig.heardAt(true, 62, 16.0));
+    settings.quantize = 0.0;   // off: as played again
+    rig.set(settings);
+    rig.runTo(21.0);
+    CHECK(rig.heardAt(true, 60, 17.3) && rig.heardAt(true, 62, 19.85));
+    CHECK(rig.heardAt(true, 55, 9.0) && rig.heardAt(true, 55, 13.0) && rig.heardAt(true, 55, 17.0));   // always the start
+}
+
 } // namespace
 
 int main() {
@@ -341,5 +383,6 @@ int main() {
     testArmStartsTheTransport();
     testCap();
     testLoopToSequence();
+    testRequantize();
     return test::finish("Looper");
 }
