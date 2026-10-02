@@ -156,6 +156,67 @@ void stopNow(LooperRuntime& rt, double now) noexcept {
 LooperRuntime::LooperRuntime(std::size_t notesCapacity) : capacity(std::max<std::size_t>(notesCapacity, 1)) {
     notes.reserve(capacity);
     passStarts.reserve(kMaxPasses);
+    snapshot.notes.reserve(capacity);
+}
+
+bool LooperRuntime::takeSnapshot(Snapshot& out) {
+    if (!snapshotReady.load(std::memory_order_acquire)) return false;
+    out = snapshot;
+    snapshotReady.store(false, std::memory_order_release);
+    return true;
+}
+
+Sequence loopToSequence(const LooperRuntime::Snapshot& loop, double quantize, bool atBar) {
+    Sequence seq;
+    seq.repeat = true;
+    seq.launch = atBar ? LaunchQuantize::Bar : LaunchQuantize::Beat;
+    // The grid: its quantize (units per beat, as a ratio), else 64ths (as fine
+    // as a sequence goes), coarser if the loop would pass 4096 units.
+    std::uint16_t num = 64, den = 1;
+    if (quantize >= 1.0) {
+        num = 1;
+        den = static_cast<std::uint16_t>(std::clamp(std::lround(quantize), 1L, 64L));
+    } else if (quantize > 0.0) {
+        num = static_cast<std::uint16_t>(std::clamp(std::lround(1.0 / quantize), 1L, 64L));
+    }
+    while (num > 1 && loop.length * num / den > 4096.0) num /= 2;
+    seq.rate               = SequenceRate{num, den};
+    const double unitsPerBeat = static_cast<double>(num) / den;
+    seq.length = static_cast<std::uint32_t>(std::clamp(std::lround(loop.length * unitsPerBeat), 1L, 4096L));
+
+    if (!loop.notes.empty()) {
+        const MidiMessage& first = loop.notes.front().onMessage;
+        seq.protocol = ump::messageType(first) == ump::MessageType::Midi2ChannelVoice ? MidiProtocol::Midi2 : MidiProtocol::Midi1;
+        seq.channel  = ump::channel(first);
+        seq.group    = ump::group(first);
+    }
+    seq.edo           = 12;
+    seq.referenceNote = 60;
+    for (const LooperRuntime::Note& n : loop.notes) {
+        SequenceNote note;
+        const auto start = std::lround(n.on * unitsPerBeat);
+        if (start < 0 || start >= static_cast<long>(seq.length)) continue;
+        note.start  = static_cast<std::uint32_t>(start);
+        note.length = static_cast<std::uint32_t>(
+            std::clamp(std::lround((n.off - n.on) * unitsPerBeat), 1L, static_cast<long>(seq.length - note.start)));
+        const std::uint8_t number = ump::noteNumber(n.onMessage);
+        if (seq.protocol == MidiProtocol::Midi1) {
+            note.pitch    = number;
+            note.velocity = ump::messageType(n.onMessage) == ump::MessageType::Midi2ChannelVoice
+                                ? static_cast<std::uint16_t>(std::max(1u, (n.onMessage.words[1] >> 25) & 0x7Fu))
+                                : static_cast<std::uint16_t>(std::max(1u, n.onMessage.words[0] & 0x7Fu));
+        } else {
+            note.pitch    = static_cast<std::int32_t>(number) - seq.referenceNote;
+            note.velocity = ump::messageType(n.onMessage) == ump::MessageType::Midi2ChannelVoice
+                                ? static_cast<std::uint16_t>(std::max(1u, n.onMessage.words[1] >> 16))
+                                : static_cast<std::uint16_t>(std::max(1u, (n.onMessage.words[0] & 0x7Fu) << 9));
+        }
+        seq.notes.push_back(note);
+    }
+    std::sort(seq.notes.begin(), seq.notes.end(), [](const SequenceNote& a, const SequenceNote& b) {
+        return a.start != b.start ? a.start < b.start : a.pitch < b.pitch;
+    });
+    return seq;
 }
 
 // --- commands ----------------------------------------------------------------------
@@ -242,6 +303,18 @@ bool SequenceSet::looperCommand(MidiSourceHandle source, LooperCommand command, 
                 rt.provisional  = false;
                 rt.current      = LooperState::Empty;
                 break;
+            case LooperCommand::Snapshot: {
+                LooperRuntime::Snapshot& snap = rt.snapshot;
+                const bool recorded = rt.loopLength > 0.0 && rt.current != LooperState::Empty &&
+                                      rt.current != LooperState::Armed && rt.current != LooperState::Recording;
+                snap.length = recorded ? rt.loopLength : 0.0;
+                snap.notes.clear();
+                if (recorded)
+                    for (const Note& n : rt.notes)
+                        if (n.off >= 0.0 && snap.notes.size() < snap.notes.capacity()) snap.notes.push_back(n);
+                rt.snapshotReady.store(true, std::memory_order_release);
+                break;
+            }
             case LooperCommand::Undo:
                 if (rt.current == LooperState::Overdubbing) {   // this pass
                     dropFrom(rt, rt.overdubStart, b.beat);

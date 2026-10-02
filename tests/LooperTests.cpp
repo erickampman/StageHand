@@ -279,6 +279,57 @@ void testCap() {
     CHECK(rig.rt->noteCount.load() == 2 && rig.rt->dropped.load() == 1);
 }
 
+// Convert to sequence (milestone 3): a loop on its quantize grid (64ths when
+// off, a unit every two beats for a half-note grid), its notes' starts and
+// lengths, protocol, channel and velocities; and the engine's copy of a loop,
+// made on the audio thread, with nothing while it's still recording.
+void testLoopToSequence() {
+    auto on = [](std::uint8_t note, std::uint8_t channel, std::uint8_t velocity) {
+        MidiMessage m;
+        m.words[0]  = 0x20900000u | (std::uint32_t{channel} << 16) | (std::uint32_t{note} << 8) | velocity;
+        m.wordCount = 1;
+        return m;
+    };
+    LooperRuntime::Snapshot loop;
+    loop.length = 8.0;
+    LooperRuntime::Note a, b;
+    a.on = 0.0, a.off = 0.6, a.onMessage = on(60, 1, 100);
+    b.on = 1.0, b.off = 1.5, b.onMessage = on(64, 1, 90);
+    loop.notes = {b, a};
+    const Sequence seq = loopToSequence(loop, 0.25, false);
+    CHECK(seq.protocol == MidiProtocol::Midi1 && seq.channel == 1 && seq.rate == (SequenceRate{4, 1}) &&
+          seq.length == 32 && seq.launch == LaunchQuantize::Beat && seq.repeat);
+    CHECK(seq.notes.size() == 2);
+    if (seq.notes.size() == 2) {
+        CHECK(seq.notes[0].start == 0 && seq.notes[0].length == 2 && seq.notes[0].pitch == 60 && seq.notes[0].velocity == 100);
+        CHECK(seq.notes[1].start == 4 && seq.notes[1].length == 2 && seq.notes[1].pitch == 64 && seq.notes[1].velocity == 90);
+    }
+    const Sequence fine = loopToSequence(loop, 0.0, true);   // quantize off: 64ths
+    CHECK(fine.rate == (SequenceRate{64, 1}) && fine.length == 512 && fine.launch == LaunchQuantize::Bar &&
+          fine.notes.size() == 2 && fine.notes[0].length == 38);   // 0.6 beats
+    const Sequence coarse = loopToSequence(loop, 2.0, true);   // half notes: a unit every two beats
+    CHECK(coarse.rate == (SequenceRate{1, 2}) && coarse.length == 4);
+
+    // Through the engine: a copy of what was recorded; while recording, none.
+    CompiledLooper settings;
+    settings.atBar       = false;
+    settings.quantize    = 0.25;
+    settings.fixedLength = 4;
+    settings.fixedInBars = false;
+    Rig rig(settings);
+    rig.command(LooperCommand::Press, 0.5);   // beats 1-5
+    rig.play(62, 1.5, 2.0);
+    rig.command(LooperCommand::Snapshot, 2.5);
+    rig.block();
+    LooperRuntime::Snapshot copy;
+    CHECK(rig.rt->takeSnapshot(copy) && copy.length == 0.0 && copy.notes.empty());
+    CHECK(!rig.rt->takeSnapshot(copy));   // taken once
+    rig.command(LooperCommand::Snapshot, 6.0);
+    rig.block();
+    CHECK(rig.rt->takeSnapshot(copy) && copy.length == 4.0 && copy.notes.size() == 1 &&
+          std::fabs(copy.notes[0].on - 0.5) < 1e-9);
+}
+
 } // namespace
 
 int main() {
@@ -289,5 +340,6 @@ int main() {
     testCancelClearAndTransport();
     testArmStartsTheTransport();
     testCap();
+    testLoopToSequence();
     return test::finish("Looper");
 }

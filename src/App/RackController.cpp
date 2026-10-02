@@ -167,6 +167,7 @@ void RackController::tick(double now) {
     for (auto it = rows.begin(); it != rows.end();)
         it = session.slot(it->first) != nullptr ? std::next(it) : rows.erase(it);
 
+    takeKeptLoops();
     buildDock(now);
     buildRig(now, dt);
 
@@ -458,6 +459,41 @@ void RackController::clearLooper(const std::string& id) {
 
 void RackController::undoLooper(const std::string& id) {
     session.looperCommand(id, LooperCommand::Undo);
+}
+
+void RackController::keepLooperAsSequence(const std::string& id) {
+    if (session.looper(id) == nullptr) return;
+    if (std::find(keeping.begin(), keeping.end(), id) == keeping.end()) keeping.push_back(id);
+    session.looperCommand(id, LooperCommand::Snapshot);
+}
+
+void RackController::takeKeptLoops() {
+    for (auto it = keeping.begin(); it != keeping.end();) {
+        const Session::LooperEntry* entry = session.looper(*it);
+        LooperRuntime::Snapshot     loop;
+        if (entry != nullptr && !entry->runtime->takeSnapshot(loop)) {
+            ++it;   // not made yet
+            continue;
+        }
+        if (entry != nullptr) {
+            const LooperSetup& setup = entry->setup;
+            if (loop.length <= 0.0) {
+                notice(setup.name + ": nothing to keep yet (record a loop first)");
+            } else {
+                Sequence seq = loopToSequence(loop, setup.quantize, setup.atBar);
+                seq.id       = session.addSequence(seq.protocol);
+                seq.name     = setup.name;
+                seq.targets  = setup.targets;
+                std::string problem;
+                if (session.setSequence(seq, problem))
+                    notice("Kept " + setup.name + " as a sequence (" + std::to_string(seq.notes.size()) +
+                           (seq.notes.size() == 1 ? " note" : " notes") + "); Ctrl-S saves it");
+                else
+                    notice("Couldn't keep " + setup.name + ": " + problem);
+            }
+        }
+        it = keeping.erase(it);
+    }
 }
 
 void RackController::learnLooperSwitch() {

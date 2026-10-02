@@ -1479,6 +1479,56 @@ void testLoopers() {
     fs::remove_all(dir);
 }
 
+// Keeping a loop as a sequence (docs/looper.md, milestone 3): a sequence in
+// the rack, named and aimed as the looper, unsaved; the looper plays on. With
+// nothing recorded, a notice and no sequence.
+void testKeepLoop() {
+    Rig rig;
+    Rack rack;
+    rack.slots = {slot("keys", "synth", "/clap/Synth.clap")};
+    Session::LoadReport report;
+    rig.session->load(rack, 48000.0, report);
+    RackController       controller(*rig.session, *rig.engine, rig.midi, rig.factory, rig.config());
+    const RackViewModel& view = controller.view();
+    double               now  = 0.0;
+    auto run = [&](int blocks) {
+        for (int i = 0; i < blocks; ++i) runBlock(*rig.engine);
+        controller.tick(now += 0.05);
+    };
+    const std::string id = controller.addLooper(MidiSourceRef{}, {"keys"});
+    controller.setLooperLength(id, 1, true);
+    run(1);
+    controller.takeNotices();
+    controller.keepLooperAsSequence(id);   // nothing yet
+    run(2);
+    CHECK(rig.session->sequences().empty() && controller.takeNotices().size() == 1);
+
+    controller.tapLooper(id);   // the transport starts; a bar recorded
+    runBlock(*rig.engine);
+    TimedMidiMessage m;
+    m.captureTime       = 1'000'000'000 - 1'000'000;
+    m.message.words[0]  = 0x20903C64u;
+    m.message.wordCount = 1;
+    rig.engine->onMidi(5, m);
+    runBlock(*rig.engine);
+    m.message.words[0] = 0x20803C00u;
+    rig.engine->onMidi(5, m);
+    run(1700);
+    CHECK(view.loopers[0].state == LooperState::Playing);
+    rig.session->markSaved();
+    controller.keepLooperAsSequence(id);
+    run(2);
+    CHECK(rig.session->sequences().size() == 1 && rig.session->modified());
+    if (rig.session->sequences().size() == 1) {
+        const Sequence& seq = rig.session->sequences()[0].sequence;
+        CHECK(seq.name == "Loop 1" && (seq.targets == std::vector<std::string>{"keys"}) && seq.notes.size() == 1 &&
+              seq.length == 16 && seq.notes[0].pitch == 60);
+    }
+    CHECK(view.loopers[0].state == LooperState::Playing);   // it plays on
+    runBlock(*rig.engine);
+    rig.engine->collect();
+}
+
 } // namespace
 
 int main() {
@@ -1503,5 +1553,6 @@ int main() {
     testSwitchSettings();
     testSavingInASet();
     testLoopers();
+    testKeepLoop();
     return test::finish("RackController");
 }

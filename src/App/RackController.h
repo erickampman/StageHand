@@ -206,6 +206,11 @@ public:
     void        tapLooper(const std::string& id);
     void        clearLooper(const std::string& id);
     void        undoLooper(const std::string& id);   // the last overdub pass
+    // Convert to sequence (docs/looper.md): the loop as a normal sequence in
+    // this rack, playing into the looper's rows, stopped, unsaved until
+    // Ctrl-S. The looper plays on. It arrives at a tick or two later (the
+    // audio thread makes the copy), with a notice.
+    void        keepLooperAsSequence(const std::string& id);
     // The looper switch: learned like a trigger (the next note-on or
     // controller press), saved in the rig. A momentary switch, for hold.
     void        learnLooperSwitch();
@@ -427,6 +432,8 @@ private:
     std::map<std::string, std::unique_ptr<EditorHandle>> editors;   // by slot id
     std::map<std::string, RowCache>                      rows;      // by slot id
     std::map<std::pair<std::size_t, std::size_t>, std::unique_ptr<EditorHandle>> busEditors;   // by (bus, slot)
+    std::vector<std::string>                              keeping;   // loopers whose copy is on its way
+    void                                                  takeKeptLoops();
     std::array<Ballistics, kRigBuses>                     busMeters;
     Ballistics                                            master;
     std::vector<MidiSourceInfo>                           enumerated;
