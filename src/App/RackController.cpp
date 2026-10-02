@@ -105,6 +105,7 @@ void RackController::tick(double now) {
     refreshSongs(now);
     takeSetlistRequests();
     prepareAhead();   // before flush(): a switch commits the new rack's graph, and nothing else is pending
+    if (preparingText.empty()) checkStep();   // one plugin a tick: preparing ahead first
     session.flush();
 
     for (auto it = editors.begin(); it != editors.end();)
@@ -1399,6 +1400,11 @@ bool RackController::switchRack(std::unique_ptr<PreparedRack>& next, const std::
     ++generation;   // sequence windows close
     for (const std::string& warning : warnings) notice(warning);
     for (const std::string& warning : report.warnings) notice(warning);
+    if (setlistOpen && !path.empty() && songProblems.count(path) != 0) {   // checked: what it reports now
+        std::vector<std::string>& problems = songProblems[path];
+        problems                           = warnings;
+        problems.insert(problems.end(), report.warnings.begin(), report.warnings.end());
+    }
     notice(path.empty() ? "New rack" : "Opened " + path);
     refreshSources();
     prepared.erase(path);
@@ -1456,6 +1462,7 @@ RackController::NewSetlistResult RackController::newSetlist(const std::string& c
     prepared.clear();
     unpreparable.clear();
     waitingSong.reset();
+    forgetChecks();
     useRig(setlist.rig);   // a new setlist names no rig: the default
     applySetlistTriggers();
     song        = 0;
@@ -1481,6 +1488,7 @@ bool RackController::openSetlist(const std::string& chosen, std::size_t start) {
     prepared.clear();
     unpreparable.clear();
     waitingSong.reset();
+    forgetChecks();
     useRig(setlist.rig);   // its own, else the default
     applySetlistTriggers();
     song        = std::min(start, setlist.songs.size());
@@ -1515,6 +1523,7 @@ void RackController::closeSetlist() {
     unpreparable.clear();
     waitingSong.reset();
     preparingText.clear();
+    forgetChecks();
     if (learningId == kSetlistLearn) cancelLearn();
     applySetlistTriggers();   // none any more
     rememberPosition();
@@ -1653,6 +1662,80 @@ void RackController::prepareAhead() {
     }
 }
 
+bool RackController::checkSetlist() {
+    if (!setlistOpen) return false;
+    Check fresh;
+    for (const SetlistSong& s : setlist.songs) {
+        const std::string bundle = rackBundleOf(s.rack);   // a missing rack is shown as missing already
+        if (!bundle.empty() && std::find(fresh.bundles.begin(), fresh.bundles.end(), bundle) == fresh.bundles.end())
+            fresh.bundles.push_back(bundle);
+    }
+    songProblems.clear();
+    check = std::move(fresh);
+    return true;
+}
+
+void RackController::forgetChecks() {
+    check.reset();
+    songProblems.clear();
+}
+
+void RackController::checkStep() {
+    if (!check) return;
+    Check& c = *check;
+    if (c.rack) {   // one plugin, then its problems once they're all made
+        if (!session.prepareStep(*c.rack)) {
+            preparingText = "Checking " + rackNameOf(c.bundle) + ": " + std::to_string(c.rack->preparedCount()) + "/" +
+                            std::to_string(c.rack->pluginCount()) + " plugins";
+            return;
+        }
+        c.found.insert(c.found.end(), c.rack->problems().begin(), c.rack->problems().end());
+        c.rack.reset();   // dropped: a check never keeps a rack prepared
+        songProblems[c.bundle] = std::move(c.found);
+        c.found.clear();
+        return;
+    }
+    if (c.next >= c.bundles.size()) {   // done
+        std::size_t songs = 0;
+        for (const std::string& bundle : songBundles)
+            if (const auto it = songProblems.find(bundle); it != songProblems.end() && !it->second.empty()) ++songs;
+        notice(songs == 0 ? std::string("Check setlist: no problems found")
+                          : "Check setlist: " + std::to_string(songs) + (songs == 1 ? " song has" : " songs have") +
+                                " problems (in amber in the song list)");
+        check.reset();
+        return;
+    }
+    c.bundle = c.bundles[c.next++];
+    if (c.bundle == target) {   // playing: as it runs
+        std::vector<std::string> problems = session.runningProblems();
+        std::vector<const Sequence*> sequences;
+        for (const Session::SequenceEntry& e : session.sequences()) sequences.push_back(&e.sequence);
+        for (std::string& w : triggerConflicts(session.rackName(), session.transportSettings(), sequences))
+            problems.push_back(std::move(w));
+        songProblems[c.bundle] = std::move(problems);
+        return;
+    }
+    Rack           rack;
+    RackFileResult result;
+    if (const auto kept = unsavedRacks.find(c.bundle); kept != unsavedRacks.end()) {
+        rack      = kept->second;
+        result.ok = true;
+    } else {
+        result = loadRack(c.bundle, rack);
+    }
+    if (!result.ok) {
+        songProblems[c.bundle] = {"it can't be read: " + result.error};
+        return;
+    }
+    c.found = result.warnings;
+    std::vector<const Sequence*> sequences;
+    for (const Sequence& seq : rack.sequences) sequences.push_back(&seq);
+    for (std::string& w : triggerConflicts(rack.name, rack.transport, sequences)) c.found.push_back(std::move(w));
+    for (std::string& w : session.sourceProblems(rack)) c.found.push_back(std::move(w));
+    c.rack        = session.prepare(rack, session.loadedSampleRate());
+    preparingText = "Checking " + rackNameOf(c.bundle);
+}
+
 // From the song a switch waits for, if one does: pressing Next while it's
 // prepared goes on from there.
 bool RackController::nextSong() {
@@ -1774,7 +1857,9 @@ bool RackController::addNewRackToSetlist(const std::string& chosen) {
         notice("Not added: " + path + " already exists (Add a rack... adds an existing one)");
         return false;
     }
-    Rack fresh;
+    // A copy of the song playing (its rows, plugin states, sends, sequences,
+    // loopers and settings, edits included: docs/rig.md); with none, empty.
+    Rack fresh                  = onSong ? session.capture() : Rack{};
     fresh.name                  = rackNameOf(path);
     const RackFileResult result = saveRack(path, fresh);
     if (!result.ok) {
@@ -1895,6 +1980,9 @@ void RackController::buildSetlist() {
     m.name     = setlistNameOf(setlistFile);
     m.songs    = songCache;
     for (std::size_t i = 0; i < m.songs.size(); ++i) m.songs[i].prepared = songPrepared(i);
+    for (std::size_t i = 0; i < m.songs.size() && i < songBundles.size(); ++i)
+        if (const auto it = songProblems.find(songBundles[i]); it != songProblems.end()) m.songs[i].problems = it->second;
+    m.checking = check.has_value();
     m.current  = onSong ? static_cast<int>(song) : -1;
     m.next     = neighbour(1);
     m.previous = neighbour(-1);

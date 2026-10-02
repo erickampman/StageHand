@@ -69,7 +69,11 @@ private:
     float dockTop();
     float dockMaxScroll();
     float rigHeight() const;   // the bus strips, when a rig is loaded
-    float rigTop();            // above the dock
+    float rigTop();            // above the dock, or after the last row when they scroll
+    // The rows come first: when they and the bus strips don't all fit, the
+    // strips scroll with the rows, after the last one, instead of keeping
+    // their place above the dock.
+    bool  busesScroll();
 
     // --- parts
     void meterBars(float x0, float x1, float y, const float db[2], const float hold[2]);

@@ -4,6 +4,7 @@
 
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <tuple>
@@ -842,9 +843,15 @@ void testSetlist() {
     CHECK(controller.saveAs((dir / "Racks/A2").string()) == RackController::SaveAsResult::Saved);
     CHECK(loadSetlist(file, saved).ok && saved.songs[1].rack == (dir / "Racks/A2.rack").string());
 
-    // A new rack added to the set is created on disk and played.
+    // A new rack added to the set is created on disk and played: a copy of
+    // the song playing (A2, with an edit not yet saved), named for its bundle.
+    controller.setTempo(97.0);
     CHECK(controller.addNewRackToSetlist((dir / "Racks/D").string()));
+    for (int i = 0; i < 4 && controller.rackPath() != (dir / "Racks/D.rack").string(); ++i) tick();   // its plugin prepared
     CHECK(controller.rackPath() == (dir / "Racks/D.rack").string() && !rackBundleOf((dir / "Racks/D.rack").string()).empty());
+    Rack copied;
+    CHECK(loadRack((dir / "Racks/D.rack").string(), copied).ok && copied.name == "D" && copied.tempoBpm == 97.0 &&
+          copied.slots.size() == 1 && copied.slots[0].id == "keys");
     CHECK(!controller.addNewRackToSetlist((dir / "Racks/D").string()));   // exists: refused
 
     // Reopening at a song, as a start with no arguments does.
@@ -1568,6 +1575,78 @@ void testLoopNumbers() {
     rig.engine->collect();
 }
 
+// Check setlist (docs/setlists.md, milestone 7): each rack prepared once in
+// turn and dropped; a missing plugin, an unplugged device and a rack that
+// can't be read are kept per song (a reprise shares its rack's), with a
+// notice; switching to a song replaces its problems with what the switch says.
+void testCheckSetlist() {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / "stagehand-check-test";
+    fs::remove_all(dir);
+    auto make = [&](const char* name, std::vector<RackSlot> slots) {
+        Rack rack;
+        rack.name  = name;
+        rack.slots = std::move(slots);
+        const std::string path = (dir / "Racks" / (std::string(name) + ".rack")).string();
+        CHECK(saveRack(path, rack).ok);
+        return path;
+    };
+    RackSlot unplugged = slot("pad", "synth", "/clap/Synth.clap");
+    unplugged.source   = MidiSourceRef{MidiSourceRef::Kind::Device, "Unplugged:Port"};
+    const std::string a = make("A", {slot("keys", "synth", "/clap/Synth.clap")});
+    const std::string b = make("B", {slot("gone", "missing"), unplugged});
+    const std::string c = make("C", {slot("keys", "synth", "/clap/Synth.clap")});
+    const std::string d = make("D", {});
+    std::ofstream((dir / "Racks/D.rack/rack.json").string()) << "{ not json";
+    Setlist set;
+    set.songs = {SetlistSong{a, ""}, SetlistSong{b, ""}, SetlistSong{a, ""}, SetlistSong{c, ""}, SetlistSong{d, ""}};
+    const std::string file = (dir / "Gig.setlist").string();
+    CHECK(saveSetlist(file, set).ok);
+
+    Rig                 rig;
+    Session::LoadReport report;
+    rig.session->load(Rack{}, 48000.0, report);
+    RackController       controller(*rig.session, *rig.engine, rig.midi, rig.factory, rig.config());
+    const RackViewModel& view = controller.view();
+    double               now  = 0.0;
+    auto tick = [&] { controller.tick(now += 2.0); };
+    CHECK(controller.openSetlist(file, 0) && controller.rackPath() == a);
+    for (int i = 0; i < 4; ++i) tick();   // B prepared ahead
+    controller.takeNotices();
+
+    CHECK(controller.checkSetlist() && controller.checkingSetlist());
+    for (int i = 0; i < 40 && controller.checkingSetlist(); ++i) tick();
+    tick();
+    CHECK(!controller.checkingSetlist() && !view.setlist.checking && view.setlist.songs.size() == 5);
+    auto has = [](const std::vector<std::string>& problems, const char* text) {
+        for (const std::string& p : problems)
+            if (p.find(text) != std::string::npos) return true;
+        return false;
+    };
+    if (view.setlist.songs.size() == 5) {
+        CHECK(view.setlist.songs[0].problems.empty() && view.setlist.songs[2].problems.empty() &&
+              view.setlist.songs[3].problems.empty());
+        CHECK(view.setlist.songs[1].problems.size() == 2 && has(view.setlist.songs[1].problems, "isn't installed") &&
+              has(view.setlist.songs[1].problems, "'Unplugged:Port' isn't connected"));
+        CHECK(view.setlist.songs[4].problems.size() == 1 && has(view.setlist.songs[4].problems, "can't be read"));
+    }
+    bool summed = false;
+    for (const std::string& text : controller.takeNotices())
+        summed = summed || text == "Check setlist: 2 songs have problems (in amber in the song list)";
+    CHECK(summed);
+    CHECK(controller.rackPath() == a && controller.songPrepared(1));   // nothing else changed
+
+    // Switching to B: what the switch reports replaces what the check found.
+    CHECK(controller.nextSong() && controller.rackPath() == b);
+    tick();
+    CHECK(view.setlist.songs[1].problems.size() == 2 && has(view.setlist.songs[1].problems, "hear nothing"));
+    // A new check starts afresh; closing the set forgets it.
+    CHECK(controller.checkSetlist());
+    controller.closeSetlist();
+    CHECK(!controller.checkingSetlist() && !controller.checkSetlist());
+    fs::remove_all(dir);
+}
+
 } // namespace
 
 int main() {
@@ -1594,5 +1673,6 @@ int main() {
     testLoopers();
     testKeepLoop();
     testLoopNumbers();
+    testCheckSetlist();
     return test::finish("RackController");
 }

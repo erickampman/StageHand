@@ -55,6 +55,7 @@ protected:
         std::function<void()> action;   // null: a disabled item
         bool                  checked = false;
         bool                  danger  = false;
+        bool                  warn    = false;   // amber (a problem), enabled or not
     };
     struct Menu {
         float                 x = 0, y = 0, w = 260;

@@ -102,6 +102,15 @@ public:
     // saved. Placeholders keep what they were loaded with.
     Rack capture() const;
 
+    // Check setlist (docs/setlists.md, milestone 7). The MIDI inputs `rack`
+    // names (its slots', loopers', sequence triggers' and transport's) that
+    // aren't there now, as activating it would report them; a connected
+    // device is opened, as it would be then. Nothing else changes.
+    std::vector<std::string> sourceProblems(const Rack& rack);
+    // The running rack's problems: placeholders (plugins that didn't load)
+    // and sourceProblems() of its current setup.
+    std::vector<std::string> runningProblems();
+
     // What's loaded, for the UI and reporting.
     struct Slot {
         RackSlot                      saved;    // settings as edited; plugin state as of load
@@ -378,6 +387,8 @@ public:
     std::size_t  pluginCount() const noexcept { return source.slots.size(); }   // the steps, placeholders included
     std::size_t  preparedCount() const noexcept { return slots.size(); }
     bool         ready() const noexcept { return slots.size() == source.slots.size(); }
+    // Problems creating its plugins so far (missing, rejected state, failed to activate).
+    const std::vector<std::string>& problems() const noexcept { return warnings; }
     // The created plugins' main-thread work (HostedPlugin::idle()), as for running ones.
     void         idle();
 

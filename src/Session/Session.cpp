@@ -885,6 +885,43 @@ std::vector<std::string> Session::resolveTransport() {
     return problems;
 }
 
+std::vector<std::string> Session::sourceProblems(const Rack& rack) {
+    std::vector<std::string> problems;
+    auto check = [&](const MidiSourceRef& ref, const std::string& what, const std::string& after) {
+        if (ref.kind != MidiSourceRef::Kind::Device && ref.kind != MidiSourceRef::Kind::Virtual) return;
+        std::string problem;
+        if (resolve(ref, problem) == kInvalidMidiSource) problems.push_back(what + problem + after);
+    };
+    for (const RackSlot& slot : rack.slots)
+        check(slot.source, "slot '" + slot.id + "': ", "; this slot will hear nothing from it");
+    for (const LooperSetup& looper : rack.loopers)
+        check(looper.source, "looper '" + looper.name + "': ", "; it records nothing from it");
+    for (const Sequence& seq : rack.sequences)
+        for (const SequenceTrigger& t : seq.triggers)
+            check(t.source, "sequence '" + seq.id + "': a MIDI trigger won't act: ", "");
+    for (const SequenceTrigger& t : rack.transport.triggers)
+        check(t.source, "transport: a MIDI control won't act: ", "");
+    if (rack.transport.startOnNote)
+        check(rack.transport.startOnNoteSource, "transport: a MIDI control won't act: start on first note: ", "");
+    return problems;
+}
+
+std::vector<std::string> Session::runningProblems() {
+    std::vector<std::string> problems;
+    Rack                     shape;   // the setup, without plugin states (no saveState() needed)
+    for (const Slot& slot : loaded) {
+        if (!slot.loadProblem.empty())
+            problems.push_back("slot '" + slot.saved.id + "': " + slot.loadProblem + "; kept as a placeholder (not running)");
+        else
+            shape.slots.push_back(slot.saved);
+    }
+    for (const SequenceEntry& entry : sequenceList) shape.sequences.push_back(entry.sequence);
+    for (const LooperEntry& entry : looperList) shape.loopers.push_back(entry.setup);
+    shape.transport = transportSetup;
+    for (std::string& problem : sourceProblems(shape)) problems.push_back(std::move(problem));
+    return problems;
+}
+
 MidiSourceHandle Session::resolve(const MidiSourceRef& ref, std::string& problem) {
     if (ref.kind == MidiSourceRef::Kind::Sequence) {
         if (const SequenceEntry* entry = sequence(ref.name)) return entry->source;

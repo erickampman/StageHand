@@ -222,6 +222,7 @@ struct SongModel {
     bool        missing = false;   // no rack at its path: skipped by Next and Previous
     bool        prepared = false;  // a switch to it is instant (docs/setlists.md, section 2)
     bool        unsaved  = false;  // its rack has edits not yet saved (section 6)
+    std::vector<std::string> problems;   // what Check setlist found (milestone 7); empty: none, or not checked
 
     bool operator==(const SongModel&) const = default;
 };
@@ -236,6 +237,7 @@ struct SetlistModel {
     int                    previous = -1;  // where Previous goes, or -1
     int                    waiting  = -1;  // the song a switch waits for (its rack being prepared), or -1
     SwitchSettings         switching;      // section 5
+    bool                   checking = false;   // Check setlist under way
     // Its MIDI triggers (section 4), as text ("Next song: Keys, CC 80, ch 1"), and MIDI learn for one.
     std::vector<std::string> triggers;
     bool                     learning       = false;
