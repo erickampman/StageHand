@@ -820,9 +820,9 @@ void testSetlist() {
     tick();
     CHECK(view.setlist.current == -1 && view.setlist.next == 1 && controller.rackPath() == a);
     CHECK(fs::exists(a));   // the rack stays on disk
-    CHECK(controller.nextSong() && view.setlist.current == -1);   // tick() hasn't run yet
-    tick();
-    CHECK(view.setlist.current == 1);
+    // It's A again: the same rack (one copy per path), so only the position moves.
+    const std::uint64_t generation = controller.rackGeneration();
+    CHECK(controller.nextSong() && view.setlist.current == 1 && controller.rackGeneration() == generation);
 
     // A missing rack is shown and skipped.
     CHECK(controller.addRackToSetlist(c));   // [B, A, C]
@@ -923,6 +923,112 @@ void testRigs() {
     fs::remove_all(dir);
 }
 
+// Prepared racks (docs/setlists.md, section 2): the next and previous songs'
+// racks prepared one plugin per tick, Next switching at once with one graph
+// commit (editors closed, the rig's effects kept), the rack left prepared again
+// from memory, a reprise sharing one copy, and a jump to a rack not prepared
+// waiting for it while the current one plays (only the last request counts).
+void testPreparedRacks() {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / "stagehand-prepared-test";
+    fs::remove_all(dir);
+    auto makeRack = [&](const std::string& name, std::size_t plugins) {
+        Rack rack;
+        rack.name = name;
+        for (std::size_t i = 0; i < plugins; ++i)
+            rack.slots.push_back(slot("row" + std::to_string(i + 1), i % 2 == 0 ? "synth" : "bass",
+                                      i % 2 == 0 ? "/clap/Synth.clap" : "/clap/Bass.clap"));
+        const std::string path = (dir / "Racks" / (name + ".rack")).string();
+        CHECK(saveRack(path, rack).ok);
+        return path;
+    };
+    const std::string a = makeRack("A", 1), b = makeRack("B", 2), c = makeRack("C", 1), d = makeRack("D", 2);
+    stagehand::Rig stage;
+    RigEffect      effect;
+    effect.plugin             = installedPlugin("old", "/clap/Old.clap");
+    stage.buses[0].effects[0] = effect;
+    const std::string stagePath = (dir / "Stage.rig").string();
+    CHECK(saveRig(stagePath, stage).ok);
+    Setlist set;
+    set.songs = {SetlistSong{a, ""}, SetlistSong{b, ""}, SetlistSong{c, ""}, SetlistSong{d, ""}};
+    set.rig   = stagePath;
+    const std::string file = (dir / "Gig.setlist").string();
+    CHECK(saveSetlist(file, set).ok);
+
+    Rig                 rig;
+    Session::LoadReport report;
+    Rack                untitled;
+    untitled.name = "Untitled";
+    rig.session->load(untitled, 48000.0, report);
+    RackController::Config config = rig.config();
+    config.savingOff              = true;   // edits then live only in memory
+    RackController       controller(*rig.session, *rig.engine, rig.midi, rig.factory, config);
+    const RackViewModel& view = controller.view();
+    double               now  = 0.0;
+    auto tick = [&] { controller.tick(now += 2.0); };
+
+    // Opening the set isn't a live switch: song 1 plays at once.
+    CHECK(controller.openSetlist(file, 0) && controller.rackPath() == a && !controller.switchPending());
+    const HostedPlugin* fx = rig.session->rig().effects[0][0].plugin.get();
+    CHECK(fx != nullptr);
+
+    // B (two plugins) is prepared over two ticks (the first came with the
+    // switch's own refresh), with nothing committed.
+    const std::uint64_t commits = rig.engine->graphCommits();
+    CHECK(!controller.songPrepared(1) && view.status.preparing == "Preparing song 2 (B): 1/2 plugins");
+    CHECK(!view.setlist.songs[1].prepared && view.setlist.songs[0].prepared);   // the playing one is
+    tick();
+    CHECK(controller.songPrepared(1) && view.setlist.songs[1].prepared && !controller.songPrepared(2));
+    tick();
+    CHECK(view.status.preparing.empty() && rig.engine->graphCommits() == commits);
+
+    // Next: at once, one commit; editors close, the old plugins leave, the rig stays.
+    CHECK(rig.session->setGainDb("row1", -6.0f));
+    controller.openEditor("row1");
+    CHECK(*rig.editorsOpen == 1);
+    const std::weak_ptr<HostedPlugin> oldRow   = rig.session->slot("row1")->plugin;
+    const std::uint64_t               switched = controller.rackGeneration();
+    CHECK(controller.nextSong() && controller.rackPath() == b && !controller.switchPending());
+    CHECK(rig.engine->graphCommits() == commits + 1);
+    CHECK(*rig.editorsOpen == 0 && controller.rackGeneration() == switched + 1);
+    CHECK(rig.session->slots().size() == 2 && view.setlist.current == 1);
+    runBlock(*rig.engine);
+    rig.engine->collect();
+    CHECK(oldRow.expired() && rig.session->rig().effects[0][0].plugin.get() == fx);
+
+    // Then C (next) and A again (previous), one plugin per tick; A from memory,
+    // with its edit, though nothing was saved.
+    CHECK(controller.songPrepared(2) && !controller.songPrepared(0));
+    tick();
+    CHECK(controller.songPrepared(0) && rig.engine->graphCommits() == commits + 1);
+    CHECK(controller.previousSong() && controller.rackPath() == a);
+    CHECK(rig.session->slot("row1") != nullptr && rig.session->slot("row1")->saved.gainDb == -6.0f);
+
+    // A jump to a rack not prepared waits for it while the current one plays;
+    // a second jump replaces the first.
+    CHECK(controller.goToSong(3) && controller.switchPending() && controller.rackPath() == a);
+    tick();
+    CHECK(controller.rackPath() == a && view.setlist.waiting == 3);
+    CHECK(view.status.preparing == "Preparing song 4 (D): 1/2 plugins");
+    CHECK(controller.goToSong(2) && controller.switchPending());
+    tick();   // C: one plugin, then the switch
+    CHECK(controller.rackPath() == c && !controller.switchPending() && view.setlist.current == 2);
+    CHECK(view.setlist.waiting == -1);
+
+    // A reprise: B before and after C is one prepared copy, ready for both at once.
+    CHECK(controller.addRackToSetlist(b));   // [A, B, C, B, D]
+    for (int i = 0; i < 6 && !controller.songPrepared(1); ++i) tick();
+    CHECK(controller.songPrepared(1) && controller.songPrepared(3));
+    CHECK(controller.goToSong(3) && controller.rackPath() == b && view.setlist.current == 3);
+    // Going to its other appearance moves the position only: it's the same rack.
+    const std::uint64_t reprise = controller.rackGeneration();
+    CHECK(controller.goToSong(1) && view.setlist.current == 1 && controller.rackGeneration() == reprise);
+
+    runBlock(*rig.engine);
+    rig.engine->collect();
+    fs::remove_all(dir);
+}
+
 } // namespace
 
 int main() {
@@ -941,5 +1047,6 @@ int main() {
     testRenameSequence();
     testSetlist();
     testRigs();
+    testPreparedRacks();
     return test::finish("RackController");
 }

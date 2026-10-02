@@ -78,6 +78,7 @@ struct StatusModel {
     MidiProtocol  preference    = MidiProtocol::Midi2;
     std::string   saveTarget;          // the rack's bundle; empty: untitled, or saving is off
     std::string   noSaveReason;        // shown instead, when saveTarget is empty
+    std::string   preparing;           // "Preparing song 4 (So what): 2/5 plugins"; "" when idle
     float         outputDb[2]   = {-60.0f, -60.0f};   // master meter, with ballistics
     bool          outputClipped = false;
 
@@ -157,6 +158,7 @@ struct SongModel {
     std::string name;      // the song's name in the set, else its rack's
     std::string rackName;  // the rack bundle's name
     bool        missing = false;   // no rack at its path: skipped by Next and Previous
+    bool        prepared = false;  // a switch to it is instant (docs/setlists.md, section 2)
 
     bool operator==(const SongModel&) const = default;
 };
@@ -169,6 +171,7 @@ struct SetlistModel {
     int                    current = -1;
     int                    next     = -1;  // where Next goes (missing songs skipped), or -1
     int                    previous = -1;  // where Previous goes, or -1
+    int                    waiting  = -1;  // the song a switch waits for (its rack being prepared), or -1
 
     bool operator==(const SetlistModel&) const = default;
 };

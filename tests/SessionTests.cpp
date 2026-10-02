@@ -518,6 +518,94 @@ void testRig() {
     engine->collect();
 }
 
+// load() in two steps (docs/setlists.md, section 2): prepare() creates nothing,
+// each prepareStep() one plugin (restored before it's activated), nothing
+// reaches the engine meanwhile, and activate() commits one graph that keeps
+// the rig's effects.
+void testPrepare() {
+    FakeFactory factory;
+    factory.installed = {installedPlugin("synth", "/clap/Synth.clap"), installedPlugin("pad", "/clap/Pad.clap"),
+                         installedPlugin("verb", "/clap/Verb.clap")};
+    FakeMidiInput midi;
+    NullHost      host;
+    auto          engine = std::make_unique<Engine>();
+    Session       session(factory, host, midi, *engine);
+
+    Rack first;
+    first.slots = {slot("old", "synth", "/clap/Synth.clap")};
+    Session::LoadReport report;
+    CHECK(session.load(first, 48000.0, report));
+    Rig       rig;
+    RigEffect verb;
+    verb.plugin             = installedPlugin("verb", "/clap/Verb.clap");
+    rig.buses[0].effects[0] = verb;
+    session.loadRig(rig, 48000.0, report);
+    runBlock(*engine);
+    auto* oldPlugin = dynamic_cast<FakePlugin*>(session.slot("old")->plugin.get());
+    auto* fx        = dynamic_cast<FakePlugin*>(session.rig().effects[0][0].plugin.get());
+    CHECK(oldPlugin != nullptr && fx != nullptr);
+    if (oldPlugin == nullptr || fx == nullptr) return;
+    const std::weak_ptr<HostedPlugin> oldRef = session.slot("old")->plugin;
+
+    Rack next;
+    next.name      = "Next";
+    next.tempoBpm  = 90.0;
+    RackSlot a     = slot("a", "pad", "/clap/Pad.clap");
+    a.state        = bytes("pad-state");
+    a.source       = MidiSourceRef{MidiSourceRef::Kind::Device, "Keys:Keys MIDI 1"};
+    RackSlot b     = slot("b", "not.installed");
+    RackSlot c     = slot("c", "synth", "/clap/Synth.clap");
+    next.slots     = {a, b, c};
+    Sequence seq;
+    seq.id         = "seq";
+    seq.targets    = {"c"};
+    next.sequences = {seq};
+
+    const std::uint64_t           commits  = engine->graphCommits();
+    std::unique_ptr<PreparedRack> prepared = session.prepare(next, 48000.0);
+    CHECK(prepared->pluginCount() == 3 && prepared->preparedCount() == 0 && !prepared->ready());
+    CHECK(factory.created.count("pad") == 0);   // nothing created yet
+
+    // One plugin per step; the running rack plays on, and the engine hears nothing.
+    CHECK(!session.prepareStep(*prepared) && prepared->preparedCount() == 1);
+    auto* pad = factory.created.count("pad") != 0 ? factory.created["pad"] : nullptr;
+    CHECK(pad != nullptr && pad->active && !pad->loadedWhileActive && pad->state == bytes("pad-state"));
+    CHECK(midi.opened.empty());   // sources resolve at activate()
+    CHECK(!session.prepareStep(*prepared));   // the placeholder is a step too
+    CHECK(session.prepareStep(*prepared) && prepared->ready());
+    CHECK(session.prepareStep(*prepared));    // nothing left to do
+    runBlock(*engine);
+    CHECK(engine->graphCommits() == commits && session.slot("old") != nullptr && session.slot("a") == nullptr);
+    CHECK(pad != nullptr && pad->calls.empty());
+    CHECK(oldPlugin->calls.size() == 2);
+
+    // The switch: one graph commit, the new slots and the same rig.
+    report = {};
+    CHECK(session.activate(std::move(prepared), report));
+    CHECK(engine->graphCommits() == commits + 1);
+    CHECK(report.warnings.size() == 1);   // b isn't installed
+    CHECK(session.rackName() == "Next" && session.tempoBpm() == 90.0 && session.slots().size() == 3);
+    CHECK(session.slot("a")->source == 42 && midi.opened.size() == 1);
+    CHECK(session.sequences().size() == 1 && session.sequence("seq") != nullptr);
+    CHECK(!session.modified() && !session.flushPending());
+    runBlock(*engine);
+    engine->collect();
+    CHECK(pad != nullptr && pad->calls.size() == 1);
+    CHECK(oldRef.expired());   // the old rack's plugin: stopped, retired, destroyed
+    CHECK(session.rig().effects[0][0].plugin.get() == fx && fx->stops == 0);
+
+    // activate() finishes a rack prepared only partly; one dropped is simply destroyed.
+    std::unique_ptr<PreparedRack> partly = session.prepare(next, 48000.0);
+    CHECK(!session.prepareStep(*partly));
+    CHECK(session.activate(std::move(partly), report) && session.slots().size() == 3 && session.slot("c")->plugin);
+    std::unique_ptr<PreparedRack> dropped = session.prepare(first, 48000.0);
+    CHECK(session.prepareStep(*dropped));
+    dropped.reset();   // never ran
+    session.unload();
+    runBlock(*engine);
+    engine->collect();
+}
+
 int main() {
     testLoad();
     testNoFallbackToAll();
@@ -528,5 +616,6 @@ int main() {
     testSequences();
     testSequenceTriggers();
     testRig();
+    testPrepare();
     return test::finish("Session");
 }

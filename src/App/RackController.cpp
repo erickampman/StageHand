@@ -88,10 +88,14 @@ void RackController::service() {
     engine.collect();
     for (const Session::Slot& slot : session.slots())
         if (slot.plugin) slot.plugin->idle();
+    for (const auto& [bundle, ahead] : prepared) ahead.rack->idle();
 }
 
 void RackController::tick(double now) {
+    ticking = true;
     if (Engine::Learned learned; !learningId.empty() && engine.takeLearned(learned)) finishLearn(learned);
+    refreshSongs(now);
+    prepareAhead();   // before flush(): a switch commits the new rack's graph, and nothing else is pending
     session.flush();
 
     for (auto it = editors.begin(); it != editors.end();)
@@ -102,7 +106,7 @@ void RackController::tick(double now) {
 
     model.rackName = session.rackName();
     model.modified = session.modified();
-    buildSetlist(now);
+    buildSetlist();
 
     TransportModel&         transport = model.transport;
     const Engine::Transport clock     = engine.transport();
@@ -172,6 +176,8 @@ void RackController::tick(double now) {
     master.update(output, now, dt);
     for (std::size_t c = 0; c < LevelMeter::kChannels; ++c) status.outputDb[c] = master.displayDb[c];
     status.outputClipped = output.clipped;
+    status.preparing     = preparingText;
+    ticking              = false;
 }
 
 void RackController::Ballistics::update(const LevelMeter::Reading& reading, double now, double dt) noexcept {
@@ -861,7 +867,11 @@ bool RackController::save() {
         notice(config.savingOff ? "Not saved: saving is off (--no-save-rack)" : "Not saved: this rack is untitled; use Save As");
         return false;
     }
-    const RackFileResult result = saveRack(target, session.capture());
+    return saveCaptured(session.capture());
+}
+
+bool RackController::saveCaptured(const Rack& captured) {
+    const RackFileResult result = saveRack(target, captured);
     if (!result.ok) {
         notice("Couldn't save the rack: " + result.error);
         return false;
@@ -897,6 +907,7 @@ RackController::SaveAsResult RackController::saveAs(const std::string& chosen, b
         return SaveAsResult::Failed;
     }
     target = path;
+    prepared.erase(path);   // a rack replaced there: its prepared copy is out of date
     session.markSaved();
     notice("Saved the rack to " + target);
     saveRigIfModified();
@@ -984,10 +995,24 @@ bool RackController::loadRackAt(const std::string& bundle) {
     return replaceRack(rack, bundle, result.warnings);
 }
 
-// Switch racks: save the old one as quitting would, close what belongs to it,
-// and load the new one at the running sample rate.
+// Open and New: the rack prepared at once (they aren't live actions).
 bool RackController::replaceRack(const Rack& rack, const std::string& path, const std::vector<std::string>& warnings) {
-    if (!saveForQuit()) return false;   // the notice says why
+    std::unique_ptr<PreparedRack> next = session.prepare(rack, session.loadedSampleRate());
+    if (!switchRack(next, path, warnings)) return false;
+    tick(std::max(lastTick, 0.0));
+    return true;
+}
+
+bool RackController::switchRack(std::unique_ptr<PreparedRack>& next, const std::string& path,
+                                 const std::vector<std::string>& warnings) {
+    // The rack being left, captured once: saved (as at quit), and in a setlist
+    // prepared again from it, since it's likely the previous song now.
+    const std::string oldPath = target;
+    const bool        saving  = !config.savingOff && !oldPath.empty();
+    const bool        keep    = setlistOpen && !oldPath.empty() && oldPath != path;
+    Rack              old;
+    if (saving || keep) old = session.capture();
+    if (saving ? !saveCaptured(old) : !saveRigIfModified()) return false;   // the notice says why
     cancelLearn();
     closeAllEditors();
     rows.clear();
@@ -995,15 +1020,16 @@ bool RackController::replaceRack(const Rack& rack, const std::string& path, cons
 
     session.stopTransport();   // a new song starts from bar 1
     Session::LoadReport report;
-    session.load(rack, session.loadedSampleRate(), report);
+    session.activate(std::move(next), report);   // one commit; the rig's effects stay
     target = path;
     routeClick(true);
-    ++generation;
+    ++generation;   // sequence windows close
     for (const std::string& warning : warnings) notice(warning);
     for (const std::string& warning : report.warnings) notice(warning);
     notice(path.empty() ? "New rack" : "Opened " + path);
     refreshSources();
-    tick(std::max(lastTick, 0.0));
+    prepared.erase(path);
+    if (keep) prepared[oldPath] = Ahead{session.prepare(old, session.loadedSampleRate()), {}};
     return true;
 }
 
@@ -1053,6 +1079,9 @@ RackController::NewSetlistResult RackController::newSetlist(const std::string& c
     setlistOpen = true;
     setlist     = std::move(fresh);
     setlistFile = resolveRackPath(path);
+    prepared.clear();
+    unpreparable.clear();
+    waitingSong.reset();
     useRig(setlist.rig);   // a new setlist names no rig: the default
     song        = 0;
     onSong      = withThisRack;
@@ -1073,6 +1102,9 @@ bool RackController::openSetlist(const std::string& chosen, std::size_t start) {
     setlist     = std::move(loaded);
     setlistFile = resolveRackPath(chosen);
     songCache.clear();
+    prepared.clear();
+    unpreparable.clear();
+    waitingSong.reset();
     useRig(setlist.rig);   // its own, else the default
     song        = std::min(start, setlist.songs.size());
     onSong      = false;
@@ -1089,7 +1121,7 @@ bool RackController::openSetlist(const std::string& chosen, std::size_t start) {
         notice("Opened the setlist " + setlistFile + ", but none of its racks were found");
         return true;
     }
-    goToSong(static_cast<std::size_t>(first));
+    goTo(static_cast<std::size_t>(first), true);   // not a live switch: no waiting
     return true;
 }
 
@@ -1101,21 +1133,126 @@ void RackController::closeSetlist() {
     setlistFile.clear();
     song   = 0;
     onSong = false;
+    prepared.clear();
+    unpreparable.clear();
+    waitingSong.reset();
+    preparingText.clear();
     rememberPosition();
 }
 
 bool RackController::goToSong(std::size_t index) {
+    return goTo(index, false);
+}
+
+bool RackController::goTo(std::size_t index, bool now) {
+    waitingSong.reset();   // only the last request counts
     if (!setlistOpen || index >= setlist.songs.size()) return false;
-    const SetlistSong& s = setlist.songs[index];
-    if (rackMissing(s)) {
+    const SetlistSong& s      = setlist.songs[index];
+    const std::string  bundle = rackBundleOf(s.rack);
+    if (bundle.empty()) {
         notice("Song " + std::to_string(index + 1) + "'s rack is missing: " + s.rack);
         return false;
     }
-    if (!loadRackAt(rackBundleOf(s.rack))) return false;
+    if (bundle != target) {
+        auto it = prepared.find(bundle);
+        if (it != prepared.end() && it->second.rack->sampleRate() != session.loadedSampleRate()) {
+            prepared.erase(it);   // prepared for another sample rate
+            it = prepared.end();
+        }
+        if (it == prepared.end()) {
+            if (!startPreparing(bundle, true)) return false;
+            it = prepared.find(bundle);
+        }
+        if (now)
+            while (!session.prepareStep(*it->second.rack)) {}
+        if (!it->second.rack->ready()) {   // the current rack plays on meanwhile
+            waitingSong = index;
+            return true;
+        }
+        Ahead ahead = std::move(it->second);
+        prepared.erase(it);
+        if (!switchRack(ahead.rack, bundle, ahead.warnings)) {
+            prepared[bundle] = std::move(ahead);   // still ready for another try
+            return false;
+        }
+    }
+    // else: another appearance of the rack playing, which is the same rack.
     song   = index;
     onSong = true;
     rememberPosition();
+    if (!ticking) tick(std::max(lastTick, 0.0));
     return true;
+}
+
+bool RackController::songPrepared(std::size_t index) const {
+    if (index >= songBundles.size() || songBundles[index].empty()) return false;
+    if (songBundles[index] == target) return true;
+    const auto it = prepared.find(songBundles[index]);
+    return it != prepared.end() && it->second.rack->ready();
+}
+
+bool RackController::startPreparing(const std::string& bundle, bool report) {
+    Rack                 rack;
+    const RackFileResult result = loadRack(bundle, rack);
+    if (!result.ok) {
+        if (report) notice("Couldn't open " + bundle + ": " + result.error);
+        unpreparable.insert(bundle);
+        return false;
+    }
+    unpreparable.erase(bundle);
+    prepared[bundle] = Ahead{session.prepare(rack, session.loadedSampleRate()), result.warnings};
+    return true;
+}
+
+void RackController::prepareAhead() {
+    preparingText.clear();
+    if (!setlistOpen) return;
+
+    // What to keep ready, most urgent first: by the songs as last checked on disk.
+    std::vector<std::pair<std::string, std::size_t>> wanted;   // bundle, a song using it
+    auto want = [&](long index) {
+        if (index < 0 || static_cast<std::size_t>(index) >= songBundles.size()) return;
+        const std::string& bundle = songBundles[static_cast<std::size_t>(index)];
+        if (bundle.empty() || bundle == target) return;
+        for (const auto& w : wanted)
+            if (w.first == bundle) return;
+        wanted.emplace_back(bundle, static_cast<std::size_t>(index));
+    };
+    if (waitingSong) want(static_cast<long>(*waitingSong));
+    want(neighbour(1));
+    want(neighbour(-1));
+
+    // Drop the rest, and racks prepared for another sample rate (the backend restarted).
+    for (auto it = prepared.begin(); it != prepared.end();) {
+        const bool used = std::any_of(wanted.begin(), wanted.end(), [&](const auto& w) { return w.first == it->first; });
+        it = used && it->second.rack->sampleRate() == session.loadedSampleRate() ? std::next(it) : prepared.erase(it);
+    }
+
+    // One plugin per tick.
+    for (const auto& [bundle, index] : wanted) {
+        auto it = prepared.find(bundle);
+        if (it == prepared.end()) {
+            if (unpreparable.count(bundle) != 0 || !startPreparing(bundle, false)) continue;
+            it = prepared.find(bundle);
+        }
+        PreparedRack& rack = *it->second.rack;
+        if (rack.ready()) continue;
+        session.prepareStep(rack);
+        preparingText = "Preparing song " + std::to_string(index + 1) + " (" + rackNameOf(bundle) +
+                        "): " + std::to_string(rack.preparedCount()) + "/" + std::to_string(rack.pluginCount()) +
+                        " plugins";
+        break;
+    }
+
+    // The switch waiting for its rack: once it's ready, or if something changed
+    // under it (goTo() then switches, or says why it can't).
+    if (waitingSong && *waitingSong < songBundles.size()) {
+        const std::string& bundle = songBundles[*waitingSong];
+        const auto         it     = prepared.find(bundle);
+        if (bundle.empty() || bundle == target || unpreparable.count(bundle) != 0 ||
+            (it != prepared.end() && it->second.rack->ready()))
+            goTo(*waitingSong, false);
+    }
 }
 
 bool RackController::nextSong() {
@@ -1150,6 +1287,7 @@ bool RackController::addRackToSetlist(const std::string& chosen) {
     }
     const std::size_t at = insertionPoint();
     setlist.songs.insert(setlist.songs.begin() + static_cast<std::ptrdiff_t>(at), SetlistSong{bundle, ""});
+    if (waitingSong && *waitingSong >= at) ++*waitingSong;
     notice("Added " + rackNameOf(bundle) + " as song " + std::to_string(at + 1));
     return writeSetlist();
 }
@@ -1179,6 +1317,7 @@ bool RackController::addThisRackAgain() {
     if (!setlistOpen || !onSong) return false;
     const SetlistSong again = setlist.songs[song];
     setlist.songs.insert(setlist.songs.begin() + static_cast<std::ptrdiff_t>(song + 1), again);
+    if (waitingSong && *waitingSong > song) ++*waitingSong;
     notice("Added " + rackNameOf(again.rack) + " again as song " + std::to_string(song + 2));
     return writeSetlist();
 }
@@ -1191,6 +1330,8 @@ bool RackController::moveSong(std::size_t index, int delta) {
     std::swap(setlist.songs[index], setlist.songs[other]);
     if (onSong && song == index) song = other;   // the playing song moves with it
     else if (onSong && song == other) song = index;
+    if (waitingSong == index) waitingSong = other;   // so does the one a switch waits for
+    else if (waitingSong == other) waitingSong = index;
     return writeSetlist();
 }
 
@@ -1206,6 +1347,8 @@ bool RackController::renameSong(std::size_t index, const std::string& name) {
 bool RackController::removeSong(std::size_t index) {
     if (!setlistOpen || index >= setlist.songs.size()) return false;
     setlist.songs.erase(setlist.songs.begin() + static_cast<std::ptrdiff_t>(index));
+    if (waitingSong == index) waitingSong.reset();
+    else if (waitingSong && *waitingSong > index) --*waitingSong;
     if (onSong && index == song) onSong = false;   // the rack still plays; Next goes to the one that followed
     else if (index < song) --song;
     song = std::min(song, setlist.songs.size());
@@ -1227,6 +1370,8 @@ bool RackController::relinkSong(std::size_t index, const std::string& chosen) {
 
 bool RackController::writeSetlist() {
     songCache.clear();   // checked again at the next tick
+    songBundles.clear();
+    unpreparable.clear();
     const RackFileResult result = saveSetlist(setlistFile, setlist);
     if (!result.ok) notice("Couldn't save the setlist: " + result.error);
     return result.ok;
@@ -1237,35 +1382,49 @@ void RackController::rememberPosition() {
     saveLastPosition(config.lastPositionPath, LastPosition{setlistOpen ? setlistFile : std::string{}, song});
 }
 
-void RackController::buildSetlist(double now) {
+void RackController::refreshSongs(double now) {
+    if (!setlistOpen) {
+        songCache.clear();
+        songBundles.clear();
+        return;
+    }
+    if (songCache.size() == setlist.songs.size() && now - missingCheckedAt < 1.0 && now >= missingCheckedAt) return;
+    songCache.clear();
+    songBundles.clear();
+    for (const SetlistSong& s : setlist.songs) {
+        SongModel sm;
+        sm.rackName = rackNameOf(s.rack);
+        sm.name     = s.name.empty() ? sm.rackName : s.name;
+        songBundles.push_back(rackBundleOf(s.rack));
+        sm.missing = songBundles.back().empty();
+        songCache.push_back(std::move(sm));
+    }
+    missingCheckedAt = now;
+}
+
+int RackController::neighbour(int step) const {
+    if (step > 0) {
+        for (std::size_t i = onSong ? song + 1 : song; i < songCache.size(); ++i)
+            if (!songCache[i].missing) return static_cast<int>(i);
+    } else {
+        for (std::size_t i = std::min(song, songCache.size()); i-- > 0;)
+            if (!songCache[i].missing) return static_cast<int>(i);
+    }
+    return -1;
+}
+
+void RackController::buildSetlist() {
     SetlistModel& m = model.setlist;
     m               = {};
     if (!setlistOpen) return;
-    if (songCache.size() != setlist.songs.size() || now - missingCheckedAt >= 1.0 || now < missingCheckedAt) {
-        songCache.clear();
-        for (const SetlistSong& s : setlist.songs) {
-            SongModel sm;
-            sm.rackName = rackNameOf(s.rack);
-            sm.name     = s.name.empty() ? sm.rackName : s.name;
-            sm.missing  = rackMissing(s);
-            songCache.push_back(std::move(sm));
-        }
-        missingCheckedAt = now;
-    }
-    m.open    = true;
-    m.name    = setlistNameOf(setlistFile);
-    m.songs   = songCache;
-    m.current = onSong ? static_cast<int>(song) : -1;
-    for (std::size_t i = onSong ? song + 1 : song; i < setlist.songs.size(); ++i)
-        if (!songCache[i].missing) {
-            m.next = static_cast<int>(i);
-            break;
-        }
-    for (std::size_t i = song; i-- > 0;)
-        if (!songCache[i].missing) {
-            m.previous = static_cast<int>(i);
-            break;
-        }
+    m.open     = true;
+    m.name     = setlistNameOf(setlistFile);
+    m.songs    = songCache;
+    for (std::size_t i = 0; i < m.songs.size(); ++i) m.songs[i].prepared = songPrepared(i);
+    m.current  = onSong ? static_cast<int>(song) : -1;
+    m.next     = neighbour(1);
+    m.previous = neighbour(-1);
+    m.waiting  = waitingSong ? static_cast<int>(*waitingSong) : -1;
 }
 
 } // namespace stagehand

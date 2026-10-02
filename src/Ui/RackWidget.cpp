@@ -273,14 +273,26 @@ void RackWidget::drawSetlistRow() {
     arrow(x, false, set.next >= 0);
     if (set.next >= 0) region(x, y, arrowW, h, [this](const Press&) { switchSong([this] { controller.nextSong(); }); });
     x += arrowW + 12.0f;
-    const std::string next = set.next >= 0 ? "next: " + set.songs[static_cast<std::size_t>(set.next)].name
-                                           : count > 0 ? "end of the set" : "";
+    // A switch waiting for its rack (being prepared: the status bar counts),
+    // else where Next goes, with a dot lit once its rack is prepared.
+    std::string next = count > 0 ? "end of the set" : "";
+    if (set.waiting >= 0) {
+        next = "going to: " + set.songs[static_cast<std::size_t>(set.waiting)].name;
+    } else if (set.next >= 0) {
+        const SongModel& to = set.songs[static_cast<std::size_t>(set.next)];
+        beginPath();
+        circle(x + 4.0f, kSetlistH / 2, 4.0f);
+        fill(to.prepared ? kGreen : kTrack);
+        NanoVG::fill();
+        x += 14.0f;
+        next = "next: " + to.name;
+    }
     const std::string name = set.name;
     const float       nameRight = width() - kPad;
     const float       setW      = labelWidth(name, 13.0f);
     save();
     scissor(x, 0, std::max(0.0f, nameRight - setW - 16.0f - x), kSetlistH);
-    label(x, kSetlistH / 2, next, 13.0f, kDim);
+    label(x, kSetlistH / 2, next, 13.0f, set.waiting >= 0 ? kAmber : kDim);
     restore();
     label(nameRight, kSetlistH / 2, name, 13.0f, kDim, ALIGN_RIGHT | ALIGN_MIDDLE);
 }
@@ -749,6 +761,8 @@ void RackWidget::drawStatus() {
     scissor(tx, y, std::max(0.0f, mx0 - 12.0f - tx), kStatusH);
     if (!notice.empty() && ui::nowSeconds() < noticeUntil)
         label(tx, y + kStatusH / 2, notice, 12.0f, kAccent);
+    else if (!s.preparing.empty())
+        label(tx, y + kStatusH / 2, s.preparing, 12.0f, kDim);
     else if (!s.saveTarget.empty())
         label(tx, y + kStatusH / 2, "Saves to " + s.saveTarget, 12.0f, kDim);
     else
