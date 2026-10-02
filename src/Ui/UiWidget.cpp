@@ -86,6 +86,26 @@ void UiWidget::removeButton(float x, float y, float size) {
     lineCap(BUTT);
 }
 
+void UiWidget::midiButton(float x, float y, float w, float h, bool on, UiColor onColor) {
+    box(x, y, w, h, on ? onColor : kTrack, 4.0f);
+    const UiColor ink = on ? kBarBg : kText;
+    const float   cx = x + w / 2, cy = y + h / 2, r = std::min(w, h) * 0.34f;
+    // The plug's rim, its notch at the top, and five pins in a half circle below.
+    beginPath();
+    circle(cx, cy, r);
+    strokeColor(ink.r, ink.g, ink.b);
+    strokeWidth(1.5f);
+    stroke();
+    beginPath();
+    rect(cx - r * 0.18f, cy - r, r * 0.36f, r * 0.3f);
+    for (int i = 0; i < 5; ++i) {
+        const float a = 3.14159265f * static_cast<float>(i) / 4.0f;   // 0 (right) round to pi (left), below
+        circle(cx + std::cos(a) * r * 0.6f, cy + std::sin(a) * r * 0.6f - r * 0.1f, r * 0.15f);
+    }
+    fill(ink);
+    NanoVG::fill();
+}
+
 void UiWidget::region(float x, float y, float w, float h, std::function<void(const Press&)> press,
                       std::function<void(float)> wheel, bool rightToo) {
     regions.push_back(Region{x, y + regionDy, w, h, std::move(press), std::move(wheel), rightToo});

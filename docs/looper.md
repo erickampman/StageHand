@@ -195,7 +195,9 @@ when there's none), and tap, clear and undo. UI: + Looper (an input, then a
 row), one row per looper under the sequences (its button is the switch's tap;
 state, length, overdubs, input and targets, its place in the loop, how full it
 is past 75%; Undo, Clear, Input, Q, Bar/Beat, Length, the red X), the current
-looper highlighted, and the Looper switch button in the dock's header. Tests:
+looper highlighted, and the Looper switch button in the dock's header (moved
+2026-10-02 to a MIDI button in each looper's row: the one switch, driving the
+current looper). Tests:
 `testLoopers` (controller), loopers in the rack file tests, the switch in the
 rig file tests.
 

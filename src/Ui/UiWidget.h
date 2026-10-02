@@ -84,6 +84,9 @@ protected:
     float labelWidth(const std::string& text, float size);
     void  button(float x, float y, float w, float h, const std::string& text, bool on, bool enabled, UiColor onColor);
     void  removeButton(float x, float y, float size);       // a red X, for "remove this row"
+    // MIDI control (learned triggers, a switch): a 5-pin DIN plug, drawn as
+    // button() is, lit when `on`.
+    void  midiButton(float x, float y, float w, float h, bool on, UiColor onColor);
     void  region(float x, float y, float w, float h, std::function<void(const Press&)> press,
                  std::function<void(float)> wheel = {}, bool rightToo = false);
     // Draw a part `dy` lower than its own coordinates say: drawing and the

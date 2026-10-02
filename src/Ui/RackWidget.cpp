@@ -31,6 +31,7 @@ constexpr float kTransportX = 280.0f;   // the toolbar's transport, left of the 
 constexpr float kPluginW    = 270.0f;
 constexpr float kMinOutputW = 330.0f;
 constexpr float kRemoveSize = 26.0f;   // the red X at each row's right end
+constexpr float kMidiW      = 34.0f;   // a MIDI control button (the DIN plug)
 constexpr float kMinDb      = -60.0f;   // one scale for fader and meters, so they line up
 constexpr float kMaxDb      = 6.0f;
 constexpr float kKeyBarX    = kPad + 16.0f;   // 128 keys at 1 logical pixel each
@@ -303,11 +304,10 @@ void RackWidget::drawSetlistRow() {
     const std::string name = set.name;
     // The setlist's MIDI control (section 4) at the right, before its name:
     // lit when it has triggers, blinking amber while learning.
-    const float midiX     = width() - kPad - 50.0f;
+    const float midiX     = width() - kPad - kMidiW;
     const bool  blinkOn   = std::fmod(ui::nowSeconds(), 0.5) < 0.25;
-    button(midiX, y, 50.0f, h, "MIDI", set.learning ? blinkOn : !set.triggers.empty(), true,
-           set.learning ? kAmber : kAccent);
-    region(midiX, y, 50.0f, h, [this, midiX](const Press&) { openSetlistMidiMenu(midiX, kSetlistH); });
+    midiButton(midiX, y, kMidiW, h, set.learning ? blinkOn : !set.triggers.empty(), set.learning ? kAmber : kAccent);
+    region(midiX, y, kMidiW, h, [this, midiX](const Press&) { openSetlistMidiMenu(midiX, kSetlistH); });
     const float       nameRight = midiX - 10.0f;
     const float       setW      = labelWidth(name, 13.0f);
     save();
@@ -546,11 +546,11 @@ void RackWidget::drawTransport(float x) {
     const float midiX   = playX + 40.0f;
     const bool  blinkOn = std::fmod(ui::nowSeconds(), 0.5) < 0.25;
     const bool  mapped  = !t.triggers.empty() || !t.startOnNote.empty();
-    button(midiX, 8.0f, 50.0f, 28.0f, "MIDI", t.learning ? blinkOn : mapped, true,
-           t.learning || !t.startOnNoteConnected ? kAmber : kAccent);
-    region(midiX, 8.0f, 50.0f, 28.0f, [this, midiX](const Press&) { openTransportMenu(midiX, topH()); });
+    midiButton(midiX, 8.0f, kMidiW, 28.0f, t.learning ? blinkOn : mapped,
+               t.learning || !t.startOnNoteConnected ? kAmber : kAccent);
+    region(midiX, 8.0f, kMidiW, 28.0f, [this, midiX](const Press&) { openTransportMenu(midiX, topH()); });
 
-    const float sigX = midiX + 56.0f;
+    const float sigX = midiX + kMidiW + 6.0f;
     std::snprintf(text, sizeof text, "%d/%d", t.numerator, t.denominator);
     button(sigX, 8.0f, 52.0f, 28.0f, text, false, true, kAccent);
     region(sigX, 8.0f, 52.0f, 28.0f, [this, sigX](const Press&) {
@@ -1037,17 +1037,11 @@ void RackWidget::drawDock() {
         m.items.push_back(MenuItem{"MIDI 1.0 (note numbers)", [this, addX, top] { newSequence(MidiProtocol::Midi1, addX, top + kDockHeadH); }});
         openMenu(std::move(m));
     });
-    // + Looper, and the looper switch (in the rig: the same in every song).
-    const float looperX = addX - 8.0f - 96.0f, switchX = looperX - 8.0f - 120.0f;
+    // + Looper (its switch is in each looper's row).
+    const float looperX = addX - 8.0f - 96.0f;
     button(looperX, top + 3.0f, 96.0f, 22.0f, "+ Looper", false, true, kAccent);
     region(looperX, top + 3.0f, 96.0f, 22.0f,
            [this, looperX, top](const Press&) { newLooper(looperX, top + kDockHeadH); });
-    const bool blink = std::fmod(ui::nowSeconds(), 0.5) < 0.25;
-    button(switchX, top + 3.0f, 120.0f, 22.0f, "Looper switch",
-           view.looperSwitchLearning ? blink : !view.looperSwitch.empty(), true,
-           view.looperSwitchLearning || !view.looperSwitchConnected ? kAmber : kAccent);
-    region(switchX, top + 3.0f, 120.0f, 22.0f,
-           [this, switchX, top](const Press&) { openLooperSwitchMenu(switchX, top + kDockHeadH); });
     button(stopX, top + 3.0f, 80.0f, 22.0f, "Stop all", false, !view.sequences.empty(), kAccent);
     region(stopX, top + 3.0f, 80.0f, 22.0f, [this](const Press&) { controller.stopAllSequences(); });
 
@@ -1206,10 +1200,9 @@ void RackWidget::drawSequenceRow(const SequenceRowModel& seq, float y) {
            [this, id = seq.id, repeat = seq.repeat](const Press&) { controller.setSequenceRepeat(id, !repeat); });
     x += 70.0f;
     // MIDI triggers: lit when it has some, blinking amber while learning one.
-    button(x, y + 10.0f, 50.0f, 24.0f, "MIDI", seq.learning ? blinkOn : !seq.triggers.empty(), true,
-           seq.learning ? kAmber : kAccent);
-    region(x, y + 10.0f, 50.0f, 24.0f, [this, seq, x, y](const Press&) { openTriggerMenu(seq, x, y + 36.0f); });
-    x += 56.0f;
+    midiButton(x, y + 10.0f, kMidiW, 24.0f, seq.learning ? blinkOn : !seq.triggers.empty(), seq.learning ? kAmber : kAccent);
+    region(x, y + 10.0f, kMidiW, 24.0f, [this, seq, x, y](const Press&) { openTriggerMenu(seq, x, y + 36.0f); });
+    x += kMidiW + 6.0f;
     const float rx = std::max(x + 8.0f, width() - kPad - kRemoveSize), ry = y + (kSeqRowH - kRemoveSize) / 2;
     removeButton(rx, ry, kRemoveSize);
     region(rx, ry, kRemoveSize, kRemoveSize, [this, id = seq.id, name = seq.name, rx, ry](const Press&) {
@@ -1385,6 +1378,14 @@ void RackWidget::drawLooperRow(const LooperRowModel& l, float y) {
     region(x, y + 10.0f, 50.0f, 24.0f,
            [this, id = l.id, on = l.cleanup](const Press&) { controller.setLooperCleanup(id, !on); });
     x += 56.0f;
+    // The looper switch: one, in the rig, driving the current looper; the
+    // same in every looper's row. Lit when learned, amber if its input isn't
+    // connected, blinking amber while learning.
+    const RackViewModel& view = controller.view();
+    midiButton(x, y + 10.0f, kMidiW, 24.0f, view.looperSwitchLearning ? blinkOn : !view.looperSwitch.empty(),
+               view.looperSwitchLearning || !view.looperSwitchConnected ? kAmber : kAccent);
+    region(x, y + 10.0f, kMidiW, 24.0f, [this, x, y](const Press&) { openLooperSwitchMenu(x, y + 36.0f); });
+    x += kMidiW + 6.0f;
 
     // Remove: the red X at the right, without asking (what it recorded isn't saved).
     const float rx = std::max(x + 8.0f, width() - kPad - kRemoveSize), ry = y + (kSeqRowH - kRemoveSize) / 2;
@@ -1458,7 +1459,7 @@ void RackWidget::openLooperSwitchMenu(float x, float y) {
     m.x     = x;
     m.y     = y;
     m.w     = 380.0f;
-    m.title = view.looperSwitchLearning ? "Press the footswitch..." : "Looper switch (the current looper; in the rig)";
+    m.title = view.looperSwitchLearning ? "Press the footswitch..." : "Looper switch: drives the current looper (all songs)";
     if (view.looperSwitchLearning) m.items.push_back(MenuItem{"Stop learning", [this] { controller.cancelLearn(); }});
     else m.items.push_back(MenuItem{"Learn (a momentary switch, for hold)", [this] { controller.learnLooperSwitch(); }});
     if (!view.looperSwitch.empty())
