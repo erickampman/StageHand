@@ -71,7 +71,8 @@ Repo: StageHand (C++20, CMake + Ninja). Work on branch rack-view; open a PR into
 rack-view when done.
 
 Setup: git submodule update --init (external/clap). Build deps: cmake, ninja-build,
-pkg-config, libjack-jackd2-dev, libasound2-dev (alsa >= 1.2.10), libx11-dev, libgl-dev.
+pkg-config, libjack-jackd2-dev, libasound2-dev (alsa >= 1.2.10), libx11-dev, libgl-dev
+(libxrandr-dev optional: a new window fits its monitor).
 Build: cmake -B build -G Ninja && cmake --build build && (cd build && ctest).
 There is no audio, MIDI or display here: rely on the test suites (they use fakes in
 tests/).

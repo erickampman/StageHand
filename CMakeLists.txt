@@ -19,6 +19,7 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(JACK REQUIRED IMPORTED_TARGET jack)
 pkg_check_modules(ALSA REQUIRED IMPORTED_TARGET alsa>=1.2.10)
 pkg_check_modules(X11 REQUIRED IMPORTED_TARGET x11)   # plugin editor windows (M4)
+pkg_check_modules(XRANDR IMPORTED_TARGET xrandr)       # optional: the monitor a window opens on
 find_package(Threads REQUIRED)
 
 # --- CLAP SDK: header-only, vendored submodule pinned to PMU's tag (1.2.10) ----
@@ -68,7 +69,8 @@ add_library(stagehand-session STATIC
     src/Session/RackFile.cpp
     src/Session/RigFile.cpp
     src/Session/Session.cpp
-    src/Session/SetlistFile.cpp)
+    src/Session/SetlistFile.cpp
+    src/Session/WindowState.cpp)
 target_link_libraries(stagehand-session
     PUBLIC  stagehand-engine
     PRIVATE nlohmann-json stagehand-warnings)
@@ -98,10 +100,17 @@ add_library(stagehand-ui STATIC
     src/Ui/RackUi.cpp
     src/Ui/RackWidget.cpp
     src/Ui/UiWidget.cpp
-    src/Ui/SequenceEditorWidget.cpp)
+    src/Ui/SequenceEditorWidget.cpp
+    src/Ui/Monitor.cpp)
 target_link_libraries(stagehand-ui
     PUBLIC  stagehand-app
-    PRIVATE dgl-opengl dgl-opengl-definitions stagehand-warnings)
+    PRIVATE dgl-opengl dgl-opengl-definitions PkgConfig::X11 stagehand-warnings)
+if(XRANDR_FOUND)
+    target_compile_definitions(stagehand-ui PRIVATE STAGEHAND_HAVE_XRANDR)
+    target_link_libraries(stagehand-ui PRIVATE PkgConfig::XRANDR)
+else()
+    message(STATUS "xrandr not found: a new window fits the whole X screen, not its monitor")
+endif()
 
 # --- The app --------------------------------------------------------------------
 add_executable(stagehand

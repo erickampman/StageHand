@@ -19,8 +19,11 @@ class RackUi {
 public:
     // Opens and shows the window. Null (after printing why) if there's no
     // display to open it on.
-    static std::unique_ptr<RackUi> open(RackController& controller);
-    ~RackUi();   // closes the window; tears DGL down in the order it requires
+    // It opens at the size kept in `windowStatePath` (the last run's, if any;
+    // empty: none) or one that fits the rack, within the monitor it opens on;
+    // its size is kept there as it closes.
+    static std::unique_ptr<RackUi> open(RackController& controller, const std::string& windowStatePath = {});
+    ~RackUi();   // keeps its size, closes the window; tears DGL down in the order it requires
 
     RackUi(const RackUi&)            = delete;
     RackUi& operator=(const RackUi&) = delete;

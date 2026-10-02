@@ -13,6 +13,7 @@
 #include "Check.h"
 #include "Session/RackFile.h"
 #include "Session/SetlistFile.h"
+#include "Session/WindowState.h"
 
 using namespace stagehand;
 namespace fs = std::filesystem;
@@ -147,6 +148,28 @@ void testLastPosition(const fs::path& dir) {
     CHECK(defaultLastPositionPath().find("/.local/state/stagehand/last.json") != std::string::npos);
 }
 
+// The rack window's size, kept between runs, and fitted to the monitor.
+void testWindowSize(const fs::path& dir) {
+    const std::string path = (dir / "state/stagehand/window.json").string();
+    WindowSize        s;
+    CHECK(!loadWindowSize(path, s));
+    CHECK(saveWindowSize(path, WindowSize{1180.4, 905.6}));
+    CHECK(loadWindowSize(path, s) && s == (WindowSize{1180.0, 906.0}));
+    writeText(dir / "state/stagehand/window.json", R"({"width": 0, "height": 700})");
+    CHECK(!loadWindowSize(path, s) && s == (WindowSize{1180.0, 906.0}));   // unchanged
+
+    setenv("XDG_STATE_HOME", "/x/state", 1);
+    CHECK(defaultWindowStatePath() == "/x/state/stagehand/window.json");
+    unsetenv("XDG_STATE_HOME");
+
+    const WindowSize minimum{930.0, 300.0};
+    CHECK(fitWindowSize({1100.0, 900.0}, minimum, {1920.0, 1080.0}) == (WindowSize{1100.0, 900.0}));
+    CHECK(fitWindowSize({1100.0, 1200.0}, minimum, {1920.0, 1080.0}) == (WindowSize{1100.0, 1080.0 * 0.92}));
+    CHECK(fitWindowSize({1600.0, 900.0}, minimum, {1366.0, 768.0}) == (WindowSize{1366.0 * 0.92, 768.0 * 0.92}));
+    CHECK(fitWindowSize({1100.0, 900.0}, minimum, {800.0, 200.0}) == minimum);         // never under the minimum
+    CHECK(fitWindowSize({1100.0, 1900.0}, minimum, {}) == (WindowSize{1100.0, 1900.0}));   // the monitor unknown
+}
+
 } // namespace
 
 int main() {
@@ -156,6 +179,7 @@ int main() {
     testFailures(dir);
     testPaths(dir);
     testLastPosition(dir);
+    testWindowSize(dir);
     fs::remove_all(dir);
     return test::finish("SetlistFile");
 }

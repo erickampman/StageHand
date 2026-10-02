@@ -11,6 +11,8 @@ cmake --build build -j16
 ```
 
 The binary is `build/stagehand`. The tests run with `ctest` from `build/`.
+With `libxrandr-dev` installed (optional), the rack window opens sized for the
+monitor it's on; without it, for the whole X screen (every monitor together).
 
 ## Audio: pw-jack
 

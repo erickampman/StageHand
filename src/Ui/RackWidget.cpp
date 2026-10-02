@@ -154,6 +154,12 @@ float RackWidget::dockHeight() {
     const float most = std::max(kDockHeadH + kInputsH + kSeqRowH, (height() - topH() - kStatusH) * 0.55f);
     return std::min(want, most);
 }
+float RackWidget::wantedHeight() const {
+    const RackViewModel& v    = controller.view();
+    const auto           rows = static_cast<float>(std::clamp<std::size_t>(v.rows.size(), 3, 10));
+    const auto sources = static_cast<float>(std::clamp<std::size_t>(v.sequences.size() + v.loopers.size(), 1, 4));
+    return topH() + rows * kRowH + rigHeight() + kDockHeadH + kInputsH + sources * kSeqRowH + kStatusH;
+}
 float RackWidget::dockTop() {
     return height() - kStatusH - dockHeight();
 }
