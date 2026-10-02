@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <set>
 #include <memory>
 #include <optional>
 #include <string>
@@ -48,6 +49,16 @@ public:
         MidiSourceHandle handle = kInvalidMidiSource;
     };
     const std::vector<OpenInput>& openInputs() const noexcept { return inputs; }
+    bool sourceOpen(const MidiSourceRef& ref) const;    // opened already (addOpenSource or resolved)
+    bool inputConnected(const MidiSourceRef& ref) const;  // an open input whose device hasn't left
+
+    // MIDI devices came or went (MidiInput::changes() moved): each opened
+    // device is synced (one that came back is heard again, as the same
+    // input), and every source and trigger resolves again: what names a
+    // device that left is "not connected" and hears nothing from it, and
+    // what names one that's there now (back, or new) resolves to it, opening
+    // it. Committed at the next flush(). Returns what changed, for notices.
+    std::vector<std::string> syncMidi();
 
     struct LoadReport {
         std::vector<std::string> warnings;   // missing plugins, unconnected devices, ...
@@ -345,6 +356,7 @@ private:
     std::string                             name;
     std::vector<Slot>                       loaded;
     std::map<std::string, MidiSourceHandle> openSources;   // "device:<id>" / "virtual:<name>"
+    std::set<std::string>                   lostSources;   // open devices that left (syncMidi()), by key
     std::vector<OpenInput>                  inputs;        // the same, in order
     double                                  sampleRate     = 0.0;
     double                                  tempo          = 120.0;

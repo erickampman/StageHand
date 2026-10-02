@@ -142,6 +142,25 @@ The inputs opened, and where each landed, are printed at startup.
 Rack sources and sequence triggers name devices by their `--list-midi` id,
 for example `KeyLab 88:KeyLab 88 MIDI 1`.
 
+### MIDI devices coming and going
+
+StageHand follows the ALSA sequencer's announcements (added 2026-10-02), so
+plugging and unplugging needs no restart:
+
+- **A device plugged in while it runs** is opened as the ones there at start
+  are: hardware by default, everything with `--midi all`, nothing new when
+  `--midi` named the inputs. Rows on All inputs hear it; anything naming it
+  that showed "(not connected)" (a row's input, a looper, a sequence or
+  transport trigger, the setlist's triggers, the looper switch) connects.
+- **A device unplugged** shows "(disconnected)" on its input chip, in amber,
+  and what names it shows "(not connected)": it hears nothing, as before, but
+  now it says so.
+- **Plugged back in** (the same `--list-midi` id), it's subscribed again on
+  the same input, and everything that used it hears it again.
+- A notice says what changed. Other apps' new ports aren't opened (unless
+  `--midi all`); pick one in a row's input menu, or connect it to the
+  "From other apps" inputs, which take connections at any time.
+
 ## Keys
 
 In the rack window and in plugin editor windows:

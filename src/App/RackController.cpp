@@ -73,7 +73,8 @@ RackController::RackController(Session& runningSession, Engine& runningEngine, M
                                PluginFactory& pluginFactory, Config appConfig)
     : session(runningSession), engine(runningEngine), midi(midiInput), factory(pluginFactory),
       config(std::move(appConfig)) {
-    target = config.saveTarget;
+    target      = config.saveTarget;
+    midiChanges = midi.changes();   // what's open now was opened by the app
     useRig({});   // the default rig, until a setlist names another
     routeClick(true);
     refreshSources();
@@ -102,6 +103,10 @@ void RackController::service() {
 void RackController::tick(double now) {
     ticking = true;
     if (Engine::Learned learned; !learningId.empty() && engine.takeLearned(learned)) finishLearn(learned);
+    if (const std::uint64_t changes = midi.changes(); changes != midiChanges) {
+        midiChanges = changes;
+        midiChanged();
+    }
     refreshSongs(now);
     takeSetlistRequests();
     prepareAhead();   // before flush(): a switch commits the new rack's graph, and nothing else is pending
@@ -286,6 +291,7 @@ void RackController::buildDock(double now) {
         chip.label     = sourceLabel(input.ref);
         chip.isVirtual = input.ref.kind == MidiSourceRef::Kind::Virtual;
         chip.protocol  = sourceProtocolOf(input.ref);
+        chip.connected = session.inputConnected(input.ref);
         auto& [lastCount, litUntil] = inputActivity[input.handle];
         if (const std::uint32_t count = engine.sourceActivity(input.handle); count != lastCount) {
             lastCount = count;
@@ -521,6 +527,20 @@ std::vector<std::string> RackController::takeNotices() {
 }
 
 // --- sources -----------------------------------------------------------------------
+
+void RackController::midiChanged() {
+    if (config.openNewInputs)
+        for (const MidiSourceInfo& info : midi.enumerate()) {
+            const MidiSourceRef ref{MidiSourceRef::Kind::Device, info.id};
+            if ((!info.isHardware && !config.openNewSoftware) || session.sourceOpen(ref)) continue;
+            const MidiSourceHandle handle = midi.open(info.id);
+            if (handle == kInvalidMidiSource) continue;
+            session.addOpenSource(ref, handle);
+            notice("MIDI device '" + info.id + "' connected");
+        }
+    for (const std::string& change : session.syncMidi()) notice(change);
+    refreshSources();
+}
 
 void RackController::refreshSources() {
     enumerated = midi.enumerate();

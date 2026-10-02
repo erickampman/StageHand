@@ -69,6 +69,13 @@ std::unique_ptr<AlsaSeqInput> AlsaSeqInput::create(const std::string& clientName
         input->clientId[c] = snd_seq_client_id(input->seq[c]);
     }
 
+    // Hotplug: the system announces clients and ports starting and exiting on
+    // its announce port; a private port of ours hears them (changes()).
+    if (const int port = input->createPort(kMidi1Client, "announcements", /*exported=*/false);
+        port < 0 || snd_seq_connect_from(input->seq[kMidi1Client], port, SND_SEQ_CLIENT_SYSTEM,
+                                         SND_SEQ_PORT_SYSTEM_ANNOUNCE) < 0)
+        std::fprintf(stderr, "AlsaSeqInput: can't follow MIDI devices coming and going; restart to see new ones\n");
+
     input->wakeFd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
     if (input->wakeFd < 0) {
         std::fprintf(stderr, "AlsaSeqInput: eventfd failed\n");
@@ -127,7 +134,42 @@ MidiSourceHandle AlsaSeqInput::open(const std::string& sourceId) {
         snd_seq_delete_simple_port(seq[c], port);
         return kInvalidMidiSource;
     }
-    return registerPort(c, port, /*isVirtual=*/false);
+    const MidiSourceHandle handle = registerPort(c, port, /*isVirtual=*/false);
+    OpenPort&              opened = openPorts[handle];
+    opened.sourceId               = sourceId;
+    opened.sourceClient           = source.client;
+    opened.sourcePort             = source.port;
+    return handle;
+}
+
+bool AlsaSeqInput::sync(MidiSourceHandle source) {
+    const auto it = openPorts.find(source);
+    if (it == openPorts.end()) return false;
+    OpenPort& open = it->second;
+    if (open.isVirtual) return true;
+    snd_seq_t* const s = seq[open.clientIndex];
+
+    // Still subscribed? A device that leaves takes its subscriptions with it.
+    snd_seq_port_subscribe_t* subscription = nullptr;
+    snd_seq_port_subscribe_alloca(&subscription);
+    snd_seq_addr_t sender{}, dest{};
+    sender.client = static_cast<unsigned char>(open.sourceClient);
+    sender.port   = static_cast<unsigned char>(open.sourcePort);
+    dest.client   = static_cast<unsigned char>(clientId[open.clientIndex]);
+    dest.port     = static_cast<unsigned char>(open.port);
+    snd_seq_port_subscribe_set_sender(subscription, &sender);
+    snd_seq_port_subscribe_set_dest(subscription, &dest);
+    if (open.sourceClient >= 0 && snd_seq_get_port_subscription(s, subscription) == 0) return true;
+
+    // Gone: back under the same id (usually at a new address)? Then our port
+    // subscribes to it again, and the handle hears it as before.
+    open.sourceClient = open.sourcePort = -1;
+    Source found;
+    if (!findSource(open.sourceId, found)) return false;
+    if (snd_seq_connect_from(s, open.port, found.client, found.port) < 0) return false;
+    open.sourceClient = found.client;
+    open.sourcePort   = found.port;
+    return true;
 }
 
 MidiSourceHandle AlsaSeqInput::openVirtual(const std::string& portName, MidiProtocol protocol) {
@@ -281,7 +323,20 @@ void AlsaSeqInput::drain(int clientIndex) {
         if (result < 0) return;
 
         const Nanoseconds captured = monotonicNow();
-        if (!snd_seq_ev_is_ump(event)) continue;   // non-MIDI sequencer events
+        if (!snd_seq_ev_is_ump(event)) {   // non-MIDI sequencer events: hotplug announcements counted
+            switch (event->type) {
+                case SND_SEQ_EVENT_CLIENT_START:
+                case SND_SEQ_EVENT_CLIENT_EXIT:
+                case SND_SEQ_EVENT_PORT_START:
+                case SND_SEQ_EVENT_PORT_EXIT:
+                case SND_SEQ_EVENT_PORT_CHANGE:
+                case SND_SEQ_EVENT_PORT_UNSUBSCRIBED:
+                    announced.fetch_add(1, std::memory_order_release);
+                    break;
+                default: break;
+            }
+            continue;
+        }
 
         const int port = event->dest.port;
         if (port < 0 || port >= kMaxPorts) continue;

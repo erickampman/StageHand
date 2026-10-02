@@ -51,16 +51,28 @@ public:
     void                        setSink(MidiSink*) override {}
     std::vector<MidiSourceInfo> enumerate() override { return sources; }
     MidiSourceHandle            open(const std::string& id) override {
-        if (id != "Keys:Keys MIDI 1") return kInvalidMidiSource;
+        if (id == "Keys:Keys MIDI 1") {
+            opened.push_back(id);
+            return 42;
+        }
+        if (present.count(id) == 0) return kInvalidMidiSource;
         opened.push_back(id);
-        return 42;
+        return nextHandle++;
     }
     MidiSourceHandle openVirtual(const std::string&, MidiProtocol) override { return kInvalidMidiSource; }
     void             close(MidiSourceHandle) override {}
+    std::uint64_t    changes() const override { return changeCount; }
+    bool             sync(MidiSourceHandle source) override { return unplugged.count(source) == 0; }
     const char*      name() const override { return "fake"; }
 
     std::vector<std::string>    opened;
     std::vector<MidiSourceInfo> sources;   // what enumerate() lists
+    // Hotplug: more devices open() finds, opened ones whose device left, and
+    // the announcement count (bump it after changing either).
+    std::set<std::string>       present;
+    std::set<MidiSourceHandle>  unplugged;
+    std::uint64_t               changeCount = 0;
+    MidiSourceHandle            nextHandle  = 100;
 };
 
 class NullHost final : public HostServices {

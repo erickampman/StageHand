@@ -45,6 +45,8 @@ public:
     MidiSourceHandle            openVirtual(const std::string& name,
                                             MidiProtocol protocol) override;
     void                        close(MidiSourceHandle source) override;
+    std::uint64_t               changes() const override { return announced.load(std::memory_order_acquire); }
+    bool                        sync(MidiSourceHandle source) override;
     const char*                 name() const override { return "ALSA sequencer"; }
 
     // --- diagnostics ---
@@ -63,9 +65,12 @@ private:
         int            port   = -1;
     };
     struct OpenPort {
-        int  clientIndex = 0;
-        int  port        = -1;
-        bool isVirtual   = false;
+        int         clientIndex = 0;
+        int         port        = -1;
+        bool        isVirtual   = false;
+        std::string sourceId;          // what open() was given, to find it again
+        int         sourceClient = -1;   // where it's subscribed from now
+        int         sourcePort   = -1;
     };
 
     AlsaSeqInput() = default;
@@ -95,6 +100,9 @@ private:
     std::atomic<bool>          quit{false};
     bool                       rtPriority = false;
     std::atomic<std::uint64_t> overruns{0};
+    // System announcements (clients and ports starting and exiting), counted
+    // on the MIDI thread: changes().
+    std::atomic<std::uint64_t> announced{0};
 };
 
 } // namespace stagehand

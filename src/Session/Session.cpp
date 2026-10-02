@@ -47,6 +47,66 @@ void Session::addOpenSource(const MidiSourceRef& ref, MidiSourceHandle handle) {
     if (openSources.emplace(keyOf(ref), handle).second) inputs.push_back(OpenInput{ref, handle});
 }
 
+bool Session::sourceOpen(const MidiSourceRef& ref) const {
+    return openSources.count(keyOf(ref)) != 0;
+}
+
+bool Session::inputConnected(const MidiSourceRef& ref) const {
+    return lostSources.count(keyOf(ref)) == 0;
+}
+
+std::vector<std::string> Session::syncMidi() {
+    std::vector<std::string> changes;
+    for (const OpenInput& input : inputs) {
+        if (input.ref.kind != MidiSourceRef::Kind::Device) continue;
+        const std::string key = keyOf(input.ref);
+        const bool        now = midi.sync(input.handle);
+        if (now == (lostSources.count(key) == 0)) continue;
+        if (now) {
+            lostSources.erase(key);
+            changes.push_back("MIDI device '" + input.ref.name + "' is back");
+        } else {
+            lostSources.insert(key);
+            changes.push_back("MIDI device '" + input.ref.name + "' disconnected");
+        }
+    }
+
+    // Everything resolves again; only what changed is committed.
+    for (Slot& slot : loaded) {
+        if (!slot.plugin) continue;
+        const MidiSourceHandle before = slot.source;
+        resolveSource(slot);
+        if (slot.source != before) graphDirty = true;
+    }
+    bool sequencesChanged = false;
+    for (LooperEntry& entry : looperList) {
+        const MidiSourceHandle before = entry.input;
+        resolveLooper(entry);
+        sequencesChanged = sequencesChanged || entry.input != before;
+    }
+    for (SequenceEntry& entry : sequenceList) {
+        const std::vector<MidiSourceHandle> before = entry.triggerSources;
+        resolveTriggers(entry);
+        sequencesChanged = sequencesChanged || entry.triggerSources != before;
+    }
+    {
+        const std::vector<MidiSourceHandle> before      = transportTriggerSources;
+        const MidiSourceHandle              startBefore = startOnNoteHandle;
+        resolveTransport();
+        sequencesChanged = sequencesChanged || transportTriggerSources != before || startOnNoteHandle != startBefore;
+    }
+    const bool                          wasDirty       = sequencesDirty;
+    const std::vector<MidiSourceHandle> setlistBefore  = setlistSources;
+    const MidiSourceHandle              switchBefore   = looperSwitchSource;
+    const bool                          rigWasModified = rigDirty;
+    setSetlistTriggers(std::vector<SetlistTrigger>(setlistControls));
+    setLooperSwitch(rigState.saved.looperSwitch);
+    rigDirty         = rigWasModified;   // the same switch: not an edit
+    sequencesChanged = sequencesChanged || setlistSources != setlistBefore || looperSwitchSource != switchBefore;
+    sequencesDirty   = wasDirty || sequencesChanged;
+    return changes;
+}
+
 bool Session::load(const Rack& rack, double rate, LoadReport& report) {
     return activate(prepare(rack, rate), report);
 }
@@ -929,7 +989,11 @@ MidiSourceHandle Session::resolve(const MidiSourceRef& ref, std::string& problem
         return kInvalidMidiSource;
     }
     const std::string key = keyOf(ref);
-    if (const auto it = openSources.find(key); it != openSources.end()) return it->second;
+    if (const auto it = openSources.find(key); it != openSources.end()) {
+        if (lostSources.count(key) == 0) return it->second;
+        problem = "MIDI device '" + ref.name + "' isn't connected";   // it left (syncMidi())
+        return kInvalidMidiSource;
+    }
     if (ref.kind == MidiSourceRef::Kind::Device) {
         if (const MidiSourceHandle handle = midi.open(ref.name); handle != kInvalidMidiSource) {
             addOpenSource(ref, handle);

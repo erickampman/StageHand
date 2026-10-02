@@ -1079,14 +1079,15 @@ void RackWidget::drawDock() {
     save();
     scissor(0, iy, width() - kPad, kInputsH);
     for (const InputChipModel& chip : view.inputs) {
-        const std::string text = chip.label;
+        // A device that left: amber, until it's back.
+        const std::string text = chip.label + (chip.connected ? "" : " (disconnected)");
         const float       w    = labelWidth(text, 12.0f) + 30.0f;
         box(x, iy + 6.0f, w, 22.0f, kTrack, 11.0f);
         beginPath();
         circle(x + 11.0f, iy + 17.0f, 4.0f);
-        fill(chip.active ? kGreen : kBarBg);
+        fill(!chip.connected ? kAmber : chip.active ? kGreen : kBarBg);
         NanoVG::fill();
-        label(x + 21.0f, iy + 17.0f, text, 12.0f, kText);
+        label(x + 21.0f, iy + 17.0f, text, 12.0f, chip.connected ? kText : kAmber);
         x += w + 8.0f;
     }
     if (view.inputs.empty()) label(x, iy + kInputsH / 2, "no MIDI inputs open", 12.0f, kDim);
