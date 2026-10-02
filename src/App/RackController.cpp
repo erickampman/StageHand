@@ -88,6 +88,7 @@ void RackController::service() {
     engine.collect();
     for (const Session::Slot& slot : session.slots())
         if (slot.plugin) slot.plugin->idle();
+    for (const SlotConfig& slot : session.drainingSlots()) slot.plugin->idle();
     for (const auto& [bundle, ahead] : prepared) ahead.rack->idle();
 }
 

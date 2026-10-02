@@ -1,6 +1,6 @@
 # StageHand — Setlists and rack switching (design)
 
-Proposed 2026-10-01; milestones 1 and 2 built (notes under "Proposed
+Proposed 2026-10-01; milestones 1 to 3 built (notes under "Proposed
 milestones"). A setlist is an ordered list of racks
 to step through on stage. It builds on decisions already recorded:
 - domain-model.md, "Presets vs Racks": "A setlist is an ordered list of
@@ -502,6 +502,22 @@ setlist, Open and New still prepare at once, and a switch still saves first
 dot when the next song is prepared. Prepared racks are dropped if the sample
 rate changes. Tests: `testPrepare` (Session), `testPreparedRacks`
 (controller), with `Engine::graphCommits()` counting the commits.
+
+**Milestone 3 implemented (2026-10-02):** `Session::activate()` keeps the old
+rack's slots in the switch's graph as draining ones (`SlotConfig::draining`;
+the Session's `drainingSlots()`, with no rack identity). The engine sends a
+draining slot everything but note-ons (a held key's note-off still comes
+through the held-note table), keeps its gain and its sends to the rig, and
+sets `SlotRuntime::drained` once its output has been quiet for
+`kQuietSeconds`, or after `Engine::kMaxDrainSeconds` (8 s); `Session::flush()`
+then commits a graph without it. A further switch mutes the rack still
+draining, so at most one rings out. The engine tracks the sustain, sostenuto
+and soft pedals held on each live input, and sends them to every slot new in
+an adopted graph, before anything else in that block. The old rack's
+sequences end with note-offs when the new sequence set is adopted. Open and
+New ring out too. `OldRack::Cut` (mute instead of draining) is there for the
+switch settings; the controller uses ring out until milestone 5. Tests:
+`testDraining` in the engine and Session tests.
 
 ## Open questions
 

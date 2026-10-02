@@ -88,11 +88,16 @@ struct SlotRuntime {
     GainRamp gain;
     GainRamp send[kBusCount] = {GainRamp(0.0f), GainRamp(0.0f)};
 
-    // --- audio thread only: muting ---
+    // Audio thread writes, main thread reads: a draining slot (SlotConfig::draining)
+    // has finished ringing out; the next graph can leave it out.
+    std::atomic<bool> drained{false};
+
+    // --- audio thread only: muting and draining ---
     bool          muteApplied = false;   // its notes released for this mute
     bool          suspended   = false;
-    std::uint64_t quietFrames = 0;       // muted and at gain 0: frames of quiet output in a row
+    std::uint64_t quietFrames = 0;       // muted at gain 0, or draining: frames of quiet output in a row
     std::uint64_t mutedFrames = 0;       // muted and at gain 0, in all
+    std::uint64_t drainFrames = 0;       // draining, in all
 };
 
 } // namespace stagehand

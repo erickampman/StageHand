@@ -30,7 +30,9 @@ class PreparedRack;
 // committed, and the old plugins stay alive (held by the old graph) until the
 // audio thread has stopped them and Engine::collect() retires that graph. Edits
 // rely on the same rule: a removed or disabled plugin keeps running in the
-// current graph until the next one is adopted.
+// current graph until the next one is adopted. At a switch the old rack's
+// slots stay in the graph a while, draining (activate()), and leave it once
+// they've rung out.
 class Session {
 public:
     Session(PluginFactory& pluginFactory, HostServices& hostServices, MidiInput& midiInput,
@@ -73,7 +75,17 @@ public:
     // Make it the running rack, finishing its preparation first if need be:
     // sources and triggers resolve, and one graph is committed (with the rig's
     // effects, which stay loaded). load()'s rules and result otherwise.
-    bool activate(std::unique_ptr<PreparedRack> prepared, LoadReport& report);
+    // The rack it replaces (docs/setlists.md, section 3): with RingOut its
+    // slots stay in that graph, draining (SlotConfig::draining), so tails and
+    // held notes ring on; with Cut they're muted (notes released, faded). Its
+    // sequences end with note-offs. A rack still draining from an earlier
+    // switch is muted, so at most one rack rings out. flush() removes each
+    // slot once it's done.
+    enum class OldRack { RingOut, Cut };
+    bool activate(std::unique_ptr<PreparedRack> prepared, LoadReport& report, OldRack oldRack = OldRack::RingOut);
+    // The earlier racks' slots still sounding: no rack identity, just the
+    // plugin, its runtime and filter.
+    const std::vector<SlotConfig>& drainingSlots() const noexcept { return draining; }
 
     // The running setup as a Rack, including edits, each plugin's state freshly
     // saved. Placeholders keep what they were loaded with.
@@ -224,7 +236,8 @@ public:
     const std::string& startOnNoteIssue() const noexcept { return startOnNoteProblem; }
     double        sequencePosition(const std::string& id) const noexcept;   // units into the loop
 
-    // Commit the graph if a structural edit is pending. Call once per UI tick.
+    // Commit the graph if a structural edit is pending, or a draining slot has
+    // finished (it's left out). Call once per UI tick.
     void flush();
     bool flushPending() const noexcept { return graphDirty || sequencesDirty; }
 
@@ -234,7 +247,7 @@ public:
     void markModified() noexcept { dirty = true; }
     void markSaved() noexcept { dirty = false; }
 
-    // Stop running the rack: commits an empty graph. Plugins stay alive until
+    // Stop running the rack: commits an empty graph (draining slots go too). Plugins stay alive until
     // the Session is destroyed or another rack is loaded; follow the engine's
     // shutdown order (wait for Engine::committedGraphAdopted(), stop the
     // backend) before destroying the Session.
@@ -259,6 +272,7 @@ private:
                                                 std::vector<MidiSourceHandle>&      handles);
     std::vector<std::string> resolveTransport();
     void             commitGraph();
+    SlotConfig       configOf(const Slot& slot) const;   // for the graph; the sequences that play into it included
     void             commitSequences();
     SequenceEntry*   findSequence(const std::string& id) noexcept;
     static float     targetGainOf(const RackSlot& saved) noexcept;
@@ -291,6 +305,7 @@ private:
     bool                                    rigDirty   = false;
     double                                  rigRate    = 0.0;   // the rig's effects' sample rate
     LoadedRig                               rigState;
+    std::vector<SlotConfig>                 draining;   // drainingSlots()
 };
 
 // A rack made ready to switch to (Session::prepare()): its plugins created,
