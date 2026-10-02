@@ -1138,6 +1138,89 @@ void testSetlistTriggers() {
     fs::remove_all(dir);
 }
 
+// The rig's controls (docs/rig.md, milestone 3): the view model's buses and
+// sends, edits patched into it at once and marking the rig (or, for a send,
+// the rack) modified, choosing an effect, the return meter, and a bus
+// effect's editor staying open when the rack changes.
+void testRigControls() {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / "stagehand-rig-controls-test";
+    fs::remove_all(dir);
+    stagehand::Rig stage;
+    stage.name = "Stage";
+    RigEffect verb;
+    verb.plugin             = installedPlugin("old", "/clap/Old.clap");
+    stage.buses[0].effects[0] = verb;
+    RigEffect gone;
+    gone.plugin             = installedPlugin("gone", "/clap/Gone.clap");
+    stage.buses[1].effects[1] = gone;
+    const std::string rigPath = (dir / "Stage.rig").string();
+    CHECK(saveRig(rigPath, stage).ok);
+
+    Rig rig;
+    rig.factory.withEditor = {"old"};
+    Rack rack;
+    RackSlot keys = slot("keys", "synth", "/clap/Synth.clap");
+    keys.sendDb[0] = -6.0f;
+    rack.slots     = {keys};
+    Session::LoadReport report;
+    rig.session->load(rack, 48000.0, report);
+    RackController::Config config = rig.config();
+    config.defaultRigPath         = rigPath;
+    RackController       controller(*rig.session, *rig.engine, rig.midi, rig.factory, config);
+    const RackViewModel& view = controller.view();
+
+    CHECK(view.rig.loaded && view.rig.name == "Stage" && !view.rig.modified);
+    CHECK(view.rig.buses[0].name == "A" && view.rig.buses[0].effects[0].name == "old" &&
+          view.rig.buses[0].effects[0].hasEditor && view.rig.buses[0].effects[1].name.empty());
+    CHECK(view.rig.buses[1].effects[1].name == "gone" && !view.rig.buses[1].effects[1].problem.empty());
+    CHECK(view.rows.size() == 1 && view.rows[0].sendDb[0] == -6.0f && !view.rows[0].sendDb[1]);
+
+    // Edits show at once (before the next tick), as a fader's do.
+    rig.session->markSaved();
+    controller.setSendDb("keys", 1, -12.0f);
+    CHECK(view.rows[0].sendDb[1] == -12.0f && rig.session->modified() && !rig.session->rigModified());
+    controller.setSendDb("keys", 0, std::nullopt);
+    CHECK(!view.rows[0].sendDb[0]);
+    controller.setReturnDb(0, -3.0f);
+    controller.setBusMuted(1, true);
+    controller.setBusOutput(1, 2);
+    controller.setMasterDb(-1.5f);
+    CHECK(view.rig.buses[0].returnDb == -3.0f && view.rig.buses[1].muted && view.rig.buses[1].firstOutput == 2 &&
+          view.rig.masterDb == -1.5f);
+    controller.tick(1.0);
+    CHECK(view.rig.modified && view.rig.buses[0].returnDb == -3.0f && view.rig.masterDb == -1.5f);
+
+    // Choosing effects: one that loads, one that doesn't (a notice; unchanged).
+    const PluginDescriptor bass = installedPlugin("bass", "/clap/Bass.clap");
+    controller.setBusEffect(1, 0, &bass);
+    const PluginDescriptor nothing = installedPlugin("nothing", "/clap/Nothing.clap");
+    controller.takeNotices();
+    controller.setBusEffect(1, 1, &nothing);
+    CHECK(controller.takeNotices().size() == 1);
+    controller.tick(1.1);
+    CHECK(view.rig.buses[1].effects[0].name == "bass" && view.rig.buses[1].effects[1].name == "gone");
+
+    // The return meter: bus A's effect outputs a constant.
+    runBlock(*rig.engine);
+    controller.tick(1.2);
+    CHECK(view.rig.buses[0].meterDb[0] > -60.0f);
+
+    // A bus effect's editor stays open when the rack changes; emptying its slot closes it.
+    controller.openBusEditor(0, 0);
+    controller.tick(1.3);
+    CHECK(*rig.editorsOpen == 1 && view.rig.buses[0].effects[0].editorOpen);
+    CHECK(controller.newRack());
+    CHECK(*rig.editorsOpen == 1);
+    controller.setBusEffect(0, 0, nullptr);
+    controller.tick(1.4);
+    CHECK(*rig.editorsOpen == 0 && view.rig.buses[0].effects[0].name.empty());
+
+    runBlock(*rig.engine);
+    rig.engine->collect();
+    fs::remove_all(dir);
+}
+
 } // namespace
 
 int main() {
@@ -1158,5 +1241,6 @@ int main() {
     testRigs();
     testPreparedRacks();
     testSetlistTriggers();
+    testRigControls();
     return test::finish("RackController");
 }

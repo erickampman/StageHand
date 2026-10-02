@@ -37,6 +37,8 @@ constexpr float kKeyBarX    = kPad + 16.0f;   // 128 keys at 1 logical pixel eac
 constexpr float kDockHeadH  = 28.0f;   // the sources dock: header, inputs row, sequence rows
 constexpr float kInputsH    = 34.0f;
 constexpr float kSeqRowH    = 44.0f;
+constexpr float kBusH       = 48.0f;   // a rig bus strip (docs/rig.md), between the rows and the dock
+constexpr float kSendW      = 46.0f;   // a row's send box (A, B), left of its fader
 
 float dbToPos(float db) {
     return std::clamp((db - kMinDb) / (kMaxDb - kMinDb), 0.0f, 1.0f);
@@ -131,7 +133,13 @@ float RackWidget::topH() const {
     return toolbarY() + kToolbarH;
 }
 float RackWidget::rowsHeight() {
-    return dockTop() - topH();
+    return rigTop() - topH();
+}
+float RackWidget::rigHeight() const {
+    return controller.view().rig.loaded ? kBusH * kRigBuses : 0.0f;
+}
+float RackWidget::rigTop() {
+    return dockTop() - rigHeight();
 }
 // The dock grows with its sequences, up to a little over half the space; past
 // that its sequence rows scroll.
@@ -152,8 +160,8 @@ float RackWidget::dockMaxScroll() {
 float RackWidget::rowY(std::size_t row) const {
     return topH() + static_cast<float>(row) * kRowH - scrollY;
 }
-float RackWidget::faderX0() const {
-    return outputX() + kPad + 30.0f + 14.0f;
+float RackWidget::faderX0() const {   // after M, and the send boxes when there's a rig
+    return outputX() + kPad + 30.0f + 14.0f + (controller.view().rig.loaded ? kSendW + 8.0f : 0.0f);
 }
 float RackWidget::faderX1() {   // the gain and output text, then the red X, to its right
     return outputX() + outputW() - kPad - 76.0f - 22.0f - kRemoveSize - 8.0f;
@@ -202,6 +210,7 @@ void RackWidget::draw() {
     resetScissor();
 
     // Drawn after the rows, so their regions cover rows scrolled under them.
+    if (view.rig.loaded) drawRig();
     drawDock();
     beginShift(toolbarY());   // the toolbar draws itself at the top
     drawToolbar();
@@ -463,7 +472,8 @@ void RackWidget::drawToolbar() {
     save();
     scissor(kPad, 0, kTransportX - kPad * 2, kToolbarH);
     label(kPad, kToolbarH / 2 - (view.modified ? 6.0f : 0.0f), name, 18.0f, kText);
-    if (view.modified) label(kPad, kToolbarH / 2 + 12.0f, "unsaved changes", 11.0f, kAmber);
+    if (view.modified || view.rig.modified)   // Ctrl-S saves both
+        label(kPad, kToolbarH / 2 + 12.0f, view.modified ? "unsaved changes" : "unsaved rig changes", 11.0f, kAmber);
     restore();
     drawTransport(kTransportX);
 
@@ -717,6 +727,11 @@ void RackWidget::drawRowOutput(const RowModel& row, float y) {
         if (const RowModel* now = rowById(id)) controller.setMuted(id, !now->muted);
     });
 
+    if (controller.view().rig.loaded) {   // the sends, A over B
+        sendBox(row, 0, ox + 38.0f, y + 6.0f);
+        sendBox(row, 1, ox + 38.0f, y + 34.0f);
+    }
+
     const float x0 = faderX0(), x1 = faderX1();
     box(x0, y + 17.0f, x1 - x0, 6.0f, kTrack, 3.0f);
     box(x0 + (x1 - x0) * dbToPos(0.0f) - 0.5f, y + 13.0f, 1.0f, 14.0f, kDim);   // 0 dB mark
@@ -779,15 +794,26 @@ void RackWidget::drawStatus() {
     if (s.midiDropped != 0) left += "   MIDI dropped " + std::to_string(s.midiDropped);
     label(kPad, y + kStatusH / 2, left, 12.0f, s.xruns != 0 || s.midiDropped != 0 ? kAmber : kDim);
 
-    // Master meter at the right; the notice or save target between.
+    // Master meter at the right, with the rig's master fader before it; the
+    // notice or save target between.
     const float mx1 = width() - kPad - 22.0f, mx0 = mx1 - 180.0f;
     meterBars(mx0, mx1, y + 9.0f, s.outputDb, s.outputDb);
     box(mx1 + 8.0f, y + 8.0f, 14.0f, 14.0f, s.outputClipped ? kRed : kTrack, 2.0f);
     region(mx1 + 4.0f, y + 4.0f, 22.0f, 22.0f, [this](const Press&) { controller.clearOutputClip(); });
+    float textEnd = mx0 - 12.0f;
+    if (const RigModel& rig = controller.view().rig; rig.loaded) {
+        const float f1 = mx0 - 14.0f, f0 = f1 - 110.0f;
+        dbFader(f0, f1, y + kStatusH / 2, rig.masterDb, false, 18.0f, "\x01master",
+                [this]() -> std::optional<float> { return controller.view().rig.masterDb; },
+                [this](float db) { controller.setMasterDb(db); });
+        const std::string master = "master " + dbText(rig.masterDb);
+        label(f0 - 8.0f, y + kStatusH / 2, master, 12.0f, rig.masterDb > 0.0f ? kAmber : kDim, ALIGN_RIGHT | ALIGN_MIDDLE);
+        textEnd = f0 - 16.0f - labelWidth(master, 12.0f);
+    }
 
     const float tx = kPad + labelWidth(left, 12.0f) + 28.0f;
     save();
-    scissor(tx, y, std::max(0.0f, mx0 - 12.0f - tx), kStatusH);
+    scissor(tx, y, std::max(0.0f, textEnd - tx), kStatusH);
     if (!notice.empty() && ui::nowSeconds() < noticeUntil)
         label(tx, y + kStatusH / 2, notice, 12.0f, kAccent);
     else if (!s.preparing.empty())
@@ -797,6 +823,182 @@ void RackWidget::drawStatus() {
     else
         label(tx, y + kStatusH / 2, s.noSaveReason, 12.0f, kAmber);
     restore();
+}
+
+// --- the rig (docs/rig.md) ------------------------------------------------------------------
+
+void RackWidget::dbFader(float x0, float x1, float cy, float db, bool dim, float thumbH, const std::string& key,
+                         std::function<std::optional<float>()> current, std::function<void(float)> set) {
+    box(x0, cy - 3.0f, x1 - x0, 6.0f, kTrack, 3.0f);
+    box(x0 + (x1 - x0) * dbToPos(0.0f) - 0.5f, cy - 7.0f, 1.0f, 14.0f, kDim);   // 0 dB mark
+    const float thumb = x0 + (x1 - x0) * dbToPos(db);
+    box(thumb - 5.0f, cy - thumbH / 2, 10.0f, thumbH, dim ? kDim : kText, 2.0f);
+    region(
+        x0 - 8.0f, cy - thumbH / 2 - 2.0f, x1 - x0 + 16.0f, thumbH + 4.0f,
+        [this, key, current, set, span = x1 - x0](const Press& p) {
+            const std::optional<float> now = current();
+            if (!now) return;
+            if (key == lastFaderId && p.time - lastFaderTime < 400) {   // as a row's fader
+                set(0.0f);
+                lastFaderId.clear();
+                return;
+            }
+            lastFaderId   = key;
+            lastFaderTime = p.time;
+            drag = [set, start = *now, span, startX = p.x](float x, float, std::uint32_t mod) {
+                const bool  fine = (mod & dgl::kModifierShift) != 0;
+                const float to   = start + (x - startX) * (kMaxDb - kMinDb) / span * (fine ? 0.1f : 1.0f);
+                float       out  = std::clamp(std::round(to * 10.0f) / 10.0f, kMinDb, kMaxDb);
+                if (std::fabs(out) < 0.35f && !fine) out = 0.0f;   // detent at unity
+                set(out);
+            };
+        },
+        [current, set](float notches) {
+            const std::optional<float> now = current();
+            if (!now) return;
+            set(std::round(std::clamp(*now + notches * 0.5f, kMinDb, kMaxDb) * 10.0f) / 10.0f);
+        });
+}
+
+// "A -12" lit, or "A off" dim. Below kMinDb a send is off; from off, a drag or
+// notch up starts it at kMinDb.
+void RackWidget::sendBox(const RowModel& row, std::size_t bus, float x, float y) {
+    const std::optional<float>& db   = row.sendDb[bus];
+    char                        text[24];
+    if (db) std::snprintf(text, sizeof text, "%c %.0f", 'A' + static_cast<int>(bus), static_cast<double>(*db));
+    else std::snprintf(text, sizeof text, "%c off", 'A' + static_cast<int>(bus));
+    button(x, y, kSendW, 24.0f, text, db.has_value(), true, kAccent);
+    auto current = [this, id = row.id, bus]() -> std::optional<std::optional<float>> {
+        const RowModel* now = rowById(id);
+        if (now == nullptr) return std::nullopt;
+        return now->sendDb[bus];
+    };
+    auto setTo = [this, id = row.id, bus](float to) {
+        controller.setSendDb(id, bus, to < kMinDb ? std::nullopt : std::optional<float>(std::min(to, kMaxDb)));
+    };
+    region(
+        x, y, kSendW, 24.0f,
+        [this, key = row.id + "\x01send" + std::to_string(bus), current, setTo](const Press& p) {
+            const auto now = current();
+            if (!now) return;
+            if (key == lastFaderId && p.time - lastFaderTime < 400) {   // double-click: on (0 dB) or off
+                setTo(*now ? kMinDb - 1.0f : 0.0f);
+                lastFaderId.clear();
+                return;
+            }
+            lastFaderId   = key;
+            lastFaderTime = p.time;
+            drag = [setTo, start = now->value_or(kMinDb - 1.0f), startY = p.y](float, float y, std::uint32_t mod) {
+                const bool  fine = (mod & dgl::kModifierShift) != 0;
+                const float to   = std::max(start, kMinDb) + (startY - y) * (fine ? 0.05f : 0.5f);   // up: louder
+                setTo(start < kMinDb && y >= startY ? start : fine ? std::round(to * 10.0f) / 10.0f : std::round(to));
+            };
+        },
+        [current, setTo](float notches) {   // a dB a notch
+            const auto now = current();
+            if (!now) return;
+            setTo(*now ? std::round(**now + notches) : notches > 0 ? kMinDb : kMinDb - 1.0f);
+        });
+}
+
+void RackWidget::drawRig() {
+    const RigModel& rig = controller.view().rig;
+    for (std::size_t b = 0; b < kRigBuses; ++b) drawBusStrip(rig.buses[b], b, rigTop() + static_cast<float>(b) * kBusH);
+}
+
+// Bus A: its two effects in series (each a menu, with its editor), then the
+// return as a row's output: mute, fader over the meter, level, output pair.
+void RackWidget::drawBusStrip(const BusModel& bus, std::size_t index, float y) {
+    box(0, y, width(), kBusH, kPanel);
+    box(0, y + kBusH - 1.0f, width(), 1.0f, kLine);
+    region(0, y, width(), kBusH, nullptr);
+    label(kPad, y + 17.0f, "Bus " + bus.name, 15.0f, kText);
+    label(kPad, y + 35.0f, index == 0 ? "rig: " + controller.view().rig.name + (controller.view().rig.modified ? " *" : "")
+                                      : "effects in series",
+          11.0f, kDim);
+
+    const float slotsX = 130.0f, slotW = (outputX() - slotsX - kPad - 8.0f) / RigBus::kEffects;
+    for (std::size_t e = 0; e < RigBus::kEffects; ++e) {
+        const BusEffectModel& effect = bus.effects[e];
+        const float           x      = slotsX + static_cast<float>(e) * slotW;
+        const float           editW  = effect.hasEditor ? 52.0f : 0.0f;
+        const float           chipW  = slotW - 8.0f - (editW > 0.0f ? editW + 4.0f : 0.0f);
+        const std::string     text   = std::to_string(e + 1) + "  " + (effect.name.empty() ? "empty" : effect.name) +
+                                 (effect.problem.empty() ? "" : " (not loaded)") + "  \xE2\x96\xBE";
+        box(x, y + 11.0f, chipW, 26.0f, kTrack, 4.0f);
+        save();
+        scissor(x, y, chipW - 4.0f, kBusH);
+        label(x + 8.0f, y + kBusH / 2, text, 13.0f,
+              !effect.problem.empty() ? kAmber : effect.name.empty() ? kDim : kText);
+        restore();
+        region(x, y + 11.0f, chipW, 26.0f, [this, index, e, x, y](const Press&) { openEffectMenu(index, e, x, y + kBusH); });
+        if (editW > 0.0f) {
+            const float ex = x + chipW + 4.0f;
+            button(ex, y + 11.0f, editW, 26.0f, "Edit", effect.editorOpen, true, kAccent);
+            region(ex, y + 11.0f, editW, 26.0f, [this, index, e, open = effect.editorOpen](const Press&) {
+                open ? controller.closeBusEditor(index, e) : controller.openBusEditor(index, e);
+            });
+        }
+    }
+
+    const float ox = outputX() + kPad;
+    button(ox, y + 8.0f, 30.0f, 24.0f, "M", bus.muted, true, kAmber);
+    region(ox, y + 8.0f, 30.0f, 24.0f, [this, index](const Press&) {
+        controller.setBusMuted(index, !controller.view().rig.buses[index].muted);
+    });
+    const float x0 = faderX0(), x1 = faderX1();
+    dbFader(x0, x1, y + 18.0f, bus.returnDb, bus.muted, 20.0f, "\x01bus" + std::to_string(index),
+            [this, index]() -> std::optional<float> { return controller.view().rig.buses[index].returnDb; },
+            [this, index](float db) { controller.setReturnDb(index, db); });
+    meterBars(x0, x1, y + 32.0f, bus.meterDb, bus.peakHoldDb);
+    label(x1 + 30.0f, y + 17.0f, bus.muted ? "muted" : dbText(bus.returnDb), 13.0f, bus.muted ? kAmber : kText);
+    const std::string out = "out " + std::to_string(bus.firstOutput + 1) + "-" + std::to_string(bus.firstOutput + 2);
+    if (controller.view().status.outputs > 2) {
+        label(x1 + 30.0f, y + 36.0f, out + " \xE2\x96\xBE", 12.0f, kText);
+        region(x1 + 26.0f, y + 27.0f, 70.0f, 20.0f,
+               [this, index, x = x1 + 26.0f, y](const Press&) { openBusOutputMenu(index, x, y + kBusH); });
+    } else {
+        label(x1 + 30.0f, y + 36.0f, out, 12.0f, kDim);
+    }
+}
+
+// The effects first (the scan's audio effects), then the rest greyed; Empty.
+void RackWidget::openEffectMenu(std::size_t bus, std::size_t slot, float x, float y) {
+    const BusEffectModel& effect = controller.view().rig.buses[bus].effects[slot];
+    Menu                  m;
+    m.w     = 360.0f;
+    m.x     = x;
+    m.y     = y;
+    m.title = "Bus " + controller.view().rig.buses[bus].name + ", effect " + std::to_string(slot + 1);
+    m.items.push_back(MenuItem{"Empty (passes audio on)", [this, bus, slot] { controller.setBusEffect(bus, slot, nullptr); },
+                               effect.name.empty()});
+    std::vector<PluginDescriptor> plugins = controller.availablePlugins();   // scans once
+    std::stable_sort(plugins.begin(), plugins.end(),
+                     [](const PluginDescriptor& a, const PluginDescriptor& b) { return a.name < b.name; });
+    bool any = false;
+    for (const PluginDescriptor& plugin : plugins) {
+        if (plugin.kind != PluginKind::Effect) continue;
+        any = true;
+        m.items.push_back(MenuItem{"   " + plugin.name + (plugin.vendor.empty() ? "" : "  -  " + plugin.vendor),
+                                   [this, bus, slot, plugin] { controller.setBusEffect(bus, slot, &plugin); },
+                                   plugin.name == effect.name});
+    }
+    if (!any) m.items.push_back(MenuItem{"No audio effects found", {}});
+    openMenu(std::move(m));
+}
+
+void RackWidget::openBusOutputMenu(std::size_t bus, float x, float y) {
+    const BusModel& b = controller.view().rig.buses[bus];
+    Menu            m;
+    m.w     = 180.0f;
+    m.x     = std::min(x, width() - m.w - 8.0f);
+    m.y     = y;
+    m.title = "Bus " + b.name + " returns into";
+    const std::uint32_t outputs = controller.view().status.outputs;
+    for (std::uint32_t o = 0; o + 1 < outputs; o += 2)
+        m.items.push_back(MenuItem{"Output " + std::to_string(o + 1) + "-" + std::to_string(o + 2),
+                                   [this, bus, o] { controller.setBusOutput(bus, o); }, b.firstOutput == o});
+    openMenu(std::move(m));
 }
 
 // --- the sources dock (docs/sequences.md, section 4) -----------------------------------
@@ -1298,7 +1500,7 @@ void RackWidget::openPluginMenu(float x, float y, const std::string& title,
     };
     section(PluginKind::Instrument, "Instruments", true);
     section(PluginKind::Other, "Other (note effects)", true);
-    section(PluginKind::Effect, "Effects (for the rig's buses: not in rows yet)", false);
+    section(PluginKind::Effect, "Effects (for the rig's buses, below the rows)", false);
     if (plugins.empty()) m.items.push_back(MenuItem{"No CLAP plugins found", {}, false, false});
     openMenu(std::move(m));
 }

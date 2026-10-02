@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <map>
+#include <set>
 #include <memory>
 #include <string>
 #include <vector>
@@ -29,8 +30,9 @@ public:
                 const auto it = dialects.find(d.id);
                 auto plugin   = std::make_unique<FakePlugin>(
                     2, it != dialects.end() ? it->second : NoteDialect::Midi | NoteDialect::Midi2, 1.0f, d.id);
-                plugin->desc = d;
-                created[d.id] = plugin.get();
+                plugin->desc   = d;
+                plugin->editor = withEditor.count(d.id) != 0;
+                created[d.id]  = plugin.get();
                 return plugin;
             }
         return nullptr;
@@ -39,6 +41,7 @@ public:
     std::vector<PluginDescriptor>       installed;
     std::map<std::string, FakePlugin*>  created;
     std::map<std::string, NoteDialectMask> dialects;   // by plugin id; default MIDI | MIDI 2.0
+    std::set<std::string>               withEditor;   // plugin ids whose instances have an editor
     int                                 scans = 0;
 };
 

@@ -1,6 +1,8 @@
 #pragma once
 
+#include <array>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -10,6 +12,7 @@
 #include "Engine/SequenceSet.h"   // SequenceState
 #include "Plugin/PortLayout.h"
 #include "Session/Rack.h"
+#include "Session/Rig.h"
 
 namespace stagehand {
 
@@ -56,8 +59,40 @@ struct RowModel {
     float         meterDb[2]  = {-60.0f, -60.0f};   // with ballistics; -60 = floor
     float         peakHoldDb[2] = {-60.0f, -60.0f};
     bool          clipped     = false;       // latched until cleared
+    // Its sends to the rig's buses A and B (docs/rig.md), after the fader; none = off.
+    std::array<std::optional<float>, kRigBuses> sendDb;
 
     bool operator==(const RowModel&) const = default;
+};
+
+// The rig (docs/rig.md): the effect buses every song shares, and the master.
+struct BusEffectModel {
+    std::string name;              // the plugin's, or the saved id when it didn't load; "" = empty slot
+    std::string problem;           // why it didn't load (the slot passes audio on)
+    bool        hasEditor  = false;
+    bool        editorOpen = false;
+
+    bool operator==(const BusEffectModel&) const = default;
+};
+struct BusModel {
+    std::string                                   name;   // "A", "B"
+    std::array<BusEffectModel, RigBus::kEffects>  effects;
+    float                                         returnDb    = 0.0f;
+    bool                                          muted       = false;
+    std::uint32_t                                 firstOutput = 0;
+    float                                         meterDb[2]    = {-60.0f, -60.0f};   // the return's, with ballistics
+    float                                         peakHoldDb[2] = {-60.0f, -60.0f};
+
+    bool operator==(const BusModel&) const = default;
+};
+struct RigModel {
+    bool                             loaded   = false;   // no rig: no buses, and sends go nowhere
+    std::string                      name;
+    bool                             modified = false;   // Ctrl-S saves it with the rack
+    float                            masterDb = 0.0f;
+    std::array<BusModel, kRigBuses>  buses;
+
+    bool operator==(const RigModel&) const = default;
 };
 
 struct SourceChoice {
@@ -190,6 +225,7 @@ struct RackViewModel {
     std::vector<SequenceRowModel> sequences;   // the dock's sequence rows
     StatusModel               status;
     SetlistModel              setlist;
+    RigModel                  rig;
 
     bool operator==(const RackViewModel&) const = default;
 };

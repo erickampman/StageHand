@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -111,6 +112,21 @@ public:
     void tapTempo(double nowSeconds);
     void clearClip(const std::string& id);
     void clearOutputClip();
+
+    // --- the rig (docs/rig.md): its edits mark it modified (Ctrl-S saves it
+    // with the rack). Without a rig, they do nothing.
+    void setSendDb(const std::string& id, std::size_t bus, std::optional<float> db);   // none = off
+    void setReturnDb(std::size_t bus, float db);
+    void setBusMuted(std::size_t bus, bool muted);
+    void setBusOutput(std::size_t bus, std::uint32_t firstOutput);
+    void setMasterDb(float db);
+    // `plugin` null empties the slot; its editor closes first. A notice if the
+    // plugin can't be loaded (the slot keeps what it had).
+    void setBusEffect(std::size_t bus, std::size_t slot, const PluginDescriptor* plugin);
+    // A bus effect's editor. Unlike a row's, it stays open through song
+    // switches: the rig stays loaded.
+    void openBusEditor(std::size_t bus, std::size_t slot);
+    void closeBusEditor(std::size_t bus, std::size_t slot);
 
     // Plugins that can be added, scanned on first use (slow: loads each file).
     const std::vector<PluginDescriptor>& availablePlugins();
@@ -344,6 +360,7 @@ private:
     // there; `report`: say so when it isn't (once, until it connects).
     void           routeClick(bool report);
     void           buildDock(double now);
+    void           buildRig(double now, double dt);   // model.rig
     void           finishLearn(const Engine::Learned& learned);
     // The setlist's triggers that fired since the last tick, all at once
     // (pressing Next three times goes three songs on), then one switch.
@@ -367,6 +384,8 @@ private:
     RackViewModel                                        model;
     std::map<std::string, std::unique_ptr<EditorHandle>> editors;   // by slot id
     std::map<std::string, RowCache>                      rows;      // by slot id
+    std::map<std::pair<std::size_t, std::size_t>, std::unique_ptr<EditorHandle>> busEditors;   // by (bus, slot)
+    std::array<Ballistics, kRigBuses>                     busMeters;
     Ballistics                                            master;
     std::vector<MidiSourceInfo>                           enumerated;
     std::vector<PluginDescriptor>                         available;

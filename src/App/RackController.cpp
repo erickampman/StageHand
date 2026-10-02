@@ -81,6 +81,7 @@ RackController::RackController(Session& runningSession, Engine& runningEngine, M
 
 RackController::~RackController() {
     editors.clear();
+    busEditors.clear();
 }
 
 // --- periodic ----------------------------------------------------------------------
@@ -90,6 +91,10 @@ void RackController::service() {
     for (const Session::Slot& slot : session.slots())
         if (slot.plugin) slot.plugin->idle();
     for (const SlotConfig& slot : session.drainingSlots()) slot.plugin->idle();
+    if (session.hasRig())   // the rig's effects too
+        for (const auto& bus : session.rig().effects)
+            for (const Session::LoadedRig::Effect& effect : bus)
+                if (effect.plugin) effect.plugin->idle();
     for (const auto& [bundle, ahead] : prepared) ahead.rack->idle();
 }
 
@@ -103,6 +108,8 @@ void RackController::tick(double now) {
 
     for (auto it = editors.begin(); it != editors.end();)
         it = it->second->isOpen() ? std::next(it) : editors.erase(it);
+    for (auto it = busEditors.begin(); it != busEditors.end();)
+        it = it->second->isOpen() ? std::next(it) : busEditors.erase(it);
 
     const double dt = lastTick < 0.0 ? 0.0 : std::max(0.0, now - lastTick);
     lastTick        = now;
@@ -159,6 +166,7 @@ void RackController::tick(double now) {
         it = session.slot(it->first) != nullptr ? std::next(it) : rows.erase(it);
 
     buildDock(now);
+    buildRig(now, dt);
 
     StatusModel& status = model.status;
     if (config.audioStatus) {
@@ -239,6 +247,7 @@ RowModel RackController::rowFor(const Session::Slot& slot, double now, double dt
     row.gainDb      = saved.gainDb;
     row.muted       = saved.muted;
     row.firstOutput = saved.firstOutput;
+    row.sendDb      = saved.sendDb;
 
     if (slot.runtime) {
         const LevelMeter::Reading reading = slot.runtime->meter.take();
@@ -463,6 +472,95 @@ void RackController::clearClip(const std::string& id) {
 
 void RackController::clearOutputClip() {
     engine.outputMeter().clearClip();
+}
+
+// --- the rig (docs/rig.md) -------------------------------------------------------------
+
+void RackController::setSendDb(const std::string& id, std::size_t bus, std::optional<float> db) {
+    if (session.setSendDb(id, bus, db))
+        if (RowModel* row = modelRow(id)) row->sendDb[bus] = db;
+}
+
+void RackController::setReturnDb(std::size_t bus, float db) {
+    if (session.setReturnDb(bus, db)) model.rig.buses[bus].returnDb = db;   // patched now, as a row's gain is
+}
+
+void RackController::setBusMuted(std::size_t bus, bool muted) {
+    if (session.setBusMuted(bus, muted)) model.rig.buses[bus].muted = muted;
+}
+
+void RackController::setBusOutput(std::size_t bus, std::uint32_t firstOutput) {
+    if (session.setBusOutput(bus, firstOutput)) model.rig.buses[bus].firstOutput = firstOutput;
+}
+
+void RackController::setMasterDb(float db) {
+    if (!session.hasRig()) return;
+    session.setMasterDb(db);
+    model.rig.masterDb = db;
+}
+
+void RackController::setBusEffect(std::size_t bus, std::size_t slot, const PluginDescriptor* plugin) {
+    if (!session.hasRig() || bus >= kRigBuses || slot >= RigBus::kEffects) return;
+    std::string problem;
+    closeBusEditor(bus, slot);   // while the old effect is certainly alive
+    if (!session.setBusEffect(bus, slot, plugin, problem))
+        notice("Couldn't load " + (plugin->name.empty() ? plugin->id : plugin->name) + ": " + problem);
+}
+
+void RackController::openBusEditor(std::size_t bus, std::size_t slot) {
+    if (!session.hasRig() || bus >= kRigBuses || slot >= RigBus::kEffects || !config.openEditor) return;
+    const std::shared_ptr<HostedPlugin>& plugin = session.rig().effects[bus][slot].plugin;
+    if (!plugin) return;
+    const auto key = std::make_pair(bus, slot);
+    if (const auto it = busEditors.find(key); it != busEditors.end() && it->second->isOpen()) return;
+    const std::string title = "Bus " + std::string(1, static_cast<char>('A' + bus)) + " " + std::to_string(slot + 1) +
+                              " - " + plugin->descriptor().name + " (StageHand)";
+    if (std::unique_ptr<EditorHandle> editor = config.openEditor(*plugin, title)) busEditors[key] = std::move(editor);
+}
+
+void RackController::closeBusEditor(std::size_t bus, std::size_t slot) {
+    busEditors.erase(std::make_pair(bus, slot));
+}
+
+void RackController::buildRig(double now, double dt) {
+    RigModel& m = model.rig;
+    m           = {};
+    if (!session.hasRig()) return;
+    const Session::LoadedRig& rig = session.rig();
+    m.loaded   = true;
+    m.name     = rig.saved.name;
+    m.modified = session.rigModified();
+    m.masterDb = rig.saved.masterDb;
+    for (std::size_t b = 0; b < kRigBuses; ++b) {
+        BusModel&     bus   = m.buses[b];
+        const RigBus& saved = rig.saved.buses[b];
+        bus.name            = std::string(1, static_cast<char>('A' + b));
+        bus.returnDb        = saved.returnDb;
+        bus.muted           = saved.muted;
+        bus.firstOutput     = saved.firstOutput;
+        for (std::size_t e = 0; e < RigBus::kEffects; ++e) {
+            BusEffectModel&                     effect = bus.effects[e];
+            const Session::LoadedRig::Effect&   loaded = rig.effects[b][e];
+            if (loaded.plugin) {
+                effect.name      = loaded.plugin->descriptor().name.empty() ? loaded.plugin->descriptor().id
+                                                                            : loaded.plugin->descriptor().name;
+                effect.hasEditor = loaded.plugin->hasEditor();
+            } else if (saved.effects[e]) {
+                effect.name = saved.effects[e]->plugin.name.empty() ? saved.effects[e]->plugin.id
+                                                                    : saved.effects[e]->plugin.name;
+            }
+            effect.problem    = loaded.problem;
+            const auto open   = busEditors.find(std::make_pair(b, e));
+            effect.editorOpen = open != busEditors.end() && open->second->isOpen();
+        }
+        if (const std::shared_ptr<SlotRuntime>& runtime = rig.returns[b]) {
+            busMeters[b].update(runtime->meter.take(), now, dt);
+            for (std::size_t c = 0; c < LevelMeter::kChannels; ++c) {
+                bus.meterDb[c]    = busMeters[b].displayDb[c];
+                bus.peakHoldDb[c] = busMeters[b].holdDb[c];
+            }
+        }
+    }
 }
 
 const std::vector<PluginDescriptor>& RackController::availablePlugins() {
@@ -985,6 +1083,7 @@ void RackController::useRig(const std::string& path) {
     }
     for (const std::string& warning : result.warnings) notice(warning);
     Session::LoadReport report;
+    busEditors.clear();   // the old rig's effects are on their way out
     session.loadRig(rig, session.loadedSampleRate(), report);
     for (const std::string& warning : report.warnings) notice(warning);
     rigFile = wanted;
