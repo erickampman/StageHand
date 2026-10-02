@@ -56,7 +56,8 @@ stage and isn't saved, and it's driven by a footswitch. Builds on:
 17. **UI:** one row per looper in the Sources dock, under the sequences.
     Loopers have names (added 2026-10-02): a click on its name renames it, in
     place, as a sequence's; a new looper's name field opens as it's made
-    ("Loop N" until changed). The name is saved with the rack, and Keep gives
+    ("Loop N" until changed, N a running tab in the rack: one past the highest
+    "Loop N" used, so a deleted looper's number isn't used again). The name is saved with the rack, and Keep gives
     it to the sequence.
 18. **A size cap,** preallocated, and shown.
 

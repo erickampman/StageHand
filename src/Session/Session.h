@@ -242,7 +242,9 @@ public:
     };
     const std::vector<LooperEntry>& loopers() const noexcept { return looperList; }
     const LooperEntry*              looper(const std::string& id) const noexcept;
-    // A new one, empty; its id unique (from its name). Targets kept to rows that exist.
+    // A new one, empty; its id unique (from its name). Targets kept to rows
+    // that exist. Unnamed: "Loop N", N one past the highest used in this rack
+    // (a running tab: a deleted looper's number isn't used again).
     std::string addLooper(LooperSetup setup);
     bool        setLooper(const LooperSetup& setup);   // by id; what it recorded is kept
     bool        removeLooper(const std::string& id);   // its notes end
@@ -357,6 +359,7 @@ private:
     std::vector<SlotConfig>                 draining;   // drainingSlots()
     std::vector<SetlistTrigger>             setlistControls;
     std::vector<LooperEntry>                looperList;
+    std::uint32_t                           loopNumber = 0;   // the highest "Loop N" used (addLooper())
     std::string                             currentLooperId;
     MidiSourceHandle                        looperSwitchSource = kInvalidMidiSource;
     std::string                             looperSwitchIssue;

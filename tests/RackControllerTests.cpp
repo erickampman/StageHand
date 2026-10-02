@@ -1538,6 +1538,32 @@ void testKeepLoop() {
     rig.engine->collect();
 }
 
+// Default looper names keep a running tab: Loop 1, Loop 2, ...; a deleted
+// looper's number isn't used again, one named "Loop N" by hand counts, and a
+// loaded rack counts from its loopers' names.
+void testLoopNumbers() {
+    Rig rig;
+    Session::LoadReport report;
+    rig.session->load(Rack{}, 48000.0, report);
+    RackController controller(*rig.session, *rig.engine, rig.midi, rig.factory, rig.config());
+    auto nameOf = [&](const std::string& id) { return controller.looper(id) ? controller.looper(id)->name : std::string{}; };
+
+    const std::string one = controller.addLooper(MidiSourceRef{}, {});
+    const std::string two = controller.addLooper(MidiSourceRef{}, {});
+    CHECK(nameOf(one) == "Loop 1" && nameOf(two) == "Loop 2");
+    controller.removeLooper(two);
+    const std::string three = controller.addLooper(MidiSourceRef{}, {});
+    CHECK(nameOf(three) == "Loop 3");   // not 2 again
+    controller.renameLooper(one, "Loop 7");
+    CHECK(nameOf(controller.addLooper(MidiSourceRef{}, {})) == "Loop 8");
+
+    Rack saved = rig.session->capture();   // Loop 7, Loop 3, Loop 8
+    rig.session->load(saved, 48000.0, report);
+    CHECK(nameOf(controller.addLooper(MidiSourceRef{}, {})) == "Loop 9");
+    runBlock(*rig.engine);
+    rig.engine->collect();
+}
+
 } // namespace
 
 int main() {
@@ -1563,5 +1589,6 @@ int main() {
     testSavingInASet();
     testLoopers();
     testKeepLoop();
+    testLoopNumbers();
     return test::finish("RackController");
 }
