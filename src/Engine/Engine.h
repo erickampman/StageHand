@@ -134,6 +134,9 @@ public:
     // stopped starts it, unless the transport has a start of its own. Main
     // thread; false if the queue is full.
     bool sendLooperCommand(MidiSourceHandle looper, LooperCommand command) noexcept;
+    // The looper the looper switch (TransportControl::looperSwitch) drives;
+    // invalid: none. Any thread.
+    void setCurrentLooper(MidiSourceHandle looper) noexcept { currentLooper.store(looper, std::memory_order_relaxed); }
 
     // Audition one note while editing (docs/sequences.md, section 5): `on` now,
     // `off` after `seconds`, from `sequence` into the rows it plays into
@@ -349,6 +352,10 @@ private:
     };
     SpscQueue<QueuedLooperCommand, 64> looperCommands;
     void                          recordLoops() noexcept;   // this block's staged input, into the loopers
+    std::atomic<MidiSourceHandle> currentLooper{kInvalidMidiSource};
+    // A looper's command at `frame`; a press arming one while stopped starts the transport.
+    void                          looperAction(const AudioCallbackContext& ctx, MidiSourceHandle looper,
+                                               LooperCommand command, std::uint32_t frame) noexcept;
     SpscQueue<TransportCommand, 16> transportCommands;
     SequenceEvent                 sequenceEvents[kMaxSequenceEvents];
     std::size_t                   sequenceEventCount = 0;

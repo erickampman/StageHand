@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -93,6 +94,78 @@ Json triggerJson(const SequenceTrigger& t) {
     j[t.control == SequenceTrigger::Control::Note ? "note" : "controller"] = t.number;
     j["channel"] = t.channel + 1;
     j["group"]   = t.group + 1;
+    return j;
+}
+
+// --- loopers (docs/looper.md, "In the rack file") ------------------------------------
+
+// "1/4", "2", ... beats; "off".
+double parseQuantize(const Json& j) {
+    const std::string text = j.is_number() ? std::to_string(j.get<int>()) : j.get<std::string>();
+    if (text == "off") return 0.0;
+    char*        end = nullptr;
+    const double num = std::strtod(text.c_str(), &end);
+    double       den = 1.0;
+    if (end != nullptr && *end == '/') den = std::strtod(end + 1, &end);
+    if (end == nullptr || *end != '\0' || num <= 0.0 || den <= 0.0 || num / den > 16.0)
+        fail("quantize '" + text + "' should be \"off\" or beats, like \"1/4\" or \"2\"");
+    return num / den;
+}
+
+std::string quantizeText(double beats) {
+    if (beats <= 0.0) return "off";
+    if (beats >= 1.0 && beats == std::floor(beats)) return std::to_string(static_cast<int>(beats));
+    return "1/" + std::to_string(static_cast<int>(std::lround(1.0 / beats)));
+}
+
+LooperSetup parseLooper(const Json& j) {
+    if (!j.is_object()) fail("each looper is an object");
+    LooperSetup l;
+    l.id = j.at("id").get<std::string>();
+    if (!validSlotId(l.id)) fail("looper id '" + l.id + "' must be letters, digits, '-' or '_'");
+    l.name   = j.value("name", l.id);
+    l.source = parseSource(j.value("source", std::string("all")));
+    if (l.source.kind == MidiSourceRef::Kind::Sequence || l.source.kind == MidiSourceRef::Kind::None)
+        fail("a looper records an input");
+    if (j.contains("channels")) {
+        l.channelMask = 0;
+        for (const Json& c : j.at("channels")) {
+            const int channel = c.get<int>();
+            if (channel < 1 || channel > 16) fail("channels must be 1-16");
+            l.channelMask |= static_cast<std::uint16_t>(1u << (channel - 1));
+        }
+    }
+    if (j.contains("targets"))
+        for (const Json& t : j.at("targets")) l.targets.push_back(t.get<std::string>());
+    if (j.contains("quantize")) l.quantize = parseQuantize(j.at("quantize"));
+    const std::string start = j.value("start", std::string("bar"));
+    if (start != "bar" && start != "beat") fail("start must be \"bar\" or \"beat\"");
+    l.atBar = start == "bar";
+    if (j.contains("length")) {
+        const Json& length = j.at("length");
+        if (!length.is_object() || length.contains("bars") == length.contains("beats"))
+            fail("length is {\"bars\": N} or {\"beats\": N}");
+        l.fixedInBars = length.contains("bars");
+        l.fixedLength = static_cast<std::uint32_t>(intIn(length, l.fixedInBars ? "bars" : "beats", 1, 1, 1024));
+    }
+    return l;
+}
+
+Json looperJson(const LooperSetup& l) {
+    Json j;
+    j["id"]     = l.id;
+    j["name"]   = l.name;
+    j["source"] = sourceText(l.source);
+    if (l.channelMask != 0xFFFF) {
+        Json channels = Json::array();
+        for (int c = 0; c < 16; ++c)
+            if ((l.channelMask >> c) & 1u) channels.push_back(c + 1);
+        j["channels"] = channels;
+    }
+    j["targets"]  = l.targets;
+    j["quantize"] = quantizeText(l.quantize);
+    j["start"]    = l.atBar ? "bar" : "beat";
+    if (l.fixedLength > 0) j["length"] = Json{{l.fixedInBars ? "bars" : "beats", l.fixedLength}};
     return j;
 }
 
@@ -443,6 +516,22 @@ RackFileResult loadRack(const std::string& bundlePath, Rack& rack) {
         for (const Sequence& seq : loaded.sequences)   // a target must be one of the rack's slots
             for (const std::string& target : seq.targets)
                 if (ids.count(target) == 0) fail("sequence '" + seq.id + "': there's no slot '" + target + "' to play into");
+        if (doc.contains("loopers")) {
+            std::set<std::string> looperIds;
+            std::size_t           looperIndex = 0;
+            for (const Json& l : doc.at("loopers")) {
+                ++looperIndex;
+                try {
+                    LooperSetup looper = parseLooper(l);
+                    if (!looperIds.insert(looper.id).second) fail("duplicate looper id '" + looper.id + "'");
+                    for (const std::string& target : looper.targets)
+                        if (ids.count(target) == 0) fail("there's no slot '" + target + "' to play into");
+                    loaded.loopers.push_back(std::move(looper));
+                } catch (const std::exception& e) {
+                    fail("looper " + std::to_string(looperIndex) + ": " + e.what());
+                }
+            }
+        }
     } catch (const std::exception& e) {   // nlohmann's errors are std::exceptions too
         result.error = jsonPath.string() + ": " + e.what();
         return result;
@@ -486,6 +575,16 @@ RackFileResult saveRack(const std::string& bundlePath, const Rack& rack) {
                 sequences.push_back(sequenceJson(seq));
             }
             doc["sequences"] = sequences;
+        }
+        if (!rack.loopers.empty()) {
+            Json loopers = Json::array();
+            std::set<std::string> looperIds;
+            for (const LooperSetup& looper : rack.loopers) {
+                if (!validSlotId(looper.id) || !looperIds.insert(looper.id).second)
+                    fail("invalid or duplicate looper id '" + looper.id + "'");
+                loopers.push_back(looperJson(looper));
+            }
+            doc["loopers"] = loopers;
         }
         if (rack.transport != TransportSettings{}) doc["transport"] = transportJson(rack.transport);
         if (rack.metronome != MetronomeSettings{}) doc["metronome"] = metronomeJson(rack.metronome);

@@ -131,6 +131,12 @@ struct TransportControl {
     // The setlist's triggers (docs/setlists.md, section 4), published with
     // every rack's sequences and matched before all of them.
     std::vector<CompiledSetlistTrigger> setlist;
+
+    // The looper switch (docs/looper.md, "Controls"): its press and release go
+    // to the current looper. Matched after the setlist's triggers, before the
+    // rack's. `action` unused.
+    bool                      hasLooperSwitch = false;
+    CompiledSequence::Trigger looperSwitch;
 };
 
 class SequenceSet {
@@ -168,6 +174,10 @@ public:
     // the loopers taking that input. Before generate().
     void recordLoops(MidiSourceHandle source, const MidiMessage& message, const Block& at) noexcept;
     void stopLoopers(const Block& block) noexcept;   // the transport stopped: at once, back to the start
+    // The looper switch: true if `message` is its (it goes nowhere else);
+    // `pressed` / `released` as it went down or up (a note, or a controller
+    // crossing 64).
+    bool matchLooperSwitch(MidiSourceHandle source, const MidiMessage& message, bool& pressed, bool& released) noexcept;
 
     // Replace `previous` (null for the first set). Sounding notes whose note was
     // deleted or shortened past now end at once; a rate or length change keeps

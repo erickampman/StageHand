@@ -2,6 +2,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 
@@ -50,6 +51,18 @@ RackFileResult loadRig(const std::string& bundlePath, Rig& rig) {
         if (stem.size() > 4 && stem.compare(stem.size() - 4, 4, ".rig") == 0) stem.resize(stem.size() - 4);
         loaded.name     = doc.value("name", stem);
         loaded.masterDb = doc.value("masterDb", 0.0f);
+        if (doc.contains("looperSwitch")) {   // {"source": ..., "note" or "controller": n, "channel": 1, "group": 1}
+            const Json&     j = doc.at("looperSwitch");
+            SequenceTrigger t;
+            if (!j.is_object() || j.contains("note") == j.contains("controller"))
+                fail("looperSwitch has a \"note\" or a \"controller\"");
+            t.source  = parseSource(j.value("source", std::string("all")));
+            t.control = j.contains("note") ? SequenceTrigger::Control::Note : SequenceTrigger::Control::Controller;
+            t.number  = static_cast<std::uint8_t>(std::clamp(j.at(j.contains("note") ? "note" : "controller").get<int>(), 0, 127));
+            t.channel = static_cast<std::uint8_t>(std::clamp(j.value("channel", 1), 1, 16) - 1);
+            t.group   = static_cast<std::uint8_t>(std::clamp(j.value("group", 1), 1, 16) - 1);
+            loaded.looperSwitch = t;
+        }
         if (doc.contains("buses")) {
             const Json& buses = doc.at("buses");
             if (!buses.is_array() || buses.size() > kRigBuses) fail("\"buses\" must be a list of up to 2 buses");
@@ -106,6 +119,14 @@ RackFileResult saveRig(const std::string& bundlePath, const Rig& rig) {
         doc["version"]  = kFormatVersion;
         doc["name"]     = rig.name;
         doc["masterDb"] = rig.masterDb;
+        if (const auto& t = rig.looperSwitch) {
+            Json j;
+            j["source"] = sourceText(t->source);
+            j[t->control == SequenceTrigger::Control::Note ? "note" : "controller"] = t->number;
+            j["channel"] = t->channel + 1;
+            j["group"]   = t->group + 1;
+            doc["looperSwitch"] = j;
+        }
         Json buses      = Json::array();
         for (std::size_t b = 0; b < kRigBuses; ++b) {
             const RigBus& bus = rig.buses[b];

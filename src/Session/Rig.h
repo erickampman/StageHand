@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "Core/Sequence.h"
 #include "Plugin/PluginDescriptor.h"
 #include "Session/Rack.h"
 
@@ -41,6 +42,9 @@ struct Rig {
     std::string                      name;
     std::array<RigBus, kRigBuses>    buses;
     float                            masterDb = 0.0f;
+    // The looper footswitch (docs/looper.md, "Controls"): the performer's, so
+    // the same in every song. It drives the current looper. Its action is unused.
+    std::optional<SequenceTrigger>   looperSwitch;
 
     bool operator==(const Rig&) const = default;
 };

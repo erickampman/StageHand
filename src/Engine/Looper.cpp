@@ -410,6 +410,31 @@ std::size_t SequenceSet::generateLoops(const Block& b, SequenceEvent* out, std::
     return count;
 }
 
+bool SequenceSet::matchLooperSwitch(MidiSourceHandle source, const MidiMessage& m, bool& pressed,
+                                    bool& released) noexcept {
+    pressed = released = false;
+    if (!transport.hasLooperSwitch || !ump::isChannelVoice(m) || isSequenceSource(source)) return false;
+    CompiledSequence::Trigger& t = transport.looperSwitch;
+    const ump::Status status = ump::status(m);
+    const bool        note   = status == ump::Status::NoteOn || status == ump::Status::NoteOff;
+    if (!note && status != ump::Status::ControlChange) return false;
+    if ((t.source != kInvalidMidiSource && t.source != source) || t.group != ump::group(m) ||
+        t.channel != ump::channel(m) || t.number != ((m.words[0] >> 8) & 0x7F) ||
+        (t.control == SequenceTrigger::Control::Note) != note)
+        return false;
+    if (note) {
+        pressed  = ump::isNoteOn(m);
+        released = !pressed;
+        return true;
+    }
+    const bool high = ump::messageType(m) == ump::MessageType::Midi2ChannelVoice ? m.words[1] >= 0x80000000u
+                                                                                : (m.words[0] & 0x7F) >= 64;
+    pressed  = high && !t.high;
+    released = !high && t.high;
+    t.high   = high;
+    return true;
+}
+
 // The transport started: a looper armed while it was stopped records from its first beat.
 void SequenceSet::loopersTransportStarted(const Block& b) noexcept {
     for (CompiledLooper& l : loopers) {

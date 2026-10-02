@@ -106,7 +106,8 @@ void RackWidget::showNotice(const std::string& text, double now) {
 // the text caret (1 s).
 std::uint32_t RackWidget::timedLook(double now) const {
     const RackViewModel& v = controller.view();
-    bool blinking          = v.transport.learning || v.setlist.learning;
+    bool blinking          = v.transport.learning || v.setlist.learning || v.looperSwitchLearning;
+    for (const LooperRowModel& looper : v.loopers) blinking = blinking || looper.waiting;
     for (const SequenceRowModel& seq : v.sequences)
         blinking = blinking || seq.learning || seq.state == SequenceState::Starting ||
                    seq.state == SequenceState::Stopping;
@@ -144,8 +145,10 @@ float RackWidget::rigTop() {
 // The dock grows with its sequences, up to a little over half the space; past
 // that its sequence rows scroll.
 float RackWidget::dockHeight() {
-    // At least one sequence row's height: an empty dock shows how to add one.
-    const float rows = static_cast<float>(std::max<std::size_t>(controller.view().sequences.size(), 1));
+    // At least one row's height: an empty dock shows how to add one. Loopers
+    // are rows under the sequences.
+    const float rows = static_cast<float>(
+        std::max<std::size_t>(controller.view().sequences.size() + controller.view().loopers.size(), 1));
     const float want = kDockHeadH + kInputsH + rows * kSeqRowH;
     const float most = std::max(kDockHeadH + kInputsH + kSeqRowH, (height() - topH() - kStatusH) * 0.55f);
     return std::min(want, most);
@@ -154,7 +157,8 @@ float RackWidget::dockTop() {
     return height() - kStatusH - dockHeight();
 }
 float RackWidget::dockMaxScroll() {
-    const float content = static_cast<float>(controller.view().sequences.size()) * kSeqRowH;
+    const float content =
+        static_cast<float>(controller.view().sequences.size() + controller.view().loopers.size()) * kSeqRowH;
     return std::max(0.0f, content - (dockHeight() - kDockHeadH - kInputsH));
 }
 float RackWidget::rowY(std::size_t row) const {
@@ -1033,6 +1037,17 @@ void RackWidget::drawDock() {
         m.items.push_back(MenuItem{"MIDI 1.0 (note numbers)", [this, addX, top] { newSequence(MidiProtocol::Midi1, addX, top + kDockHeadH); }});
         openMenu(std::move(m));
     });
+    // + Looper, and the looper switch (in the rig: the same in every song).
+    const float looperX = addX - 8.0f - 96.0f, switchX = looperX - 8.0f - 120.0f;
+    button(looperX, top + 3.0f, 96.0f, 22.0f, "+ Looper", false, true, kAccent);
+    region(looperX, top + 3.0f, 96.0f, 22.0f,
+           [this, looperX, top](const Press&) { newLooper(looperX, top + kDockHeadH); });
+    const bool blink = std::fmod(ui::nowSeconds(), 0.5) < 0.25;
+    button(switchX, top + 3.0f, 120.0f, 22.0f, "Looper switch",
+           view.looperSwitchLearning ? blink : !view.looperSwitch.empty(), true,
+           view.looperSwitchLearning || !view.looperSwitchConnected ? kAmber : kAccent);
+    region(switchX, top + 3.0f, 120.0f, 22.0f,
+           [this, switchX, top](const Press&) { openLooperSwitchMenu(switchX, top + kDockHeadH); });
     button(stopX, top + 3.0f, 80.0f, 22.0f, "Stop all", false, !view.sequences.empty(), kAccent);
     region(stopX, top + 3.0f, 80.0f, 22.0f, [this](const Press&) { controller.stopAllSequences(); });
 
@@ -1061,14 +1076,16 @@ void RackWidget::drawDock() {
     dockScroll          = std::clamp(dockScroll, 0.0f, dockMaxScroll());
     save();
     scissor(0, rowsTop, width(), rowsH);
-    for (std::size_t i = 0; i < view.sequences.size(); ++i) {
+    for (std::size_t i = 0; i < view.sequences.size() + view.loopers.size(); ++i) {
         const float y = rowsTop + static_cast<float>(i) * kSeqRowH - dockScroll;
         if (y + kSeqRowH < rowsTop || y > rowsTop + rowsH) continue;
-        drawSequenceRow(view.sequences[i], y);
+        if (i < view.sequences.size()) drawSequenceRow(view.sequences[i], y);
+        else drawLooperRow(view.loopers[i - view.sequences.size()], y);
     }
     restore();
-    if (view.sequences.empty() && rowsH >= kSeqRowH / 2)
-        label(kPad + 56.0f, rowsTop + kSeqRowH / 2, "No sequences yet. Add one with + Sequence.", 12.0f, kDim);
+    if (view.sequences.empty() && view.loopers.empty() && rowsH >= kSeqRowH / 2)
+        label(kPad + 56.0f, rowsTop + kSeqRowH / 2, "No sequences or loopers yet. Add one with + Sequence or + Looper.",
+              12.0f, kDim);
 }
 
 void RackWidget::drawSequenceRow(const SequenceRowModel& seq, float y) {
@@ -1198,6 +1215,226 @@ void RackWidget::drawSequenceRow(const SequenceRowModel& seq, float y) {
     region(rx, ry, kRemoveSize, kRemoveSize, [this, id = seq.id, name = seq.name, rx, ry](const Press&) {
         confirmRemoveSequence(id, name, rx + kRemoveSize, ry + kRemoveSize + 2.0f);
     });
+}
+
+// --- loopers (docs/looper.md) ----------------------------------------------------------
+
+namespace {
+
+std::string beatsText(double beats) {
+    if (beats <= 0.0) return "off";
+    if (beats >= 1.0) return beats == 1.0 ? "1 beat" : std::to_string(static_cast<int>(beats)) + " beats";
+    return "1/" + std::to_string(static_cast<int>(std::lround(4.0 / beats)));   // a quarter-note beat: 1/16 is 0.25
+}
+
+} // namespace
+
+void RackWidget::drawLooperRow(const LooperRowModel& l, float y) {
+    if (l.current) box(0, y, width(), kSeqRowH, kPanel);   // the one the looper switch drives
+    box(0, y, width(), 1.0f, kLine);
+    region(0, y, width(), kSeqRowH, [this, id = l.id](const Press&) { controller.selectLooper(id); });
+
+    // The button: what the looper switch's tap does next. Record (a red dot),
+    // stop (a square, while playing) or play (a triangle); waiting blinks.
+    const bool    blinkOn   = std::fmod(ui::nowSeconds(), 0.5) < 0.25;
+    const bool    recording = l.state == LooperState::Recording || l.state == LooperState::Overdubbing;
+    const bool    playing   = l.state == LooperState::Playing;
+    const UiColor face      = l.waiting ? (blinkOn ? kAmber : kTrack) : recording ? kRed : playing ? kGreen : kTrack;
+    box(kPad, y + 8.0f, 32.0f, 28.0f, face, 4.0f);
+    beginPath();
+    if (l.state == LooperState::Empty || l.state == LooperState::Armed || recording) {
+        circle(kPad + 16.0f, y + 22.0f, 6.0f);
+        fill(recording ? kText : kRed);
+    } else if (playing) {
+        rect(kPad + 10.0f, y + 16.0f, 12.0f, 12.0f);
+        fill(kBarBg);
+    } else {
+        moveTo(kPad + 11.0f, y + 15.0f);
+        lineTo(kPad + 23.0f, y + 22.0f);
+        lineTo(kPad + 11.0f, y + 29.0f);
+        closePath();
+        fill(kText);
+    }
+    NanoVG::fill();
+    region(kPad, y + 8.0f, 32.0f, 28.0f, [this, id = l.id](const Press&) {
+        controller.selectLooper(id);
+        controller.tapLooper(id);
+    });
+
+    // Name; its state, length and notes; where it records from and plays into.
+    const float nameX = kPad + 44.0f, textW = 230.0f;
+    static const char* const kStates[] = {"empty", "armed", "recording", "playing", "overdubbing", "stopped"};
+    std::string state = kStates[static_cast<int>(l.state)];
+    if (l.waiting) state += l.state == LooperState::Armed ? ": waiting for the " + std::string(l.atBar ? "bar" : "beat")
+                                                          : ": at the next " + std::string(l.atBar ? "bar" : "beat");
+    save();
+    scissor(nameX, y, textW, kSeqRowH);
+    label(nameX, y + 15.0f, l.name + (l.current ? "   (looper switch)" : ""), 14.0f, kText);
+    std::string detail = state;
+    if (l.lengthBeats > 0.0) detail += ", " + beatsText(l.lengthBeats);
+    if (l.passes > 1) detail += ", " + std::to_string(l.passes - 1) + (l.passes == 2 ? " overdub" : " overdubs");
+    detail += "   " + l.inputLabel + " >";
+    if (l.targetNames.empty()) detail += " no rows: click to choose";
+    for (std::size_t i = 0; i < l.targetNames.size(); ++i) detail += (i ? ", " : " ") + l.targetNames[i];
+    label(nameX, y + 32.0f, detail, 11.0f, !l.inputConnected || l.targetNames.empty() ? kAmber : kDim);
+    restore();
+    region(nameX, y + 25.0f, textW, kSeqRowH - 29.0f,
+           [this, id = l.id, nameX, y](const Press&) { openLooperTargetsMenu(id, nameX, y + kSeqRowH - 4.0f); });
+
+    // Where it is in the loop, and how full it is (shown once past 75%).
+    const float mapX = nameX + textW + 10.0f, mapW = 130.0f;
+    box(mapX, y + 10.0f, mapW, 24.0f, kRowA, 3.0f);
+    if (l.lengthBeats > 0.0 && (playing || l.state == LooperState::Overdubbing))
+        box(mapX, y + 10.0f, mapW * static_cast<float>(l.position / l.lengthBeats), 24.0f, recording ? kRed : kGreen, 3.0f);
+    else if (recording)
+        box(mapX, y + 10.0f, mapW, 24.0f, kRed, 3.0f);
+    const float full = l.capacity ? static_cast<float>(l.notes) / static_cast<float>(l.capacity) : 0.0f;
+    if (full > 0.75f || l.dropped != 0)
+        label(mapX + mapW / 2, y + 22.0f,
+              l.dropped != 0 ? "full: " + std::to_string(l.dropped) + " dropped"
+                             : std::to_string(l.notes) + "/" + std::to_string(l.capacity) + " notes",
+              11.0f, l.dropped != 0 ? kRed : kAmber, ALIGN_CENTER | ALIGN_MIDDLE);
+
+    // Undo, Clear; then its settings: input, quantize, start, length.
+    float x = mapX + mapW + 8.0f;
+    const bool undo = l.passes > 1 || l.state == LooperState::Overdubbing;
+    button(x, y + 10.0f, 50.0f, 24.0f, "Undo", false, undo, kAccent);
+    if (undo) region(x, y + 10.0f, 50.0f, 24.0f, [this, id = l.id](const Press&) { controller.undoLooper(id); });
+    x += 56.0f;
+    const bool clear = l.state != LooperState::Empty;
+    button(x, y + 10.0f, 50.0f, 24.0f, "Clear", false, clear, kAccent);
+    if (clear) region(x, y + 10.0f, 50.0f, 24.0f, [this, id = l.id](const Press&) { controller.clearLooper(id); });
+    x += 62.0f;
+    button(x, y + 10.0f, 64.0f, 24.0f, "Input", false, true, l.inputConnected ? kAccent : kAmber);
+    region(x, y + 10.0f, 64.0f, 24.0f, [this, id = l.id, x, y](const Press&) {
+        controller.refreshSources();
+        Menu m;
+        m.x     = x;
+        m.y     = y + 36.0f;
+        m.w     = 260.0f;
+        m.title = "Records from";
+        m.items.push_back(MenuItem{"All inputs", [this, id] { controller.setLooperInput(id, MidiSourceRef{}); }});
+        for (const SourceChoice& choice : controller.view().sources)
+            if (choice.ref.kind == MidiSourceRef::Kind::Device || choice.ref.kind == MidiSourceRef::Kind::Virtual)
+                m.items.push_back(MenuItem{choice.label, [this, id, ref = choice.ref] { controller.setLooperInput(id, ref); }});
+        openMenu(std::move(m));
+    });
+    x += 70.0f;
+    button(x, y + 10.0f, 74.0f, 24.0f, "Q " + beatsText(l.quantize), false, true, kAccent);
+    region(x, y + 10.0f, 74.0f, 24.0f, [this, id = l.id, x, y, current = l.quantize](const Press&) {
+        Menu m;
+        m.x     = x;
+        m.y     = y + 36.0f;
+        m.w     = 220.0f;
+        m.title = "Quantize what it records to";
+        for (const auto [beats, text] : {std::pair{0.0, "Off (as played)"}, {0.125, "1/32"}, {0.25, "1/16"},
+                                         {0.5, "1/8"}, {1.0, "1/4 (a beat)"}, {2.0, "1/2"}})
+            m.items.push_back(MenuItem{text, [this, id, b = beats] { controller.setLooperQuantize(id, b); }, current == beats});
+        openMenu(std::move(m));
+    });
+    x += 80.0f;
+    button(x, y + 10.0f, 50.0f, 24.0f, l.atBar ? "Bar" : "Beat", false, true, kAccent);
+    region(x, y + 10.0f, 50.0f, 24.0f, [this, id = l.id, x, y, atBar = l.atBar](const Press&) {
+        Menu m;
+        m.x     = x;
+        m.y     = y + 36.0f;
+        m.w     = 260.0f;
+        m.title = "Starts, ends and stops at";
+        m.items.push_back(MenuItem{"The next bar", [this, id] { controller.setLooperStart(id, true); }, atBar});
+        m.items.push_back(MenuItem{"The next beat", [this, id] { controller.setLooperStart(id, false); }, !atBar});
+        openMenu(std::move(m));
+    });
+    x += 56.0f;
+    const std::string length = l.fixedLength == 0 ? "By press"
+                               : std::to_string(l.fixedLength) + (l.fixedInBars ? (l.fixedLength == 1 ? " bar" : " bars")
+                                                                                : (l.fixedLength == 1 ? " beat" : " beats"));
+    button(x, y + 10.0f, 76.0f, 24.0f, length, false, true, kAccent);
+    region(x, y + 10.0f, 76.0f, 24.0f, [this, id = l.id, x, y, l](const Press&) {
+        Menu m;
+        m.x     = x;
+        m.y     = y + 36.0f;
+        m.w     = 240.0f;
+        m.title = "Length";
+        m.items.push_back(MenuItem{"Ended by a press", [this, id] { controller.setLooperLength(id, 0, true); },
+                                   l.fixedLength == 0});
+        for (const std::uint32_t n : {1u, 2u, 4u, 8u})
+            m.items.push_back(MenuItem{std::to_string(n) + (n == 1 ? " bar" : " bars"),
+                                       [this, id, n] { controller.setLooperLength(id, n, true); },
+                                       l.fixedInBars && l.fixedLength == n});
+        for (const std::uint32_t n : {1u, 2u, 4u})
+            m.items.push_back(MenuItem{std::to_string(n) + (n == 1 ? " beat" : " beats"),
+                                       [this, id, n] { controller.setLooperLength(id, n, false); },
+                                       !l.fixedInBars && l.fixedLength == n});
+        openMenu(std::move(m));
+    });
+    x += 82.0f;
+
+    // Remove: the red X at the right, without asking (what it recorded isn't saved).
+    const float rx = std::max(x + 8.0f, width() - kPad - kRemoveSize), ry = y + (kSeqRowH - kRemoveSize) / 2;
+    removeButton(rx, ry, kRemoveSize);
+    region(rx, ry, kRemoveSize, kRemoveSize, [this, id = l.id](const Press&) { controller.removeLooper(id); });
+}
+
+// + Looper: what it records (an input), then a row it plays into (more from its row's second line).
+void RackWidget::newLooper(float x, float y) {
+    controller.refreshSources();
+    Menu m;
+    m.x     = x;
+    m.y     = y;
+    m.w     = 260.0f;
+    m.title = "New looper: records from";
+    auto then = [this, x, y](MidiSourceRef input) {
+        Menu rows;
+        rows.x     = x;
+        rows.y     = y;
+        rows.w     = 260.0f;
+        rows.title = "and plays into";
+        for (const RowModel& row : controller.view().rows)
+            rows.items.push_back(MenuItem{row.name, [this, input, id = row.id] { controller.addLooper(input, {id}); }});
+        rows.items.push_back(MenuItem{"No row yet", [this, input] { controller.addLooper(input, {}); }});
+        openMenu(std::move(rows));
+    };
+    m.items.push_back(MenuItem{"All inputs", [then] { then(MidiSourceRef{}); }});
+    for (const SourceChoice& choice : controller.view().sources)
+        if (choice.ref.kind == MidiSourceRef::Kind::Device || choice.ref.kind == MidiSourceRef::Kind::Virtual)
+            m.items.push_back(MenuItem{choice.label, [then, ref = choice.ref] { then(ref); }});
+    openMenu(std::move(m));
+}
+
+void RackWidget::openLooperTargetsMenu(const std::string& id, float x, float y) {
+    const LooperRowModel* looper = nullptr;
+    for (const LooperRowModel& l : controller.view().loopers)
+        if (l.id == id) looper = &l;
+    if (looper == nullptr) return;
+    Menu m;
+    m.x     = x;
+    m.y     = y;
+    m.w     = 260.0f;
+    m.title = looper->name + " plays into";
+    for (const RowModel& row : controller.view().rows) {
+        const bool on = std::find(looper->targetIds.begin(), looper->targetIds.end(), row.id) != looper->targetIds.end();
+        m.items.push_back(MenuItem{row.name, [this, id, row = row.id, on] { controller.setLooperTarget(id, row, !on); }, on});
+    }
+    if (controller.view().rows.empty()) m.items.push_back(MenuItem{"No rows yet", {}});
+    openMenu(std::move(m));
+}
+
+// The looper switch: one momentary footswitch for the current looper. Tap:
+// record, play, stop; hold while playing: overdub.
+void RackWidget::openLooperSwitchMenu(float x, float y) {
+    const RackViewModel& view = controller.view();
+    Menu                 m;
+    m.x     = x;
+    m.y     = y;
+    m.w     = 380.0f;
+    m.title = view.looperSwitchLearning ? "Press the footswitch..." : "Looper switch (the current looper; in the rig)";
+    if (view.looperSwitchLearning) m.items.push_back(MenuItem{"Stop learning", [this] { controller.cancelLearn(); }});
+    else m.items.push_back(MenuItem{"Learn (a momentary switch, for hold)", [this] { controller.learnLooperSwitch(); }});
+    if (!view.looperSwitch.empty())
+        m.items.push_back(MenuItem{"Remove " + view.looperSwitch + (view.looperSwitchConnected ? "" : " (not connected)"),
+                                   [this] { controller.removeLooperSwitch(); }, false, true});
+    m.items.push_back(MenuItem{"Tap: record, play, stop.  Hold while playing: overdub.", {}});
+    openMenu(std::move(m));
 }
 
 void RackWidget::confirmRemoveSequence(const std::string& id, const std::string& name, float right, float y) {
