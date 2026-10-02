@@ -29,7 +29,8 @@ and is driven by a footswitch. Builds on:
 9. **Length:** in beats or bars (the user's choice): fixed (N), or ended by a
    press.
 10. **Overdub:** more passes layered on the loop, and undo of the last pass.
-11. **One footswitch** (below, "Controls").
+11. **One footswitch** (below, "Controls"): tap to record, play, stop; hold
+    to overdub.
 12. **As many loopers as you like.** One is the current looper: the one the
     footswitch drives, shown in its row.
 13. **What's played still sounds** as usual while it's recorded.
@@ -42,43 +43,46 @@ and is driven by a footswitch. Builds on:
 17. **UI:** one row per looper in the Sources dock, under the sequences.
 18. **A size cap,** preallocated, and shown.
 
-## Controls
+## Controls (revised 2026-10-02)
 
-One footswitch (a learned note or controller, as for a trigger) drives the
-current looper:
+As simple as possible, for real time: **one footswitch** (a learned note or
+controller) drives **the current looper** (chosen by clicking its row, and
+shown there; a new looper is current). No per-looper triggers, and no double
+presses.
 
-| State | Press | Double press | Hold |
-|---|---|---|---|
-| Empty | arm: record from the next beat/bar | - | - |
-| Armed (waiting) | cancel | - | - |
-| Recording, length by press | end (rounded up), play | stop | clear |
-| Recording, fixed N | end now (rounded up), play | stop | clear |
-| Playing | overdub | stop | undo the last pass |
-| Overdubbing | play (the pass is kept) | stop | undo this pass |
-| Stopped | play, from the loop's start, at the next beat/bar | - | clear |
+| State | Press (a tap) | Hold |
+|---|---|---|
+| Empty | arm: recording starts at the next beat or bar | - |
+| Armed (waiting) | cancel | - |
+| Recording | end (the length rounded up to the beat or bar); play from the start | - |
+| Playing | stop (on release) | overdub while held; on release it plays on, the pass kept |
+| Stopped | play from the start, at the next beat or bar | - |
 
-With a fixed length, recording runs into overdub when it reaches N; the next
-press goes to play, and presses then alternate play and overdub.
-
-Proposed for the edge cases (to confirm):
-- **Every press acts at once.** Waiting to tell a press from a double press
-  (about 300 ms) would put the end of a recording out of time. So a double
-  press is a press, then a second one within the window that undoes the first
-  and stops: from playing, press starts an overdub, and the second press
-  discards that overdub and stops.
-- **A hold starts as a press,** and after about a second becomes the hold's
-  action (clear, or undo), which supersedes the press.
-- **Hold and double press need a momentary switch** (press and release
-  messages). A latching pedal only gives presses.
-- **The current looper** is chosen by clicking its row, or by an optional
-  learned "next looper" trigger. A looper can also have its own triggers,
-  which drive it whether it's current or not.
-- **The transport stopping** stops every looper; starting it again leaves them
-  stopped until pressed.
+- **A tap and a hold while playing:** as the switch goes down, an overdub
+  starts recording, provisionally. Released within about 0.4 s, it was a tap:
+  the overdub is dropped and the loop stops. Held longer, it's an overdub that
+  began exactly at the press, so nothing is late. Only stop acts on release.
+- **Starting is never immediate:** arming and playing from stopped wait for the
+  next beat or bar. Ending a recording acts at the press (rounded up).
+- **Clear and undo** are buttons in the looper's row (and optional learned
+  triggers, for a second switch). After stopping, a new loop needs a clear, or
+  another looper.
+- **Hold needs a momentary switch** (press and release). A latching pedal
+  gives taps only: no overdub.
+- **The transport stopping** stops every looper and returns it to its start.
 - **After a song switch,** a stopped looper keeps its targets by row id: they
   work again if the new rack has rows with those ids, and otherwise it plays
   nowhere until its targets are changed. Converting it then makes a sequence
   in the current rack.
+
+Proposed (to confirm):
+- **A fixed length (N)** goes to play at N, with overdubs always a hold.
+  (Decided earlier: it ran on into overdub, and the next press played.)
+- **Undo** goes back pass by pass, to the first recording.
+- **An overdub crossing the loop's end** carries on around the loop; a key
+  still held at release is cut there.
+- **Stop is immediate,** ending the loop's notes, not quantized.
+- **Deleting a looper:** the red X in its row, without asking (it isn't saved).
 
 ## Engine
 
@@ -93,6 +97,8 @@ Proposed for the edge cases (to confirm):
   and counted; the row shows how full the loop is once it's past 75%.
 - The main thread reads a looper's state, length and fill through atomics for
   the row, and copies the notes out to convert it.
+- The footswitch is matched on the audio thread, like the setlist's triggers,
+  so a press acts within the block; its release ends a hold.
 
 ## Milestones (proposed)
 
@@ -108,7 +114,4 @@ Proposed for the edge cases (to confirm):
 
 ## Open questions
 
-- The press / double / hold proposals above.
-- Do loopers stop with the transport, or keep their place for a restart?
-- One footswitch for all loopers (the current one), per-looper triggers, or both
-  (proposed: both)?
+- The proposals at the end of "Controls".
