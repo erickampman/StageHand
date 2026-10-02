@@ -107,7 +107,7 @@ Proposed (to confirm):
    the fake plugin: in time, rounding, quantize, overdub and undo, the cap.
 2. **Controller and UI:** making a looper (input, targets, quantize, start at
    beat or bar, length), its row (state, length, progress, fill), the current
-   looper, the footswitch learned with its press / double / hold, and
+   looper, the footswitch learned with its tap and hold, clear and undo, and
    transport and song-switch behaviour.
 3. **Convert to sequence.**
 4. **Later:** controllers and pitch bend in loops (with sequences).
