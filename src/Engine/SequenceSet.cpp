@@ -177,6 +177,11 @@ std::size_t SequenceSet::adoptFrom(const SequenceSet* previous, const Block& b, 
                 if (o.source == t.source && o.control == t.control && o.group == t.group && o.channel == t.channel &&
                     o.number == t.number)
                     t.high = o.high;
+        for (const CompiledLooper& old : previous->loopers) {   // loopers gone: stopped, their notes ended
+            const bool kept = std::any_of(loopers.begin(), loopers.end(),
+                                          [&](const CompiledLooper& l) { return l.runtime == old.runtime; });
+            if (!kept) count += releaseLooper(old, b, out + count, capacity - count);
+        }
         for (const CompiledSequence& old : previous->all) {
             if (find(all, old.source) != nullptr) continue;
             releaseAll(old, out, capacity, count);   // removed: its notes end now
@@ -344,6 +349,7 @@ bool SequenceSet::startsOnNote(MidiSourceHandle source, const MidiMessage& m) co
 }
 
 void SequenceSet::transportStarted(const Block& b) noexcept {
+    loopersTransportStarted(b);
     for (CompiledSequence& s : all) {
         SequenceRuntime& rt = *s.runtime;
         if (!s.atStart || rt.current != SequenceState::Stopped) continue;
@@ -455,7 +461,7 @@ std::size_t SequenceSet::generate(const Block& b, SequenceEvent* out, std::size_
         rt.position.store(playing && units > 0.0 ? std::fmod(units, static_cast<double>(s.length)) : 0.0,
                           std::memory_order_relaxed);
     }
-    return count;
+    return count + generateLoops(b, out + count, capacity - count);
 }
 
 } // namespace stagehand

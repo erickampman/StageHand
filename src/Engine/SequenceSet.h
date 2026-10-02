@@ -9,6 +9,7 @@
 
 #include "Core/MidiMessage.h"
 #include "Core/Sequence.h"
+#include "Engine/Looper.h"
 
 namespace stagehand {
 
@@ -134,8 +135,10 @@ struct TransportControl {
 
 class SequenceSet {
 public:
-    explicit SequenceSet(std::vector<CompiledSequence> sequences, TransportControl transportControl = {})
-        : all(std::move(sequences)), transport(std::move(transportControl)) {}
+    explicit SequenceSet(std::vector<CompiledSequence> sequences, TransportControl transportControl = {},
+                         std::vector<CompiledLooper> loopersIn = {})
+        : all(std::move(sequences)), transport(std::move(transportControl)), loopers(std::move(loopersIn)) {}
+
 
     const std::vector<CompiledSequence>& sequences() const noexcept { return all; }
 
@@ -152,6 +155,19 @@ public:
         // at that frame (a trigger) takes effect.
         Block from(std::uint32_t frame) const noexcept;
     };
+
+    // --- the loopers (docs/looper.md; Looper.cpp). Audio thread.
+    const std::vector<CompiledLooper>& looperList() const noexcept { return loopers; }
+    // A command to one looper (kInvalidMidiSource: all). True if a press armed
+    // a looper while the transport is stopped (`running` false): the caller
+    // starts the transport, unless it has a start of its own
+    // (hasTransportStart()), and the recording begins on its first beat.
+    bool looperCommand(MidiSourceHandle looper, LooperCommand command, const Block& block, bool running) noexcept;
+    bool hasTransportStart() const noexcept;   // transport triggers, or start on first note
+    // A live input's message at `at` (the block from its frame): recorded by
+    // the loopers taking that input. Before generate().
+    void recordLoops(MidiSourceHandle source, const MidiMessage& message, const Block& at) noexcept;
+    void stopLoopers(const Block& block) noexcept;   // the transport stopped: at once, back to the start
 
     // Replace `previous` (null for the first set). Sounding notes whose note was
     // deleted or shortened past now end at once; a rate or length change keeps
@@ -196,9 +212,15 @@ public:
 
 private:
     void apply(CompiledSequence& s, SequenceCommand command, const Block& block) noexcept;
+    std::size_t generateLoops(const Block& block, SequenceEvent* out, std::size_t capacity) noexcept;
+    void        loopersTransportStarted(const Block& block) noexcept;
+    // A looper gone from the snapshot (a song switch): stopped, its notes ended now.
+    static std::size_t releaseLooper(const CompiledLooper& looper, const Block& block, SequenceEvent* out,
+                                     std::size_t capacity) noexcept;
 
     std::vector<CompiledSequence> all;
     TransportControl              transport;
+    std::vector<CompiledLooper>   loopers;
 };
 
 } // namespace stagehand

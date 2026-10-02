@@ -129,6 +129,11 @@ public:
     // Start or stop one sequence (kInvalidMidiSource = all of them) at the next
     // block. False if the command queue is full (try again next tick).
     bool sendSequenceCommand(MidiSourceHandle source, SequenceCommand command) noexcept;
+    // A looper's command (docs/looper.md), at the next block: its footswitch's
+    // press and release, Stop, Clear, Undo. Arming one while the transport is
+    // stopped starts it, unless the transport has a start of its own. Main
+    // thread; false if the queue is full.
+    bool sendLooperCommand(MidiSourceHandle looper, LooperCommand command) noexcept;
 
     // Audition one note while editing (docs/sequences.md, section 5): `on` now,
     // `off` after `seconds`, from `sequence` into the rows it plays into
@@ -338,6 +343,12 @@ private:
     SpscQueue<SequenceSet*, 16>   retiredSequences;
     SequenceSet*                  currentSequences = nullptr;   // audio thread only
     SpscQueue<QueuedCommand, 64>  sequenceCommands;
+    struct QueuedLooperCommand {
+        MidiSourceHandle looper  = kInvalidMidiSource;
+        LooperCommand    command = LooperCommand::Press;
+    };
+    SpscQueue<QueuedLooperCommand, 64> looperCommands;
+    void                          recordLoops() noexcept;   // this block's staged input, into the loopers
     SpscQueue<TransportCommand, 16> transportCommands;
     SequenceEvent                 sequenceEvents[kMaxSequenceEvents];
     std::size_t                   sequenceEventCount = 0;
