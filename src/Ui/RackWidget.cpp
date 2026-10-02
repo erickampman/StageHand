@@ -1304,6 +1304,11 @@ void RackWidget::drawLooperRow(const LooperRowModel& l, float y) {
     const bool clear = l.state != LooperState::Empty;
     button(x, y + 10.0f, 50.0f, 24.0f, "Clear", false, clear, kAccent);
     if (clear) region(x, y + 10.0f, 50.0f, 24.0f, [this, id = l.id](const Press&) { controller.clearLooper(id); });
+    x += 56.0f;
+    // Keep: convert to a sequence in this rack (saved with it); the looper plays on.
+    const bool keep = l.lengthBeats > 0.0;
+    button(x, y + 10.0f, 50.0f, 24.0f, "Keep", false, keep, kAccent);
+    if (keep) region(x, y + 10.0f, 50.0f, 24.0f, [this, id = l.id](const Press&) { controller.keepLooperAsSequence(id); });
     x += 62.0f;
     button(x, y + 10.0f, 64.0f, 24.0f, "Input", false, true, l.inputConnected ? kAccent : kAmber);
     region(x, y + 10.0f, 64.0f, 24.0f, [this, id = l.id, x, y](const Press&) {

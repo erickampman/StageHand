@@ -35,6 +35,7 @@ enum class LooperCommand : std::uint8_t {
     Stop,    // at the next beat or bar; recording ends there, then stops
     Clear,   // empty, now
     Undo,    // the last overdub pass (the one in progress, if overdubbing)
+    Snapshot,   // copy the loop for the main thread (LooperRuntime::takeSnapshot()), to keep it as a sequence
 };
 
 struct LooperRuntime {
@@ -94,7 +95,25 @@ struct LooperRuntime {
     Open                       open[kMaxOpen];
     Sounding                   sounding[kMaxSounding];
     std::uint32_t              droppedCount = 0;
+
+    // --- a copy of the loop for the main thread (LooperCommand::Snapshot):
+    // the audio thread fills it (preallocated) and sets snapshotReady.
+    struct Snapshot {
+        double            length = 0.0;   // in beats; 0: nothing recorded yet (or still recording)
+        std::vector<Note> notes;          // every key released (none still held)
+    };
+    // Main thread: the copy, once the audio thread has made it; false until then.
+    bool takeSnapshot(Snapshot& out);
+    Snapshot          snapshot;           // reserved to capacity
+    std::atomic<bool> snapshotReady{false};
 };
+
+// A loop as a sequence (docs/looper.md, "Convert to sequence"): on the grid of
+// its quantize (64ths when off), in the protocol, channel and group of its
+// first note, MIDI 2.0 as 12-EDO from middle C. It repeats, launching at the
+// bar or beat as the looper starts; plays into nothing yet (the caller sets
+// the targets, id and name).
+Sequence loopToSequence(const LooperRuntime::Snapshot& loop, double quantize, bool atBar);
 
 struct CompiledLooper {
     MidiSourceHandle               source = kInvalidMidiSource;   // its own, in the sequences' range

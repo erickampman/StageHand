@@ -1,6 +1,6 @@
 # StageHand — The looper (design)
 
-Proposed 2026-10-02; milestone 1 (the engine) built. A looper records what's played into a
+Proposed 2026-10-02; milestones 1 to 3 built. A looper records what's played into a
 loop, live, and plays it back in time, with overdubs. It's a cousin of a
 sequence (docs/sequences.md) but it isn't one: what it records is made on
 stage and isn't saved, and it's driven by a footswitch. Builds on:
@@ -179,6 +179,17 @@ is past 75%; Undo, Clear, Input, Q, Bar/Beat, Length, the red X), the current
 looper highlighted, and the Looper switch button in the dock's header. Tests:
 `testLoopers` (controller), loopers in the rack file tests, the switch in the
 rig file tests.
+
+**Milestone 3 implemented (2026-10-02):** Keep, in a looper's row: the loop as
+a normal sequence in the rack (`RackController::keepLooperAsSequence()`),
+named and aimed as the looper, stopped, unsaved until Ctrl-S; the looper plays
+on. The audio thread copies the loop (`LooperCommand::Snapshot` into
+`LooperRuntime::snapshot`, preallocated), and `loopToSequence()` makes the
+sequence: on the grid of its quantize (64ths when off, coarser past 4096
+units), in the protocol, channel and group of its first note (one channel per
+sequence: notes on others join it), MIDI 2.0 as 12-EDO from middle C, launched
+at the bar or beat as the looper starts, repeating. Tests:
+`testLoopToSequence` (looper), `testKeepLoop` (controller).
 
 ## Open questions
 
