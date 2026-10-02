@@ -401,6 +401,11 @@ std::string RackController::addLooper(const MidiSourceRef& input, const std::vec
     return id;
 }
 
+const LooperSetup* RackController::looper(const std::string& id) const {
+    const Session::LooperEntry* entry = session.looper(id);
+    return entry != nullptr ? &entry->setup : nullptr;
+}
+
 void RackController::removeLooper(const std::string& id) {
     session.removeLooper(id);
 }

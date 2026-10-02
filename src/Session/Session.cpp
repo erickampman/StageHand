@@ -23,6 +23,17 @@ float dbToGain(float db) {
     return std::pow(10.0f, db / 20.0f);
 }
 
+// N, if `name` is "Loop N"; else 0.
+std::uint32_t loopNumberOf(const std::string& name) {
+    if (name.rfind("Loop ", 0) != 0 || name.size() == 5 || name.size() > 14) return 0;
+    std::uint32_t n = 0;
+    for (std::size_t i = 5; i < name.size(); ++i) {
+        if (name[i] < '0' || name[i] > '9') return 0;
+        n = n * 10 + static_cast<std::uint32_t>(name[i] - '0');
+    }
+    return n;
+}
+
 } // namespace
 
 Session::Session(PluginFactory& pluginFactory, HostServices& hostServices, MidiInput& midiInput,
@@ -109,6 +120,8 @@ bool Session::activate(std::unique_ptr<PreparedRack> prepared, LoadReport& repor
     // come or gone since.
     sequenceList = std::move(p.sequences);
     looperList   = std::move(p.loopers);   // the old ones' notes end with the switch
+    loopNumber   = 0;
+    for (const LooperEntry& entry : looperList) loopNumber = std::max(loopNumber, loopNumberOf(entry.setup.name));
     currentLooperId.clear();
     engine.setCurrentLooper(kInvalidMidiSource);
     for (LooperEntry& entry : looperList) {
@@ -705,7 +718,11 @@ void Session::resolveLooper(LooperEntry& entry) {
 }
 
 std::string Session::addLooper(LooperSetup setup) {
-    if (setup.name.empty()) setup.name = "Loop " + std::to_string(looperList.size() + 1);
+    if (setup.name.empty()) {
+        for (const LooperEntry& entry : looperList)   // one renamed "Loop 7" since counts too
+            loopNumber = std::max(loopNumber, loopNumberOf(entry.setup.name));
+        setup.name = "Loop " + std::to_string(++loopNumber);
+    }
     const std::string base = slotIdFrom(setup.name);
     setup.id               = base;
     for (int n = 2; findLooper(setup.id) != nullptr; ++n) setup.id = base + "-" + std::to_string(n);

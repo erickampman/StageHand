@@ -1267,6 +1267,8 @@ void RackWidget::drawLooperRow(const LooperRowModel& l, float y) {
     std::string state = kStates[static_cast<int>(l.state)];
     if (l.waiting) state += l.state == LooperState::Armed ? ": waiting for the " + std::string(l.atBar ? "bar" : "beat")
                                                           : ": at the next " + std::string(l.atBar ? "bar" : "beat");
+    const std::string renameKey = "\x01loop:" + l.id;   // not to be taken for a sequence with the same id
+    if (renamingId == renameKey) moveTextField(nameX - 6.0f, y + 3.0f, textW, 24.0f);   // it follows the row
     save();
     scissor(nameX, y, textW, kSeqRowH);
     label(nameX, y + 15.0f, l.name + (l.current ? "   (looper switch)" : ""), 14.0f, kText);
@@ -1278,6 +1280,11 @@ void RackWidget::drawLooperRow(const LooperRowModel& l, float y) {
     for (std::size_t i = 0; i < l.targetNames.size(); ++i) detail += (i ? ", " : " ") + l.targetNames[i];
     label(nameX, y + 32.0f, detail, 11.0f, !l.inputConnected || l.targetNames.empty() ? kAmber : kDim);
     restore();
+    // A click on the name renames it (and makes it current); the second line chooses the rows.
+    region(nameX, y + 4.0f, textW, 21.0f, [this, id = l.id, name = l.name](const Press&) {
+        controller.selectLooper(id);
+        startLooperRename(id, name);
+    });
     region(nameX, y + 25.0f, textW, kSeqRowH - 29.0f,
            [this, id = l.id, nameX, y](const Press&) { openLooperTargetsMenu(id, nameX, y + kSeqRowH - 4.0f); });
 
@@ -1388,15 +1395,20 @@ void RackWidget::newLooper(float x, float y) {
     m.y     = y;
     m.w     = 260.0f;
     m.title = "New looper: records from";
-    auto then = [this, x, y](MidiSourceRef input) {
+    // Then its name, typed in its row (Enter keeps "Loop N"), as for a new sequence.
+    auto named = [this](const std::string& id) {
+        if (const LooperSetup* looper = controller.looper(id)) startLooperRename(id, looper->name);
+    };
+    auto then = [this, x, y, named](MidiSourceRef input) {
         Menu rows;
         rows.x     = x;
         rows.y     = y;
         rows.w     = 260.0f;
         rows.title = "and plays into";
         for (const RowModel& row : controller.view().rows)
-            rows.items.push_back(MenuItem{row.name, [this, input, id = row.id] { controller.addLooper(input, {id}); }});
-        rows.items.push_back(MenuItem{"No row yet", [this, input] { controller.addLooper(input, {}); }});
+            rows.items.push_back(
+                MenuItem{row.name, [this, named, input, id = row.id] { named(controller.addLooper(input, {id})); }});
+        rows.items.push_back(MenuItem{"No row yet", [this, named, input] { named(controller.addLooper(input, {})); }});
         openMenu(std::move(rows));
     };
     m.items.push_back(MenuItem{"All inputs", [then] { then(MidiSourceRef{}); }});
@@ -1404,6 +1416,15 @@ void RackWidget::newLooper(float x, float y) {
         if (choice.ref.kind == MidiSourceRef::Kind::Device || choice.ref.kind == MidiSourceRef::Kind::Virtual)
             m.items.push_back(MenuItem{choice.label, [then, ref = choice.ref] { then(ref); }});
     openMenu(std::move(m));
+}
+
+void RackWidget::startLooperRename(const std::string& id, const std::string& name) {
+    renamingId = "\x01loop:" + id;
+    editText(kPad + 38.0f, 0.0f, 230.0f, 24.0f, name, RackController::kMaxNameBytes,   // placed when the row draws
+             [this, id](const std::string& text) {
+                 renamingId.clear();
+                 controller.renameLooper(id, text);
+             });
 }
 
 void RackWidget::openLooperTargetsMenu(const std::string& id, float x, float y) {

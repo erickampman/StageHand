@@ -94,7 +94,8 @@ private:
     // A looper's row (docs/looper.md), under the sequences: its button (the
     // looper switch's tap), state and length, Undo and Clear, its settings.
     void drawLooperRow(const LooperRowModel& looper, float y);
-    void newLooper(float x, float y);                    // + Looper: what it records, then where it plays
+    void newLooper(float x, float y);                    // + Looper: what it records, where it plays, its name
+    void startLooperRename(const std::string& id, const std::string& name);   // the inline text field
     void openLooperTargetsMenu(const std::string& id, float x, float y);
     void openLooperSwitchMenu(float x, float y);
     void drawFilterPanel();
