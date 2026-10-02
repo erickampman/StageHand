@@ -82,6 +82,8 @@ public:
     // True once the audio thread has adopted the most recent commit(), i.e. the
     // plugins it removed have been stopped.
     bool committedGraphAdopted() const noexcept;
+    // How many graphs commit() has published so far (tests: a rack switch is one).
+    std::uint64_t graphCommits() const noexcept;
 
     // Destroy graphs the audio thread has retired; returns how many. Call
     // regularly from the main loop. Dropping a graph may release the last

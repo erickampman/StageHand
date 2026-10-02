@@ -37,13 +37,17 @@ void Session::addOpenSource(const MidiSourceRef& ref, MidiSourceHandle handle) {
 }
 
 bool Session::load(const Rack& rack, double rate, LoadReport& report) {
-    std::vector<Slot>             next;
-    std::vector<PluginDescriptor> scanned;
-    bool                          haveScan = false;
+    return activate(prepare(rack, rate), report);
+}
+
+std::unique_ptr<PreparedRack> Session::prepare(const Rack& rack, double rate) {
+    auto prepared    = std::make_unique<PreparedRack>();
+    prepared->source = rack;
+    prepared->rate   = rate;
+    prepared->slots.reserve(rack.slots.size());
 
     // Sequences first. A slot saved with the old "sequence:<id>" source becomes
     // one of that sequence's targets with no live input: it plays as before.
-    sequenceList.clear();
     std::vector<Sequence> sequencesIn = rack.sequences;
     for (const RackSlot& saved : rack.slots)
         if (saved.source.kind == MidiSourceRef::Kind::Sequence)
@@ -51,60 +55,83 @@ bool Session::load(const Rack& rack, double rate, LoadReport& report) {
                 if (seq.id == saved.source.name &&
                     std::find(seq.targets.begin(), seq.targets.end(), saved.id) == seq.targets.end())
                     seq.targets.push_back(saved.id);
-    for (const Sequence& seq : sequencesIn) {
-        sequenceList.push_back(SequenceEntry{seq, nextSequenceSource++, std::make_shared<SequenceRuntime>(), {}});
-        for (const std::string& problem : resolveTriggers(sequenceList.back()))
-            report.warnings.push_back("sequence '" + seq.id + "': a MIDI trigger won't act: " + problem);
+    for (const Sequence& seq : sequencesIn)
+        prepared->sequences.push_back(
+            SequenceEntry{seq, nextSequenceSource++, std::make_shared<SequenceRuntime>(), {}});
+    return prepared;
+}
+
+bool Session::prepareStep(PreparedRack& prepared) {
+    if (prepared.ready()) return true;
+    const RackSlot& saved = prepared.source.slots[prepared.slots.size()];
+    Slot            slot;
+    slot.saved = saved;
+    if (slot.saved.source.kind == MidiSourceRef::Kind::Sequence)
+        slot.saved.source = MidiSourceRef{MidiSourceRef::Kind::None, {}};   // converted by prepare()
+    const std::string where = "slot '" + saved.id + "': ";
+
+    std::string                   problem;
+    std::shared_ptr<HostedPlugin> plugin = createPlugin(saved.plugin, problem, prepared.scanned, prepared.haveScan);
+    // State goes in before activation (domain-model.md, save/restore).
+    if (plugin && !saved.state.empty() && !plugin->loadState(saved.state.data(), saved.state.size()))
+        prepared.warnings.push_back(where + "the plugin rejected its saved state; it starts from its defaults");
+    if (plugin && !plugin->activate(prepared.rate, kMaxPluginBlockFrames)) {
+        problem = "the plugin failed to activate";
+        plugin.reset();
     }
-    transportSetup = rack.transport;
-    metronomeSetup = rack.metronome;
-    applyMetronome();
-    for (const std::string& problem : resolveTransport())
-        report.warnings.push_back("transport: a MIDI control won't act: " + problem);
-
-    for (const RackSlot& saved : rack.slots) {
-        Slot slot;
-        slot.saved = saved;
-        if (slot.saved.source.kind == MidiSourceRef::Kind::Sequence)
-            slot.saved.source = MidiSourceRef{MidiSourceRef::Kind::None, {}};   // converted above
-        const std::string where = "slot '" + saved.id + "': ";
-
-        std::string                   problem;
-        std::shared_ptr<HostedPlugin> plugin = createPlugin(saved.plugin, problem, scanned, haveScan);
-        // State goes in before activation (domain-model.md, save/restore).
-        if (plugin && !saved.state.empty() && !plugin->loadState(saved.state.data(), saved.state.size()))
-            report.warnings.push_back(where + "the plugin rejected its saved state; it starts from its defaults");
-        if (plugin && !plugin->activate(rate, kMaxPluginBlockFrames)) {
-            problem = "the plugin failed to activate";
-            plugin.reset();
-        }
-        if (!plugin) {
-            slot.loadProblem = problem;
-            report.warnings.push_back(where + problem + "; kept as a placeholder (not running)");
-            next.push_back(std::move(slot));
-            continue;
-        }
+    if (!plugin) {
+        slot.loadProblem = problem;
+        prepared.warnings.push_back(where + problem + "; kept as a placeholder (not running)");
+    } else {
         slot.plugin            = plugin;
         slot.runtime           = std::make_shared<SlotRuntime>(targetGainOf(saved), saved.muted);
         applySends(slot);
         slot.saved.plugin.path = plugin->descriptor().path;   // where it was actually found
+    }
+    prepared.slots.push_back(std::move(slot));
+    return prepared.ready();
+}
 
+bool Session::activate(std::unique_ptr<PreparedRack> prepared, LoadReport& report) {
+    while (!prepareStep(*prepared)) {}
+    PreparedRack& p = *prepared;
+    for (const std::string& warning : p.warnings) report.warnings.push_back(warning);
+
+    // Sources and triggers resolve now, not when prepared: a device may have
+    // come or gone since.
+    sequenceList = std::move(p.sequences);
+    for (SequenceEntry& entry : sequenceList)
+        for (const std::string& problem : resolveTriggers(entry))
+            report.warnings.push_back("sequence '" + entry.sequence.id + "': a MIDI trigger won't act: " + problem);
+    const Rack& rack = p.source;
+    transportSetup   = rack.transport;
+    metronomeSetup   = rack.metronome;
+    applyMetronome();
+    for (const std::string& problem : resolveTransport())
+        report.warnings.push_back("transport: a MIDI control won't act: " + problem);
+    for (Slot& slot : p.slots) {
+        if (!slot.plugin) continue;
         resolveSource(slot);
         if (!slot.sourceProblem.empty())   // no fallback to "all"
-            report.warnings.push_back(where + slot.sourceProblem + "; this slot will hear nothing from it");
-        next.push_back(std::move(slot));
+            report.warnings.push_back("slot '" + slot.saved.id + "': " + slot.sourceProblem +
+                                      "; this slot will hear nothing from it");
     }
 
-    loaded     = std::move(next);   // the old plugins live on in the old graph until it's collected
+    loaded     = std::move(p.slots);   // the old plugins live on in the old graph until it's collected
     name       = rack.name;
     setTempo(rack.tempoBpm);
     if (!setTimeSignature(rack.timeSigNumerator, rack.timeSigDenominator)) setTimeSignature(4, 4);
-    sampleRate = rate;
+    sampleRate = p.rate;
     dirty      = false;
     commitSequences();
-    commitGraph();
+    commitGraph();   // the one commit: the new slots and the rig's buses
     return std::any_of(loaded.begin(), loaded.end(),
                        [](const Slot& s) { return s.plugin != nullptr; });
+}
+
+void PreparedRack::idle() {
+    for (const Session::Slot& slot : slots)
+        if (slot.plugin) slot.plugin->idle();
 }
 
 Rack Session::capture() const {

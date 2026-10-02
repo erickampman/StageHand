@@ -5,6 +5,8 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -242,9 +244,18 @@ public:
     // there is). A set with no songs opens with the running rack left as is.
     bool openSetlist(const std::string& chosen, std::size_t song = 0);
     void closeSetlist();   // the running rack stays open, on its own
-    // Switch to a song's rack (as Open does today: the running rack is saved
-    // first). False, with a notice, if its rack is missing or won't load.
+    // Switch to a song's rack (the running rack is saved first, as Open does),
+    // with one graph commit; editors, MIDI learn and sequence windows close.
+    // A rack that isn't prepared yet (section 2) is prepared first, one plugin
+    // per tick() while the current one plays, and the switch happens when it's
+    // ready (true then too; switchPending() meanwhile). Only the last request
+    // counts. Another appearance of the rack playing is the same rack: only
+    // the position moves. False, with a notice, if its rack is missing or
+    // won't load.
     bool goToSong(std::size_t index);
+    bool switchPending() const noexcept { return waitingSong.has_value(); }
+    // Ready to switch to at once: prepared, or the rack playing.
+    bool songPrepared(std::size_t index) const;
     bool nextSong();       // skipping missing songs; false at the end
     bool previousSong();
     // Edits, all saved to the setlist file at once. "After the current song":
@@ -292,6 +303,22 @@ private:
     template <typename Change>
     void           editSequence(const std::string& id, Change change);
     bool           replaceRack(const Rack& rack, const std::string& path, const std::vector<std::string>& warnings);
+    // Save the running rack as quitting would, close what belongs to it, and
+    // make `next` the running rack (one graph commit). `next` is taken only on
+    // success; false (nothing changed) if the save failed.
+    bool           switchRack(std::unique_ptr<PreparedRack>& next, const std::string& path,
+                              const std::vector<std::string>& warnings);
+    bool           saveCaptured(const Rack& captured);   // to target, as save() does
+    // goToSong(); `now`: finish preparing it at once rather than over ticks.
+    bool           goTo(std::size_t index, bool now);
+    // Read the rack at `bundle` and start preparing it (its plugins come at
+    // the next ticks). False if it can't be read: with a notice if `report`.
+    bool           startPreparing(const std::string& bundle, bool report);
+    // Each tick: keep the next and previous songs' racks prepared, and the one
+    // a switch waits for (first), one plugin per tick; switch when it's ready.
+    void           prepareAhead();
+    void           refreshSongs(double now);   // songCache and songBundles
+    int            neighbour(int step) const;  // where Next (1) or Previous (-1) goes, by songCache; -1: none
     // Open the rack bundle at `bundle` (with replaceRack()); false, with a notice, if it can't.
     bool           loadRackAt(const std::string& bundle);
     bool           writeSetlist();          // to setlistFile; a notice if it fails
@@ -301,7 +328,7 @@ private:
     void           useRig(const std::string& path);
     bool           saveRigIfModified();     // false (with a notice) if a save failed
     void           rememberPosition();      // config.lastPositionPath
-    void           buildSetlist(double now);   // model.setlist
+    void           buildSetlist();             // model.setlist
     std::size_t    insertionPoint() const;  // where "after the current song" is
     int            nextPlayable(std::size_t from, int step) const;   // -1: none
     void           setMetronome(const MetronomeSettings& settings);
@@ -348,7 +375,21 @@ private:
     // The songs as the view shows them (names, missing racks): checked on
     // disk at most once a second, and again after any change to the set.
     std::vector<SongModel>                                songCache;
+    std::vector<std::string>                              songBundles;   // each song's bundle; "" if missing
     double                                                missingCheckedAt = -1.0;
+
+    // Prepared racks (docs/setlists.md, section 2), one per rack bundle, which
+    // every appearance of the rack shares (edge case 4): the next and previous
+    // songs', and the one a switch waits for.
+    struct Ahead {
+        std::unique_ptr<PreparedRack> rack;
+        std::vector<std::string>      warnings;   // from reading its rack.json
+    };
+    std::map<std::string, Ahead>                          prepared;
+    std::set<std::string>                                 unpreparable;   // unreadable; not retried until the set changes
+    std::optional<std::size_t>                            waitingSong;    // a switch waiting for its rack
+    std::string                                           preparingText;  // model.status.preparing
+    bool                                                  ticking = false;
 };
 
 } // namespace stagehand

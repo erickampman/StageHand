@@ -139,6 +139,10 @@ bool Engine::committedGraphAdopted() const noexcept {
            issuedSequence.load(std::memory_order_acquire);
 }
 
+std::uint64_t Engine::graphCommits() const noexcept {
+    return issuedSequence.load(std::memory_order_relaxed);
+}
+
 std::size_t Engine::collect() {
     std::size_t  count = 0;
     EngineGraph* retired = nullptr;

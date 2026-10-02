@@ -1,6 +1,7 @@
 # StageHand — Setlists and rack switching (design)
 
-Proposed 2026-10-01; nothing built yet. A setlist is an ordered list of racks
+Proposed 2026-10-01; milestones 1 and 2 built (notes under "Proposed
+milestones"). A setlist is an ordered list of racks
 to step through on stage. It builds on decisions already recorded:
 - domain-model.md, "Presets vs Racks": "A setlist is an ordered list of
   Racks. Leave room; don't build." This document is the build.
@@ -484,6 +485,23 @@ Open setlist... (a file chooser showing `*.setlist`) and Close setlist.
 Switching asks first if an untitled rack's changes would be lost, as New and
 Open do. Tests: `tests/SetlistFileTests.cpp`, `testSetlist` in
 `tests/RackControllerTests.cpp`, and the file chooser's arguments.
+
+**Milestone 2 implemented (2026-10-02):** `Session::load()` is now
+`prepare()` (a `PreparedRack`: the rack and its sequence entries),
+`prepareStep()` (one plugin created, restored and activated) and `activate()`
+(sources and triggers resolved, one graph commit with the rig's buses, so the
+rig's effects stay loaded). `RackController` keeps the next and previous
+songs' racks prepared, one plugin per tick, keyed by rack bundle so a reprise
+shares one copy (edge case 4); Next and Previous then switch at once, closing
+editors, MIDI learn and sequence windows (13). The rack left is prepared again
+from its in-memory capture, edits included. A jump to a rack that isn't ready
+waits for it while the current one plays (the last request wins); going to
+another appearance of the playing rack only moves the position. Opening a
+setlist, Open and New still prepare at once, and a switch still saves first
+(until milestone 6). The status bar shows the progress, and the setlist row a
+dot when the next song is prepared. Prepared racks are dropped if the sample
+rate changes. Tests: `testPrepare` (Session), `testPreparedRacks`
+(controller), with `Engine::graphCommits()` counting the commits.
 
 ## Open questions
 

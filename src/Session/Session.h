@@ -19,6 +19,8 @@
 
 namespace stagehand {
 
+class PreparedRack;
+
 // Runs a Rack: instantiates and activates its plugins, resolves each slot's MIDI
 // source, and publishes the resulting EngineGraph. The rack can then be edited
 // live (docs/rack-view.md, section 1), and capture() turns the running setup
@@ -57,7 +59,21 @@ public:
     // hearing nothing (no fallback to "all"), with a warning. Clears modified().
     // Returns false only if the rack produced no runnable slot at all. An empty
     // rack is fine: it starts a session to add slots to.
+    // The same as prepare(), prepareStep() until ready, then activate().
     bool load(const Rack& rack, double sampleRate, LoadReport& report);
+
+    // load() in two steps (docs/setlists.md, section 2), so a rack can be made
+    // ready while another plays. prepare() takes the rack and builds its
+    // sequence entries; nothing is created yet. Each prepareStep() then
+    // creates, restores and activates one slot's plugin (CLAP: main thread),
+    // and returns true once every slot is done. Nothing reaches the engine: a
+    // prepared plugin is activated but never processed.
+    std::unique_ptr<PreparedRack> prepare(const Rack& rack, double sampleRate);
+    bool                          prepareStep(PreparedRack& prepared);
+    // Make it the running rack, finishing its preparation first if need be:
+    // sources and triggers resolve, and one graph is committed (with the rig's
+    // effects, which stay loaded). load()'s rules and result otherwise.
+    bool activate(std::unique_ptr<PreparedRack> prepared, LoadReport& report);
 
     // The running setup as a Rack, including edits, each plugin's state freshly
     // saved. Placeholders keep what they were loaded with.
@@ -275,6 +291,31 @@ private:
     bool                                    rigDirty   = false;
     double                                  rigRate    = 0.0;   // the rig's effects' sample rate
     LoadedRig                               rigState;
+};
+
+// A rack made ready to switch to (Session::prepare()): its plugins created,
+// restored and activated at the sample rate it was prepared for, never
+// processed. It costs memory, not CPU. Dropping it destroys its plugins.
+class PreparedRack {
+public:
+    const Rack&  rack() const noexcept { return source; }
+    double       sampleRate() const noexcept { return rate; }
+    std::size_t  pluginCount() const noexcept { return source.slots.size(); }   // the steps, placeholders included
+    std::size_t  preparedCount() const noexcept { return slots.size(); }
+    bool         ready() const noexcept { return slots.size() == source.slots.size(); }
+    // The created plugins' main-thread work (HostedPlugin::idle()), as for running ones.
+    void         idle();
+
+private:
+    friend class Session;
+
+    Rack                                 source;
+    double                               rate = 0.0;
+    std::vector<Session::Slot>           slots;       // the first preparedCount() of source.slots
+    std::vector<Session::SequenceEntry>  sequences;   // triggers resolve at activate()
+    std::vector<std::string>             warnings;    // from creating the plugins
+    std::vector<PluginDescriptor>        scanned;     // the plugin scan, done at most once
+    bool                                 haveScan = false;
 };
 
 } // namespace stagehand
