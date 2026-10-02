@@ -856,6 +856,10 @@ void testSetlist() {
     CHECK(!controller.hasSetlist() && !view.setlist.open);
     CHECK(loadLastPosition(lastPath, last) && last.setlist.empty());
 
+    // So does a new rack outside the set: untitled, on its own.
+    CHECK(controller.openSetlist(file, 0) && controller.hasSetlist());
+    CHECK(controller.newRack() && !controller.hasSetlist() && controller.rackPath().empty());
+
     runBlock(*rig.engine);
     rig.engine->collect();
     fs::remove_all(dir);

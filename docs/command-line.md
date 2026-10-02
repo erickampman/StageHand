@@ -46,7 +46,7 @@ no arguments at all, it reopens the last setlist at the song it was on
 | Mode | What it does |
 |---|---|
 | `--play` | The default: host plugins, MIDI in, audio out, with the rack window |
-| `--list-plugins` | List installed CLAP plugins (id, name, note dialects) |
+| `--list-plugins` | List installed CLAP plugins: name, vendor, version, kind (instrument, effect or other, from CLAP's features), id and file |
 | `--list-midi` | List MIDI sources: id, protocol, and hardware, software or app |
 | `--monitor` | Print incoming MIDI exactly as it arrives |
 | `--tone [HZ]` | Play a test sine (default 440 Hz) to check the audio path |

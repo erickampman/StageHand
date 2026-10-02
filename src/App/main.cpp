@@ -377,9 +377,11 @@ int listPlugins() {
     std::puts("");
     const std::vector<PluginDescriptor> plugins = factory.scan();
     if (plugins.empty()) std::puts("No CLAP plugins found.");
-    for (const PluginDescriptor& d : plugins)
-        std::printf("  %s  (%s %s)\n    id   %s\n    file %s\n", d.name.c_str(), d.vendor.c_str(),
-                    d.version.c_str(), d.id.c_str(), d.path.c_str());
+    for (const PluginDescriptor& d : plugins) {
+        const char* kind = d.kind == PluginKind::Effect ? "effect" : d.kind == PluginKind::Other ? "other" : "instrument";
+        std::printf("  %s  (%s %s, %s)\n    id   %s\n    file %s\n", d.name.c_str(), d.vendor.c_str(),
+                    d.version.c_str(), kind, d.id.c_str(), d.path.c_str());
+    }
     return 0;
 }
 

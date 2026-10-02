@@ -1026,6 +1026,14 @@ void RackWidget::openFileMenu(float x, float y) {
                                [this] { fileAction(FileAction::New); }});
     m.items.push_back(MenuItem{inSet ? "Add a rack to this set...  Ctrl-O" : "Open...           Ctrl-O",
                                [this] { fileAction(FileAction::Open); }});
+    // The one step out of the set besides Close setlist: an untitled rack on its own.
+    if (inSet)
+        m.items.push_back(MenuItem{"New rack outside the set", [this] {
+                                       if (controller.unsavedUntitled())
+                                           keepChangesThen([this] { controller.newRack(); }, false);
+                                       else
+                                           controller.newRack();   // closes the setlist
+                                   }});
     m.items.push_back(MenuItem{"Save              Ctrl-S",
                                savingOff ? std::function<void()>{} : [this] { fileAction(FileAction::Save); }});
     m.items.push_back(MenuItem{"Save As...",
@@ -1224,13 +1232,31 @@ void RackWidget::openPluginMenu(float x, float y, const std::string& title,
     m.w     = 360.0f;
     m.title = title;
     if (!none.empty()) m.items.push_back(MenuItem{none, [chosen] { chosen(PluginDescriptor{}); }, false, false});
-    bool any = false;
-    for (const PluginDescriptor& plugin : controller.availablePlugins()) {   // scans once; may take a moment
-        const std::string text = plugin.name + (plugin.vendor.empty() ? "" : "  -  " + plugin.vendor);
-        m.items.push_back(MenuItem{text, [chosen, plugin] { chosen(plugin); }, false, false});
-        any = true;
-    }
-    if (!any) m.items.push_back(MenuItem{"No CLAP plugins found", {}, false, false});
+
+    // Instruments first, then other plugins (note effects), each by name. Audio
+    // effects are listed after them, greyed: a row gives its plugin no audio,
+    // so they wait for the rig's buses (docs/rig.md).
+    std::vector<PluginDescriptor> plugins = controller.availablePlugins();   // scans once; may take a moment
+    std::stable_sort(plugins.begin(), plugins.end(), [](const PluginDescriptor& a, const PluginDescriptor& b) {
+        return a.name < b.name;
+    });
+    auto text = [](const PluginDescriptor& p) { return p.name + (p.vendor.empty() ? "" : "  -  " + p.vendor); };
+    auto section = [&](PluginKind kind, const std::string& heading, bool usable) {
+        bool headed = false;
+        for (const PluginDescriptor& plugin : plugins) {
+            if (plugin.kind != kind) continue;
+            if (!headed) m.items.push_back(MenuItem{heading, {}, false, false});
+            headed = true;
+            m.items.push_back(MenuItem{"   " + text(plugin),
+                                       usable ? std::function<void()>{[chosen, plugin] { chosen(plugin); }}
+                                              : std::function<void()>{},
+                                       false, false});
+        }
+    };
+    section(PluginKind::Instrument, "Instruments", true);
+    section(PluginKind::Other, "Other (note effects)", true);
+    section(PluginKind::Effect, "Effects (for the rig's buses: not in rows yet)", false);
+    if (plugins.empty()) m.items.push_back(MenuItem{"No CLAP plugins found", {}, false, false});
     openMenu(std::move(m));
 }
 

@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <sstream>
+#include <string_view>
 
 #include "Plugin/Clap/ClapModule.h"
 #include "Plugin/Clap/ClapPlugin.h"
@@ -41,6 +42,25 @@ std::vector<PluginDescriptor> ClapPluginFactory::scan() {
     return found;
 }
 
+namespace {
+
+// CLAP's features: an instrument says "instrument"; an audio effect says
+// "audio-effect" (or "analyzer"); a note effect says "note-effect". No
+// features at all: taken for an instrument.
+PluginKind kindOf(const char* const* features) {
+    if (features == nullptr || features[0] == nullptr) return PluginKind::Instrument;
+    bool effect = false, note = false;
+    for (const char* const* f = features; *f != nullptr; ++f) {
+        const std::string_view feature = *f;
+        if (feature == CLAP_PLUGIN_FEATURE_INSTRUMENT) return PluginKind::Instrument;
+        effect = effect || feature == CLAP_PLUGIN_FEATURE_AUDIO_EFFECT || feature == CLAP_PLUGIN_FEATURE_ANALYZER;
+        note   = note || feature == CLAP_PLUGIN_FEATURE_NOTE_EFFECT;
+    }
+    return effect ? PluginKind::Effect : note ? PluginKind::Other : PluginKind::Instrument;
+}
+
+} // namespace
+
 std::vector<PluginDescriptor> ClapPluginFactory::scanFile(const std::string& path) {
     std::vector<PluginDescriptor> found;
     std::error_code   ec;
@@ -60,6 +80,7 @@ std::vector<PluginDescriptor> ClapPluginFactory::scanFile(const std::string& pat
         desc.vendor  = d->vendor != nullptr ? d->vendor : "";
         desc.version = d->version != nullptr ? d->version : "";
         desc.path    = absolute;
+        desc.kind    = kindOf(d->features);
         found.push_back(desc);
     }
     return found;

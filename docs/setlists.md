@@ -41,8 +41,14 @@ file.
   and whether the old rack rings out or is cut (section 5).
 - Its MIDI triggers: Next, Previous, Program Change. They work in every song
   and win over a rack's own triggers.
+- Which rig it uses.
 - Nothing about the sound (no tempo, plugins or levels), so it can never
   contradict a rack.
+
+**Rig: what every song shares** (added 2026-10-02; docs/rig.md). The 2
+effect buses (their effects, return levels and outputs) and the master
+level. Loaded once, kept across song switches. A setlist names its rig; a
+rack opened on its own uses the default rig.
 
 **App: this machine.** Saved in neither a rack nor a setlist.
 - The audio device and its sample rate; which MIDI devices are connected.
@@ -53,8 +59,9 @@ file.
 **The test for a new setting:** if it should travel with the piece into
 another set, it's the rack's. If it's about the order of the set or the
 moves between pieces, it's the setlist's. If it would change with a
-different laptop, it's the app's. A song only ever adds a position and a
-name.
+different laptop, it's the app's. If every song shares it and it should stay
+loaded through switches, it's the rig's. A song only ever adds a position and
+a name.
 
 ## Where things stand
 
@@ -188,9 +195,11 @@ All of this is in the app; a setlist never has to be written by hand.
 - **In a setlist, a rack is a song in it** (decided 2026-10-01). File's New
   and Open add to the set rather than leave it, so a rack never escapes the
   set by accident:
-  - File → "New rack in this set..." (Ctrl-N) asks where to save a new,
-    empty rack (the setlist's `Racks/` folder by default), adds it after the
-    current song, and plays it. It's the way to build a set from scratch:
+  - File → "New rack in this set..." (Ctrl-N) asks where to save a new
+    rack (the setlist's `Racks/` folder by default), adds it after the
+    current song, and plays it. Decided 2026-10-02 (rig.md): the new rack
+    starts as a copy of the current song's rack, not empty; with no song
+    playing, it starts empty. Not built yet: today it starts empty. It's the way to build a set from scratch:
     add, set up, add the next.
   - File → "Add a rack to this set..." (Ctrl-O) adds an existing rack after
     the current song, without switching to it.
@@ -213,8 +222,11 @@ All of this is in the app; a setlist never has to be written by hand.
   written atomically), so a setlist has no unsaved state of its own. A rack's
   own edits are saved as they are today (section 6 covers saving during a
   set).
-- **Closing it:** File → "Close setlist" is the only way out of a set. It
+- **A rack outside the set:** File → "New rack outside the set" (added
+  2026-10-02) closes the setlist and starts an untitled rack in one step.
+- **Closing it:** File → "Close setlist" leaves the set. It
   keeps the current rack open on its own, and the setlist row goes away.
+  Those two are the only ways out.
   Opening another setlist replaces this one.
 
 ## 2. Preparing racks ahead of time
