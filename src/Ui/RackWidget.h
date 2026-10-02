@@ -24,6 +24,10 @@ public:
     // model: blink phases (only while something blinks), the notice's
     // visibility. RackUi repaints when this or the model changes.
     std::uint32_t timedLook(double now) const;
+    // The height (logical) that shows the rack without scrolling: its rows
+    // (3 to 10), the buses, the dock with up to 4 sequences and loopers, the
+    // setlist row when open. For sizing a new window.
+    float wantedHeight() const;
     // Opens (or raises) a sequence's editor window; set by RackUi.
     std::function<void(const std::string& sequenceId)> openSequenceEditor;
     // Shows the desktop's file chooser: a rack (a folder) or a setlist (a file)

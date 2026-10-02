@@ -15,6 +15,8 @@
 #include "App/FileDialog.h"
 #include "App/RackController.h"
 #include "App/SequenceEditor.h"
+#include "Session/WindowState.h"
+#include "Ui/Monitor.h"
 #include "Ui/RackWidget.h"
 #include "Ui/SequenceEditorWidget.h"
 
@@ -103,6 +105,8 @@ struct RackUi::Impl {
     std::uint32_t                 drawnLook = 0;
     bool                          drawnValid = false;
 
+    std::string                   windowStatePath;   // where its size is kept; empty: not kept
+
     // The file chooser, and what to do with its answer.
     FileDialog                                   dialog;
     std::function<void(const std::string& path)> chosen;
@@ -135,7 +139,7 @@ void RackUi::Impl::openEditor(const std::string& id) {
     editors.emplace(id, std::move(e));
 }
 
-std::unique_ptr<RackUi> RackUi::open(RackController& controller) {
+std::unique_ptr<RackUi> RackUi::open(RackController& controller, const std::string& windowStatePath) {
     if (std::getenv("DISPLAY") == nullptr) {
         std::fputs("No display (DISPLAY isn't set); running without the rack window.\n", stderr);
         return nullptr;
@@ -171,16 +175,21 @@ std::unique_ptr<RackUi> RackUi::open(RackController& controller) {
     };
     impl->generation = controller.rackGeneration();
 
-    // Logical sizes, as RackWidget lays out: 990 wide, room for 3 to 10 rows,
-    // plus the sources dock (its header, inputs row, and up to 3 sequences).
-    const double sf   = impl->window.getScaleFactor();
-    const auto   rows = static_cast<double>(std::clamp<std::size_t>(controller.view().rows.size(), 3, 10));
-    const double dock = 28.0 + 34.0 + 44.0 * static_cast<double>(std::clamp<std::size_t>(controller.view().sequences.size(), 1, 3));
-    const auto   px   = [sf](double logical) { return static_cast<unsigned>(std::lround(logical * sf)); };
+    // Logical sizes: the last run's, else 1100 wide and tall enough for the
+    // rack (RackWidget::wantedHeight()); within the monitor it opens on.
+    const double sf      = impl->window.getScaleFactor();
+    const auto   px      = [sf](double logical) { return static_cast<unsigned>(std::lround(logical * sf)); };
+    const WindowSize minimum{930.0, 44.0 + 64.0 * 2.0 + 28.0 + 34.0 + 44.0 + 30.0};
+    WindowSize       wanted{1100.0, impl->widget->wantedHeight()};
+    impl->windowStatePath = windowStatePath;
+    if (!windowStatePath.empty()) loadWindowSize(windowStatePath, wanted);
+    WindowSize monitor;
+    if (unsigned w = 0, h = 0; ui::monitorUnderPointer(w, h)) monitor = WindowSize{w / sf, h / sf};
+    const WindowSize size = fitWindowSize(wanted, minimum, monitor);
     impl->setTitle();
     impl->window.setResizable(true);
-    impl->window.setGeometryConstraints(px(930.0), px(44.0 + 64.0 * 2.0 + 28.0 + 34.0 + 44.0 + 30.0));
-    impl->window.setSize(px(990.0), px(44.0 + 64.0 * rows + dock + 30.0));
+    impl->window.setGeometryConstraints(px(minimum.width), px(minimum.height));
+    impl->window.setSize(px(size.width), px(size.height));
     impl->window.show();
     return std::unique_ptr<RackUi>(new RackUi(std::move(impl)));
 }
@@ -188,6 +197,11 @@ std::unique_ptr<RackUi> RackUi::open(RackController& controller) {
 RackUi::RackUi(std::unique_ptr<Impl> ui) : impl(std::move(ui)) {}
 
 RackUi::~RackUi() {
+    if (!impl->windowStatePath.empty()) {
+        const double sf = impl->window.getScaleFactor();
+        saveWindowSize(impl->windowStatePath,
+                       WindowSize{impl->window.getWidth() / sf, impl->window.getHeight() / sf});
+    }
     // Editors first, then the rack window, then put the Application in
     // quitting state (DGL's teardown order).
     for (auto& [id, e] : impl->editors) impl->closeEditor(e);

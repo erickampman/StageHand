@@ -251,6 +251,14 @@ Constraints carried from the spike and the DGL notes in architecture.md:
   double-click-to-reset. The source is a popup list.
 - Stage-first drawing: large type, high contrast, and a UI scale factor
   (HiDPI and a "big" mode).
+- **The window's size** (2026-10-02) is kept as it closes, in
+  `$XDG_STATE_HOME/stagehand/window.json` (default `~/.local/state/...`; this
+  machine's, not a rack's or the rig's), and reopened at. The first time,
+  it's 1100 wide and tall enough for the rack (`RackWidget::wantedHeight()`:
+  its rows, the buses, the dock). Either way it's fitted to the monitor under
+  the pointer (XRandR; the whole X screen without it), at most 92% of it, so
+  a size kept on a big monitor shrinks on a small one. Its position isn't
+  kept (the window manager places it).
 
 ## 7. Files: New, Open, Save, Save As (2026-09-30)
 

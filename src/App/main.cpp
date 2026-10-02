@@ -32,6 +32,7 @@
 #include "Session/RigFile.h"
 #include "Session/Session.h"
 #include "Session/SetlistFile.h"
+#include "Session/WindowState.h"
 #include "Ui/RackUi.h"
 
 using namespace stagehand;
@@ -657,7 +658,7 @@ int runPlay(const Options& options) {
     };
 
     // The rack window, unless --no-ui (or there's no display).
-    std::unique_ptr<RackUi> ui = options.ui ? RackUi::open(controller) : nullptr;
+    std::unique_ptr<RackUi> ui = options.ui ? RackUi::open(controller, defaultWindowStatePath()) : nullptr;
     uiRef                      = &ui;
 
     // Editors open after audio starts, so they show the running plugins. With
