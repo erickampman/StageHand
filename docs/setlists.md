@@ -1,6 +1,6 @@
 # StageHand — Setlists and rack switching (design)
 
-Proposed 2026-10-01; milestones 1 to 5 built (notes under "Proposed
+Proposed 2026-10-01; milestones 1 to 6 built (notes under "Proposed
 milestones"). A setlist is an ordered list of racks
 to step through on stage. It builds on decisions already recorded:
 - domain-model.md, "Presets vs Racks": "A setlist is an ordered list of
@@ -551,6 +551,18 @@ switch at once, as before. File > Setlist settings... sets them (saved at
 once). Switching at a bar is block-accurate: the block holding the line, so a
 downbeat played on time goes to the new song. Tests: `testSongSwitch`
 (engine), `testSwitchSettings` (controller).
+
+**Milestone 6 implemented (2026-10-02):** a song switch never saves. The
+rack left is captured (each plugin's `saveState()`, in memory) and, if it has
+edits, kept in the controller's `unsavedRacks`: one in-memory copy per rack
+path, which preparing, switching to or opening that rack uses (it's then the
+running rack, unsaved). So a reprise plays the edit, and a failed write can
+never hold up a switch. Ctrl-S writes the running rack, every rack kept
+unsaved and the rig; a write that fails is a notice, and that rack stays
+unsaved. Quitting, Close setlist and opening another setlist save the kept
+racks too (unless saving is off). Open and New outside a switch still save
+the running rack first. The toolbar shows "N songs unsaved" and the song
+list marks them. Tests: `testSavingInASet` (controller).
 
 ## Open questions
 

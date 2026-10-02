@@ -229,9 +229,15 @@ public:
     // close, MIDI learn is cancelled. False (with a notice) if nothing changed.
     bool newRack();
     bool openRack(const std::string& chosen);
-    // To rackPath(), and the rig too if it has changes (Ctrl-S saves
-    // everything). False (with a notice) if untitled or saving is off.
+    // To rackPath(), and the rig too if it has changes, and every other rack
+    // with edits kept in memory (Ctrl-S saves everything; docs/setlists.md,
+    // section 6). False (with a notice) if untitled, saving is off, or a write
+    // failed (that rack stays unsaved).
     bool save();
+    // Racks switched away from with unsaved edits: kept in memory, one copy per
+    // rack path, which preparing, switching to or opening that rack uses (it's
+    // unsaved again then). A live switch never saves (section 6).
+    std::size_t unsavedRackCount() const noexcept { return unsavedRacks.size(); }
     // The rig in use: the setlist's, else the default (empty: none).
     const std::string& rigPath() const noexcept { return rigFile; }
     // Save to a new bundle (".rack" added if missing), which becomes the rack's
@@ -239,7 +245,8 @@ public:
     // anything else there never is.
     enum class SaveAsResult { Saved, Failed, NeedsReplace };
     SaveAsResult saveAs(const std::string& chosen, bool replace = false);
-    // At quit: save a titled rack (unless saving is off). False if a save failed.
+    // At quit: save a titled rack and every rack kept unsaved (unless saving is
+    // off). False if a save failed.
     bool saveForQuit();
     // Changes whenever another rack replaces the running one: windows tied to
     // its sequences must close (their ids may mean something else now).
@@ -336,8 +343,13 @@ private:
     // success; false (nothing changed) if the save failed.
     // `how`: the setlist's switch settings for a song; Open and New (not live
     // actions) stop the transport and switch at once.
+    // `live`: a song switch, which never saves; the rack left keeps its edits
+    // in memory (unsavedRacks). Otherwise it's saved first, as at quit, and a
+    // failed save changes nothing.
     bool           switchRack(std::unique_ptr<PreparedRack>& next, const std::string& path,
-                              const std::vector<std::string>& warnings, const Session::SwitchOptions& how);
+                              const std::vector<std::string>& warnings, const Session::SwitchOptions& how,
+                              bool live);
+    bool           saveUnsavedRacks();   // every rack in unsavedRacks; a notice for each that fails
     bool           saveCaptured(const Rack& captured);   // to target, as save() does
     // goToSong(); `now`: finish preparing it at once rather than over ticks.
     bool           goTo(std::size_t index, bool now);
@@ -433,6 +445,7 @@ private:
     std::map<std::string, Ahead>                          prepared;
     std::set<std::string>                                 unpreparable;   // unreadable; not retried until the set changes
     std::optional<std::size_t>                            waitingSong;    // a switch waiting for its rack
+    std::map<std::string, Rack>                           unsavedRacks;   // by bundle; unsavedRackCount()
     std::string                                           preparingText;  // model.status.preparing
     bool                                                  ticking = false;
 };

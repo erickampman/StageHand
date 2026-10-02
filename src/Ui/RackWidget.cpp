@@ -346,7 +346,8 @@ void RackWidget::openSongMenu(float x, float y) {
     m.title = set.name;
     for (std::size_t i = 0; i < set.songs.size(); ++i) {
         const SongModel&  s    = set.songs[i];
-        const std::string text = std::to_string(i + 1) + "   " + s.name + (s.missing ? "   (rack missing)" : "");
+        const std::string text = std::to_string(i + 1) + "   " + s.name + (s.missing ? "   (rack missing)" : "") +
+                                 (s.unsaved ? "   (unsaved)" : "");
         m.items.push_back(MenuItem{
             text,
             s.missing ? std::function<void()>{[this, i, x, y] { openMissingSongMenu(i, x, y); }}
@@ -472,8 +473,13 @@ void RackWidget::drawToolbar() {
     save();
     scissor(kPad, 0, kTransportX - kPad * 2, kToolbarH);
     label(kPad, kToolbarH / 2 - (view.modified ? 6.0f : 0.0f), name, 18.0f, kText);
-    if (view.modified || view.rig.modified)   // Ctrl-S saves both
-        label(kPad, kToolbarH / 2 + 12.0f, view.modified ? "unsaved changes" : "unsaved rig changes", 11.0f, kAmber);
+    // Ctrl-S saves all of it: this rack, the others kept unsaved, the rig.
+    const std::size_t songs = view.otherUnsaved + (view.modified ? 1 : 0);
+    const std::string unsaved = view.otherUnsaved != 0 ? std::to_string(songs) + (songs == 1 ? " song unsaved" : " songs unsaved")
+                                : view.modified     ? "unsaved changes"
+                                : view.rig.modified ? "unsaved rig changes"
+                                                    : "";
+    if (!unsaved.empty()) label(kPad, kToolbarH / 2 + 12.0f, unsaved, 11.0f, kAmber);
     restore();
     drawTransport(kTransportX);
 
