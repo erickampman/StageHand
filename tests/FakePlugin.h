@@ -51,6 +51,7 @@ public:
         return true;
     }
     void idle() override {}
+    bool hasEditor() const override { return editor; }
 
     void process(const ProcessContext& ctx) noexcept override {
         processing = true;
@@ -75,6 +76,7 @@ public:
     bool                   processing        = false;
     bool                   active            = false;
     bool                   loadedWhileActive = false;
+    bool                   editor            = false;   // hasEditor()
 
 private:
     PortLayout layout;

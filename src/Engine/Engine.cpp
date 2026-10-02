@@ -173,8 +173,13 @@ void Engine::commitSequences(std::unique_ptr<SequenceSet> sequences) {
     delete pendingSequences.exchange(sequences.release(), std::memory_order_acq_rel);   // superseded, never ran
 }
 
-void Engine::armLearn() noexcept {
+void Engine::armLearn(bool programChanges) noexcept {
+    learnPrograms.store(programChanges, std::memory_order_relaxed);
     learnState.store(kLearnArmed, std::memory_order_release);
+}
+
+bool Engine::takeSetlistRequest(SetlistRequest& request) noexcept {
+    return setlistRequests.pop(request);
 }
 
 void Engine::cancelLearn() noexcept {
@@ -552,8 +557,11 @@ void Engine::takeMidi(const AudioCallbackContext& ctx) noexcept {
             entry.offset     = static_cast<std::uint32_t>(std::min<std::uint64_t>(frame, frames - 1));
         }
 
-        const MidiMessage& m = entry.item.message.message;
-        if (isPress(m) && learnState.load(std::memory_order_acquire) == kLearnArmed) {
+        const MidiMessage& m        = entry.item.message.message;
+        const bool         learning = learnPrograms.load(std::memory_order_relaxed)
+                                          ? ump::isChannelVoice(m) && ump::status(m) == ump::Status::ProgramChange
+                                          : isPress(m);
+        if (learning && learnState.load(std::memory_order_acquire) == kLearnArmed) {
             learned.source  = entry.item.source;
             learned.message = m;
             int armed       = kLearnArmed;   // unless the main thread cancelled meanwhile
@@ -561,6 +569,13 @@ void Engine::takeMidi(const AudioCallbackContext& ctx) noexcept {
             continue;
         }
         if (currentSequences != nullptr) {
+            // The setlist's triggers first: they win over the rack's (edge case 6).
+            SequenceSet::SetlistHit setlistHit;
+            bool                    setlistFired = false;
+            if (currentSequences->matchSetlist(entry.item.source, m, setlistHit, setlistFired)) {
+                if (setlistFired) setlistRequests.push(setlistHit);   // full: dropped (16 presses in one tick)
+                continue;
+            }
             SequenceSet::TriggerHit hits[16];
             bool                    matched = false;
             const std::size_t       fired =

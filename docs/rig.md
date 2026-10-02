@@ -169,6 +169,21 @@ with Ctrl-S. Tests: `tests/RigFileTests.cpp`, `testRig` (Session), `testRigs`
 (controller), sends in the rack and setlist file tests. No UI yet
 (milestone 3): to try it, edit `rig.json` and a rack's `"sends"` by hand.
 
+**Milestone 3 done (2026-10-02):** the view model's `RigModel` (the buses,
+their effects, return levels, mutes, outputs and return meters, and the
+master) and each row's `sendDb`; the controller's intents (`setSendDb`,
+`setReturnDb`, `setBusMuted`, `setBusOutput`, `setMasterDb`, `setBusEffect`,
+`openBusEditor`), each patched into the view model at once as a fader's are.
+A bus effect's editor stays open through rack and song switches (the rig
+stays loaded) and closes when its slot is emptied or the rig changes. The rig
+effects get `idle()` like the rows' plugins. UI: A and B send boxes left of
+each row's fader (drag up or down, the wheel, a double-click for on or off),
+two bus strips between the rows and the Sources dock (each effect slot a menu
+of the scan's audio effects, with Edit; M, the return fader over its meter,
+its output pair), and the master fader in the status bar. "+ Add plugin"
+still lists the effects greyed (they belong on the buses). The toolbar marks
+unsaved rig changes too. Tests: `testRigControls` (controller).
+
 ## Open questions
 
 None at the moment (answered 2026-10-02: a new song copies the current one;

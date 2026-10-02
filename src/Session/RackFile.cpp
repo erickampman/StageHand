@@ -33,42 +33,6 @@ bool validSlotId(const std::string& id) {
     return true;
 }
 
-MidiSourceRef parseSource(const std::string& text) {
-    MidiSourceRef ref;
-    if (text == "all") return ref;
-    if (text == "none") {
-        ref.kind = MidiSourceRef::Kind::None;
-        return ref;
-    }
-    if (text.rfind("device:", 0) == 0 && text.size() > 7) {
-        ref.kind = MidiSourceRef::Kind::Device;
-        ref.name = text.substr(7);
-        return ref;
-    }
-    if (text.rfind("virtual:", 0) == 0 && text.size() > 8) {
-        ref.kind = MidiSourceRef::Kind::Virtual;
-        ref.name = text.substr(8);
-        return ref;
-    }
-    if (text.rfind("sequence:", 0) == 0 && text.size() > 9) {
-        ref.kind = MidiSourceRef::Kind::Sequence;
-        ref.name = text.substr(9);
-        return ref;
-    }
-    fail("midi.source '" + text + "' should be \"all\", \"none\", \"device:<id>\" or \"virtual:<name>\"");
-}
-
-std::string sourceText(const MidiSourceRef& ref) {
-    switch (ref.kind) {
-        case MidiSourceRef::Kind::All:     return "all";
-        case MidiSourceRef::Kind::Device:  return "device:" + ref.name;
-        case MidiSourceRef::Kind::Virtual: return "virtual:" + ref.name;
-        case MidiSourceRef::Kind::Sequence: return "sequence:" + ref.name;   // never saved (converted on load)
-        case MidiSourceRef::Kind::None:    return "none";
-    }
-    return "all";
-}
-
 // --- sequences (docs/sequences.md, section 2) ------------------------------------
 
 int intIn(const Json& s, const char* field, int fallback, int low, int high) {

@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 
 #include "App/RackController.h"
@@ -63,9 +64,23 @@ private:
     float dockHeight();
     float dockTop();
     float dockMaxScroll();
+    float rigHeight() const;   // the bus strips, when a rig is loaded
+    float rigTop();            // above the dock
 
     // --- parts
     void meterBars(float x0, float x1, float y, const float db[2], const float hold[2]);
+    void openSetlistMidiMenu(float x, float y);
+    // A horizontal dB fader centred on `cy`: drag (Shift: fine), the wheel
+    // (half a dB a notch), double-click for 0 dB. `current` reads the value at
+    // event time; `key` tells double-clicks on different faders apart.
+    void dbFader(float x0, float x1, float cy, float db, bool dim, float thumbH, const std::string& key,
+                 std::function<std::optional<float>()> current, std::function<void(float)> set);
+    // A row's send to a bus (docs/rig.md): drag up or down, the wheel, double-click on/off.
+    void sendBox(const RowModel& row, std::size_t bus, float x, float y);
+    void drawRig();
+    void drawBusStrip(const BusModel& bus, std::size_t index, float y);
+    void openEffectMenu(std::size_t bus, std::size_t slot, float x, float y);
+    void openBusOutputMenu(std::size_t bus, float x, float y);
     void drawSetlistRow();
     void drawToolbar();
     void drawTransport(float x);

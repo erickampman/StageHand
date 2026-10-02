@@ -236,6 +236,15 @@ public:
     const std::string& startOnNoteIssue() const noexcept { return startOnNoteProblem; }
     double        sequencePosition(const std::string& id) const noexcept;   // units into the loop
 
+    // --- the setlist's MIDI triggers (docs/setlists.md, section 4): published
+    // with every rack's sequences and matched before the rack's own triggers,
+    // and kept through rack loads. Not the rack's: no modified(). Inputs
+    // resolve as a sequence's triggers do; returns why some won't act.
+    // Committed at the next flush().
+    std::vector<std::string>             setSetlistTriggers(const std::vector<SetlistTrigger>& triggers);
+    const std::vector<SetlistTrigger>&   setlistTriggers() const noexcept { return setlistControls; }
+    const std::vector<MidiSourceHandle>& setlistTriggerHandles() const noexcept { return setlistSources; }
+
     // Commit the graph if a structural edit is pending, or a draining slot has
     // finished (it's left out). Call once per UI tick.
     void flush();
@@ -306,6 +315,8 @@ private:
     double                                  rigRate    = 0.0;   // the rig's effects' sample rate
     LoadedRig                               rigState;
     std::vector<SlotConfig>                 draining;   // drainingSlots()
+    std::vector<SetlistTrigger>             setlistControls;
+    std::vector<MidiSourceHandle>           setlistSources;   // setlistControls' inputs, resolved
 };
 
 // A rack made ready to switch to (Session::prepare()): its plugins created,

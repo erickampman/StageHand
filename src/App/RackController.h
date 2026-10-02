@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -111,6 +112,21 @@ public:
     void tapTempo(double nowSeconds);
     void clearClip(const std::string& id);
     void clearOutputClip();
+
+    // --- the rig (docs/rig.md): its edits mark it modified (Ctrl-S saves it
+    // with the rack). Without a rig, they do nothing.
+    void setSendDb(const std::string& id, std::size_t bus, std::optional<float> db);   // none = off
+    void setReturnDb(std::size_t bus, float db);
+    void setBusMuted(std::size_t bus, bool muted);
+    void setBusOutput(std::size_t bus, std::uint32_t firstOutput);
+    void setMasterDb(float db);
+    // `plugin` null empties the slot; its editor closes first. A notice if the
+    // plugin can't be loaded (the slot keeps what it had).
+    void setBusEffect(std::size_t bus, std::size_t slot, const PluginDescriptor* plugin);
+    // A bus effect's editor. Unlike a row's, it stays open through song
+    // switches: the rig stays loaded.
+    void openBusEditor(std::size_t bus, std::size_t slot);
+    void closeBusEditor(std::size_t bus, std::size_t slot);
 
     // Plugins that can be added, scanned on first use (slow: loads each file).
     const std::vector<PluginDescriptor>& availablePlugins();
@@ -267,6 +283,14 @@ public:
     bool renameSong(std::size_t index, const std::string& name);   // "" = the rack's own name
     bool removeSong(std::size_t index);                        // the rack stays on disk
     bool relinkSong(std::size_t index, const std::string& chosen);   // point a (missing) song at another rack
+    // Its MIDI triggers (section 4), saved to the setlist at once. Learned as
+    // the transport's are: Next and Previous from the next note-on or
+    // controller press, Song from the next Program Change (program n then goes
+    // to song n + 1). A new one replaces the trigger for its action and any
+    // other use of its control. They win over a rack's triggers on the same
+    // control; a rack that has one gets a warning when it's switched to.
+    void learnSetlistTrigger(SetlistTrigger::Action action);
+    void removeSetlistTrigger(std::size_t index);   // index into the setlist's triggers
 
 private:
     // A meter's display state between ticks.
@@ -336,7 +360,19 @@ private:
     // there; `report`: say so when it isn't (once, until it connects).
     void           routeClick(bool report);
     void           buildDock(double now);
+    void           buildRig(double now, double dt);   // model.rig
     void           finishLearn(const Engine::Learned& learned);
+    // The setlist's triggers that fired since the last tick, all at once
+    // (pressing Next three times goes three songs on), then one switch.
+    void           takeSetlistRequests();
+    // Where Next (1) or Previous (-1) goes from `from` (a song if `atSong`,
+    // else the gap where a removed song was), skipping missing racks; -1: none.
+    int            stepFrom(std::size_t from, bool atSong, int step) const;
+    void           applySetlistTriggers();   // to the Session; notices for inputs that aren't there
+    // The rack's triggers that the setlist's override (edge case 6), as warnings.
+    std::vector<std::string> triggerConflicts(const std::string& rackName, const TransportSettings& transport,
+                                              const std::vector<const Sequence*>& sequences) const;
+    std::string    setlistTriggerText(const SetlistTrigger& trigger) const;
     std::string    triggerText(const SequenceTrigger& trigger) const;
 
     Session&       session;
@@ -348,6 +384,8 @@ private:
     RackViewModel                                        model;
     std::map<std::string, std::unique_ptr<EditorHandle>> editors;   // by slot id
     std::map<std::string, RowCache>                      rows;      // by slot id
+    std::map<std::pair<std::size_t, std::size_t>, std::unique_ptr<EditorHandle>> busEditors;   // by (bus, slot)
+    std::array<Ballistics, kRigBuses>                     busMeters;
     Ballistics                                            master;
     std::vector<MidiSourceInfo>                           enumerated;
     std::vector<PluginDescriptor>                         available;
@@ -355,6 +393,7 @@ private:
     std::map<MidiSourceHandle, std::pair<std::uint32_t, double>> inputActivity;   // last count, lit until
     std::string                                           learningId;   // the sequence being learned for
     SequenceTrigger::Action                               learningAction = SequenceTrigger::Action::Toggle;
+    SetlistTrigger::Action                                setlistLearnAction = SetlistTrigger::Action::Next;
     std::string                                           target;          // the rack's bundle; "" = untitled
     std::string                                           rigFile;         // the rig in use; "" = none
     std::uint64_t                                         generation = 0;  // rackGeneration()

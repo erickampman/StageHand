@@ -499,6 +499,60 @@ void testDraining() {
     engine->collect();
 }
 
+// The setlist's triggers (docs/setlists.md, section 4): matched before the
+// rack's (a transport trigger on the same pedal doesn't act), passed to the
+// main thread, and going nowhere else; Program Change carries its number.
+void testSetlistTriggers() {
+    auto engine = std::make_unique<Engine>();
+    auto plugin = std::make_shared<FakePlugin>(2, NoteDialect::Midi);
+    engine->commit(graphOf({slotFor(plugin)}));
+    TransportControl control;
+    control.triggers.push_back(CompiledSequence::Trigger{1, SequenceTrigger::Action::Start,
+                                                         SequenceTrigger::Control::Controller, 0, 0, 80});
+    control.setlist.push_back(CompiledSetlistTrigger{1, SetlistTrigger::Action::Next,
+                                                     SequenceTrigger::Control::Controller, 0, 0, 80});
+    control.setlist.push_back(CompiledSetlistTrigger{kInvalidMidiSource, SetlistTrigger::Action::Song,
+                                                     SequenceTrigger::Control::Note, 0, 15, 0});
+    engine->commitSequences(std::make_unique<SequenceSet>(std::vector<CompiledSequence>{}, control));
+    auto send = [&](std::uint32_t word) {
+        TimedMidiMessage m;
+        m.captureTime       = T - 5 * ms;
+        m.message.words[0]  = word;
+        m.message.wordCount = 1;
+        engine->onMidi(1, m);
+        Block blk(64, 48000.0, T);
+        engine->process(blk.ctx);
+    };
+
+    send(0x20B0507Fu);   // CC 80 pressed
+    Engine::SetlistRequest request;
+    CHECK(engine->takeSetlistRequest(request) && request.action == SetlistTrigger::Action::Next);
+    CHECK(!engine->takeSetlistRequest(request));
+    CHECK(!engine->transport().running);   // the rack's Start on the same pedal didn't act
+    send(0x20B05000u);   // released: still the setlist's, nothing fires
+    CHECK(!engine->takeSetlistRequest(request));
+    send(0x20CF0400u);   // Program Change 4 (the fifth) on channel 16
+    CHECK(engine->takeSetlistRequest(request) && request.action == SetlistTrigger::Action::Song && request.program == 4);
+    send(0x20C00400u);   // on channel 1: not a trigger, so a slot hears it
+    CHECK(!engine->takeSetlistRequest(request));
+    std::size_t heard = 0;
+    for (const FakePlugin::Call& call : plugin->calls) heard += call.events.size();
+    CHECK(heard == 1);
+
+    // Learning a Program Change ignores presses.
+    engine->armLearn(true);
+    send(0x20B0507Fu);
+    Engine::Learned learned;
+    CHECK(!engine->takeLearned(learned));
+    send(0x20C10700u);
+    CHECK(engine->takeLearned(learned) && ump::status(learned.message) == ump::Status::ProgramChange);
+
+    engine->commit(nullptr);
+    Block blk(64, 48000.0, T);
+    engine->process(blk.ctx);
+    engine->collect();
+}
+
 // The rig's buses (docs/rig.md): post-fader sends, effects in series (an empty
 // slot passes audio on), the return level and output pair, the master, and
 // bus plugins kept across commits. A slot outputs a constant, so after the
@@ -849,6 +903,7 @@ int main() {
     testSlotMeters();
     testMute();
     testDraining();
+    testSetlistTriggers();
     testBuses();
     testTransport();
     testGraphLifecycle();

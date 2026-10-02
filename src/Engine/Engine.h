@@ -130,7 +130,9 @@ public:
     // --- MIDI learn (docs/sequences.md, section 4). Main thread.
     // Arm: the next note-on, or controller press (a value of 64 or more), from
     // any input is captured instead of reaching rows or triggers.
-    void armLearn() noexcept;
+    // `programChanges`: capture the next Program Change instead (a setlist's
+    // Song trigger, docs/setlists.md section 4).
+    void armLearn(bool programChanges = false) noexcept;
     void cancelLearn() noexcept;
     struct Learned {
         MidiSourceHandle source = kInvalidMidiSource;
@@ -138,6 +140,12 @@ public:
     };
     // True once per capture, with what was captured; learning is then over.
     bool takeLearned(Learned& learned) noexcept;
+
+    // The setlist's triggers (published with the sequences, TransportControl::
+    // setlist) fired: the audio thread can't switch racks, so it passes each
+    // on. Main thread; true once per request, oldest first.
+    using SetlistRequest = SequenceSet::SetlistHit;
+    bool takeSetlistRequest(SetlistRequest& request) noexcept;
 
     // Messages received from one MIDI input so far (0 if none yet): the sources
     // dock's activity lights compare it between ticks. Any thread.
@@ -344,6 +352,8 @@ private:
     // then Armed -> Captured; main reads it and goes back to Idle.
     enum : int { kLearnIdle, kLearnArmed, kLearnCaptured };
     std::atomic<int>              learnState{kLearnIdle};
+    std::atomic<bool>             learnPrograms{false};
+    SpscQueue<SequenceSet::SetlistHit, 16> setlistRequests;   // audio -> main
     Learned                       learned;
 
     // Per-input message counts (audio writes, main reads). A slot is claimed by
