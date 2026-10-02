@@ -1,9 +1,6 @@
 # StageHand — TODO
 
-- **A looper that adds a sequence.** Recording what's played into a new
-  sequence (docs/sequences.md), with a MIDI signal to start it and to
-  stop / repeat it (MIDI learn, like the sequences' and the transport's
-  triggers). The recorded sequence is not saved into the rack automatically.
+- **The looper:** designed in docs/looper.md (2026-10-02), not built yet.
 
 - **Rack rows come first when they don't all fit.** Today the two bus strips
   take fixed space between the rows and the Sources dock, so with many rows the
