@@ -1291,6 +1291,79 @@ void testSwitchSettings() {
     fs::remove_all(dir);
 }
 
+// Saving in a set (docs/setlists.md, section 6): a switch never saves, so a
+// write can't hold it up; the rack left keeps its edits in memory,
+// shown as unsaved, and a reprise plays them; one Save writes every unsaved
+// rack; closing the set saves them too.
+void testSavingInASet() {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / "stagehand-saving-test";
+    fs::remove_all(dir);
+    std::vector<std::string> racks;
+    for (const char* name : {"A", "B", "C"}) {
+        Rack rack;
+        rack.name  = name;
+        rack.slots = {slot("keys", "synth", "/clap/Synth.clap")};
+        racks.push_back((dir / "Racks" / (std::string(name) + ".rack")).string());
+        CHECK(saveRack(racks.back(), rack).ok);
+    }
+    const std::string a = racks[0], b = racks[1], c = racks[2];
+    Setlist set;
+    set.songs = {SetlistSong{a, ""}, SetlistSong{b, ""}, SetlistSong{a, ""}, SetlistSong{c, ""}};   // A again: a reprise
+    const std::string file = (dir / "Gig.setlist").string();
+    CHECK(saveSetlist(file, set).ok);
+    auto gainOnDisk = [](const std::string& path) {
+        Rack rack;
+        return loadRack(path, rack).ok && !rack.slots.empty() ? rack.slots[0].gainDb : 99.0f;
+    };
+
+    Rig                 rig;
+    Session::LoadReport report;
+    rig.session->load(Rack{}, 48000.0, report);
+    RackController       controller(*rig.session, *rig.engine, rig.midi, rig.factory, rig.config());
+    const RackViewModel& view = controller.view();
+    double               now  = 0.0;
+    auto tick = [&] { controller.tick(now += 2.0); };
+    CHECK(controller.openSetlist(file, 0));
+    tick();
+
+    // Edit A, switch: nothing is written; A's edit is kept, and shown.
+    controller.setGainDb("keys", -6.0f);
+    CHECK(controller.nextSong() && controller.rackPath() == b);
+    tick();
+    CHECK(gainOnDisk(a) == 0.0f && controller.unsavedRackCount() == 1 && view.otherUnsaved == 1 && !view.modified);
+    CHECK(view.setlist.songs[0].unsaved && view.setlist.songs[2].unsaved && !view.setlist.songs[1].unsaved);
+
+    // The reprise plays the edit (its prepared copy came from memory), and it's unsaved there.
+    for (int i = 0; i < 3 && !controller.songPrepared(2); ++i) tick();
+    CHECK(controller.nextSong() && controller.rackPath() == a);
+    CHECK(rig.session->slot("keys")->saved.gainDb == -6.0f && rig.session->modified() &&
+          controller.unsavedRackCount() == 0);
+
+    // Edit A again and B, switching between: then one Save writes both.
+    controller.setGainDb("keys", -9.0f);
+    for (int i = 0; i < 4 && !controller.songPrepared(1); ++i) tick();
+    CHECK(controller.previousSong() && controller.rackPath() == b);
+    controller.setGainDb("keys", -3.0f);
+    tick();
+    CHECK(view.otherUnsaved == 1 && view.modified);   // "2 songs unsaved"
+    CHECK(controller.save());
+    CHECK(gainOnDisk(a) == -9.0f && gainOnDisk(b) == -3.0f && controller.unsavedRackCount() == 0 &&
+          !rig.session->modified());
+
+    // Edited again and left: closing the set saves what it kept.
+    controller.setGainDb("keys", -1.0f);
+    for (int i = 0; i < 4 && !controller.songPrepared(2); ++i) tick();
+    CHECK(controller.nextSong() && controller.rackPath() == a && controller.unsavedRackCount() == 1);
+    CHECK(gainOnDisk(b) == -3.0f);   // not written by the switch
+    controller.closeSetlist();
+    CHECK(controller.unsavedRackCount() == 0 && gainOnDisk(b) == -1.0f);
+
+    runBlock(*rig.engine);
+    rig.engine->collect();
+    fs::remove_all(dir);
+}
+
 } // namespace
 
 int main() {
@@ -1313,5 +1386,6 @@ int main() {
     testSetlistTriggers();
     testRigControls();
     testSwitchSettings();
+    testSavingInASet();
     return test::finish("RackController");
 }

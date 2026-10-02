@@ -114,8 +114,9 @@ void RackController::tick(double now) {
     const double dt = lastTick < 0.0 ? 0.0 : std::max(0.0, now - lastTick);
     lastTick        = now;
 
-    model.rackName = session.rackName();
-    model.modified = session.modified();
+    model.rackName     = session.rackName();
+    model.modified     = session.modified();
+    model.otherUnsaved = unsavedRacks.size();
     buildSetlist();
 
     TransportModel&         transport = model.transport;
@@ -1001,11 +1002,34 @@ std::string RackController::triggerText(const SequenceTrigger& t) const {
 // --- saving and quitting -----------------------------------------------------------
 
 bool RackController::save() {
-    if (config.savingOff || target.empty()) {
-        notice(config.savingOff ? "Not saved: saving is off (--no-save-rack)" : "Not saved: this rack is untitled; use Save As");
+    if (config.savingOff) {
+        notice("Not saved: saving is off (--no-save-rack)");
         return false;
     }
-    return saveCaptured(session.capture());
+    const bool others = saveUnsavedRacks();
+    if (target.empty()) {
+        notice("Not saved: this rack is untitled; use Save As");
+        return false;
+    }
+    return saveCaptured(session.capture()) && others;
+}
+
+bool RackController::saveUnsavedRacks() {
+    bool        ok    = true;
+    std::size_t saved = 0;
+    for (auto it = unsavedRacks.begin(); it != unsavedRacks.end();) {
+        const RackFileResult result = saveRack(it->first, it->second);
+        if (!result.ok) {
+            notice("Couldn't save " + rackNameOf(it->first) + ": " + result.error + "; it stays unsaved");
+            ok = false;
+            ++it;
+            continue;
+        }
+        it = unsavedRacks.erase(it);
+        ++saved;
+    }
+    if (saved != 0) notice("Saved " + std::to_string(saved) + (saved == 1 ? " other song's rack" : " other songs' racks"));
+    return ok;
 }
 
 bool RackController::saveCaptured(const Rack& captured) {
@@ -1058,7 +1082,9 @@ RackController::SaveAsResult RackController::saveAs(const std::string& chosen, b
 
 bool RackController::saveForQuit() {
     if (config.savingOff) return true;
-    return target.empty() ? saveRigIfModified() : save();
+    if (!target.empty()) return save();
+    const bool others = saveUnsavedRacks();
+    return saveRigIfModified() && others;
 }
 
 // --- the rig (docs/rig.md) -------------------------------------------------------------
@@ -1125,6 +1151,8 @@ bool RackController::openRack(const std::string& chosen) {
 }
 
 bool RackController::loadRackAt(const std::string& bundle) {
+    if (const auto kept = unsavedRacks.find(bundle); kept != unsavedRacks.end())
+        return replaceRack(kept->second, bundle, {});   // its edits, still unsaved
     Rack                 rack;
     const RackFileResult result = loadRack(bundle, rack);
     if (!result.ok) {
@@ -1137,21 +1165,25 @@ bool RackController::loadRackAt(const std::string& bundle) {
 // Open and New: the rack prepared at once (they aren't live actions).
 bool RackController::replaceRack(const Rack& rack, const std::string& path, const std::vector<std::string>& warnings) {
     std::unique_ptr<PreparedRack> next = session.prepare(rack, session.loadedSampleRate());
-    if (!switchRack(next, path, warnings, Session::SwitchOptions{})) return false;
+    if (!switchRack(next, path, warnings, Session::SwitchOptions{}, false)) return false;
     tick(std::max(lastTick, 0.0));
     return true;
 }
 
 bool RackController::switchRack(std::unique_ptr<PreparedRack>& next, const std::string& path,
-                                 const std::vector<std::string>& warnings, const Session::SwitchOptions& how) {
-    // The rack being left, captured once: saved (as at quit), and in a setlist
-    // prepared again from it, since it's likely the previous song now.
+                                 const std::vector<std::string>& warnings, const Session::SwitchOptions& how,
+                                 bool live) {
+    // The rack being left, captured once (each plugin's saveState(), in
+    // memory): saved first unless the switch is live, kept in memory if it's
+    // live and has edits, and in a setlist prepared again from it, since it's
+    // likely the previous song now.
     const std::string oldPath = target;
-    const bool        saving  = !config.savingOff && !oldPath.empty();
+    const bool        saving  = !live && !config.savingOff && !oldPath.empty();
     const bool        keep    = setlistOpen && !oldPath.empty() && oldPath != path;
+    const bool        kept    = live && !oldPath.empty() && oldPath != path && session.modified();
     Rack              old;
-    if (saving || keep) old = session.capture();
-    if (saving ? !saveCaptured(old) : !saveRigIfModified()) return false;   // the notice says why
+    if (saving || keep || kept) old = session.capture();
+    if (!live && (saving ? !saveCaptured(old) : !saveRigIfModified())) return false;   // the notice says why
     cancelLearn();
     closeAllEditors();
     rows.clear();
@@ -1160,6 +1192,11 @@ bool RackController::switchRack(std::unique_ptr<PreparedRack>& next, const std::
     Session::LoadReport report;
     session.activate(std::move(next), report, how);   // one commit; the rig's effects stay
     target = path;
+    if (kept) unsavedRacks[oldPath] = old;
+    if (const auto edited = unsavedRacks.find(path); edited != unsavedRacks.end()) {
+        unsavedRacks.erase(edited);   // the running rack holds its edits now
+        session.markModified();
+    }
     routeClick(true);
     ++generation;   // sequence windows close
     for (const std::string& warning : warnings) notice(warning);
@@ -1214,6 +1251,7 @@ RackController::NewSetlistResult RackController::newSetlist(const std::string& c
         notice("Couldn't create the setlist: " + result.error);
         return NewSetlistResult::Failed;
     }
+    if (setlistOpen && !config.savingOff) saveUnsavedRacks();   // the set being left
     setlistOpen = true;
     setlist     = std::move(fresh);
     setlistFile = resolveRackPath(path);
@@ -1237,6 +1275,7 @@ bool RackController::openSetlist(const std::string& chosen, std::size_t start) {
         return false;
     }
     for (const std::string& warning : result.warnings) notice(warning);
+    if (setlistOpen && !config.savingOff) saveUnsavedRacks();   // the set being left
     setlistOpen = true;
     setlist     = std::move(loaded);
     setlistFile = resolveRackPath(chosen);
@@ -1267,6 +1306,7 @@ bool RackController::openSetlist(const std::string& chosen, std::size_t start) {
 
 void RackController::closeSetlist() {
     if (!setlistOpen) return;
+    if (!config.savingOff) saveUnsavedRacks();   // leaving the set saves its racks, as quitting does
     useRig({});   // a rack on its own uses the default rig
     setlistOpen = false;
     setlist     = {};
@@ -1321,7 +1361,7 @@ bool RackController::goTo(std::size_t index, bool now) {
             how.atNextBar     = setlist.switching.when == SwitchSettings::When::NextBar;
             how.stopTransport = setlist.switching.transport == SwitchSettings::Transport::Stop;
         }
-        if (!switchRack(ahead.rack, bundle, ahead.warnings, how)) {
+        if (!switchRack(ahead.rack, bundle, ahead.warnings, how, !now)) {
             prepared[bundle] = std::move(ahead);   // still ready for another try
             return false;
         }
@@ -1342,8 +1382,14 @@ bool RackController::songPrepared(std::size_t index) const {
 }
 
 bool RackController::startPreparing(const std::string& bundle, bool report) {
-    Rack                 rack;
-    const RackFileResult result = loadRack(bundle, rack);
+    Rack           rack;
+    RackFileResult result;
+    if (const auto kept = unsavedRacks.find(bundle); kept != unsavedRacks.end()) {
+        rack      = kept->second;   // the one in-memory copy, with its edits
+        result.ok = true;
+    } else {
+        result = loadRack(bundle, rack);
+    }
     if (!result.ok) {
         if (report) notice("Couldn't open " + bundle + ": " + result.error);
         unpreparable.insert(bundle);
@@ -1654,6 +1700,9 @@ void RackController::buildSetlist() {
     m.current  = onSong ? static_cast<int>(song) : -1;
     m.next     = neighbour(1);
     m.previous = neighbour(-1);
+    for (std::size_t i = 0; i < m.songs.size() && i < songBundles.size(); ++i)
+        m.songs[i].unsaved = unsavedRacks.count(songBundles[i]) != 0 ||
+                             (!songBundles[i].empty() && songBundles[i] == target && session.modified());
     m.waiting   = waitingSong ? static_cast<int>(*waitingSong) : -1;
     m.switching = setlist.switching;
     const auto& handles = session.setlistTriggerHandles();

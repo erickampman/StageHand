@@ -195,6 +195,7 @@ struct SongModel {
     std::string rackName;  // the rack bundle's name
     bool        missing = false;   // no rack at its path: skipped by Next and Previous
     bool        prepared = false;  // a switch to it is instant (docs/setlists.md, section 2)
+    bool        unsaved  = false;  // its rack has edits not yet saved (section 6)
 
     bool operator==(const SongModel&) const = default;
 };
@@ -220,6 +221,7 @@ struct SetlistModel {
 struct RackViewModel {
     std::string               rackName;
     bool                      modified = false;
+    std::size_t               otherUnsaved = 0;   // other racks with edits kept in memory (Ctrl-S saves them)
     TransportModel            transport;
     std::vector<RowModel>     rows;
     std::vector<SourceChoice> sources;   // for a row's input menu: All, None, devices, virtual inputs
