@@ -236,7 +236,7 @@ struct SetlistModel {
     int                    previous = -1;  // where Previous goes, or -1
     int                    waiting  = -1;  // the song a switch waits for (its rack being prepared), or -1
     SwitchSettings         switching;      // section 5
-    // Its MIDI triggers (section 4), as text ("Next: Keys, CC 80, ch 1"), and MIDI learn for one.
+    // Its MIDI triggers (section 4), as text ("Next song: Keys, CC 80, ch 1"), and MIDI learn for one.
     std::vector<std::string> triggers;
     bool                     learning       = false;
     SetlistTrigger::Action   learningAction = SetlistTrigger::Action::Next;

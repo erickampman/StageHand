@@ -1092,7 +1092,7 @@ void testSetlistTriggers() {
     send(0x20C00000u);
     tick();
     CHECK(!view.setlist.learning);
-    CHECK((view.setlist.triggers == std::vector<std::string>{"Next: From other apps (MIDI 2.0), CC 80, ch 1",
+    CHECK((view.setlist.triggers == std::vector<std::string>{"Next song: From other apps (MIDI 2.0), CC 80, ch 1",
                                                              "Program Change: From other apps (MIDI 2.0), ch 1 (program n: song n)"}));
     Setlist saved;
     CHECK(loadSetlist(file, saved).ok && saved.triggers.size() == 2 &&
@@ -1120,7 +1120,7 @@ void testSetlistTriggers() {
     CHECK(controller.rackPath() == racks[2] && !rig.engine->transport().running);
     bool reported = false;
     for (const std::string& text : controller.takeNotices())
-        reported = reported || text.find("is also the setlist's Next; the setlist's wins") != std::string::npos;
+        reported = reported || text.find("is also the setlist's Next song; the setlist's wins") != std::string::npos;
     CHECK(reported);
     send(0x20C00900u);   // past the end: a notice, no switch
     tick();

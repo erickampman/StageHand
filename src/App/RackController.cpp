@@ -1180,7 +1180,7 @@ std::string RackController::setlistTriggerText(const SetlistTrigger& t) const {
     as.channel = t.channel;
     as.number  = t.number;
     const std::string text = triggerText(as);
-    return (t.action == SetlistTrigger::Action::Next ? "Next: " : "Previous: ") + text.substr(text.find(": ") + 2);
+    return (t.action == SetlistTrigger::Action::Next ? "Next song: " : "Previous song: ") + text.substr(text.find(": ") + 2);
 }
 
 std::string RackController::triggerText(const SequenceTrigger& t) const {

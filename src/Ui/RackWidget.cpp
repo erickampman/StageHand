@@ -322,15 +322,15 @@ void RackWidget::openSetlistMidiMenu(float x, float y) {
     const SetlistModel& set = controller.view().setlist;
     Menu                m;
     m.w     = 380.0f;
-    m.x     = std::max(0.0f, x + 50.0f - m.w);   // under the button, kept on screen
+    m.x     = std::max(0.0f, x + kMidiW - m.w);   // under the button, kept on screen
     m.y     = y;
     m.title = set.learning ? (set.learningAction == SetlistTrigger::Action::Song ? "Send a Program Change..."
                                                                                   : "Press a pad, key or pedal...")
                            : "Setlist: MIDI control (wins over a rack's)";
     if (set.learning) m.items.push_back(MenuItem{"Stop learning", [this] { controller.cancelLearn(); }});
-    for (const auto [action, text] : {std::pair{SetlistTrigger::Action::Next, "Learn Next"},
-                                      {SetlistTrigger::Action::Previous, "Learn Previous"},
-                                      {SetlistTrigger::Action::Song, "Learn Program Change (program n: song n)"}})
+    for (const auto [action, text] : {std::pair{SetlistTrigger::Action::Next, "Learn Move to Next Song"},
+                                      {SetlistTrigger::Action::Previous, "Learn Move to Previous Song"},
+                                      {SetlistTrigger::Action::Song, "Learn Go to Song by Program Change (n: song n)"}})
         m.items.push_back(MenuItem{text, [this, a = action] { controller.learnSetlistTrigger(a); },
                                    set.learning && set.learningAction == action});
     for (std::size_t i = 0; i < set.triggers.size(); ++i)
