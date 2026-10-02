@@ -3,6 +3,7 @@
 // A HostedPlugin that records what the engine hands it and outputs a constant.
 // Shared by the engine and session tests.
 
+#include <algorithm>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -78,6 +79,58 @@ public:
 private:
     PortLayout layout;
     float      level;
+};
+
+// An effect: its main input times `factor` on its main output (an input
+// channel past the last feeds from the last). Counts its process() calls.
+class FakeEffect final : public HostedPlugin {
+public:
+    explicit FakeEffect(float multiplyBy = 1.0f, std::uint32_t inChannels = 2, std::uint32_t outChannels = 2)
+        : factor(multiplyBy) {
+        desc.id   = "test.effect";
+        desc.name = "Fake effect";
+        desc.kind = PluginKind::Effect;
+        if (inChannels > 0) layout.audioInputs.push_back(AudioPortInfo{"in", inChannels, true});
+        layout.audioOutputs.push_back(AudioPortInfo{"out", outChannels, true});
+    }
+
+    const PluginDescriptor&    descriptor() const override { return desc; }
+    PortLayout                 portLayout() const override { return layout; }
+    std::vector<ParameterInfo> parameters() const override { return {}; }
+    bool                       activate(double, std::uint32_t) override { return true; }
+    void                       deactivate() override {}
+    double                     paramValue(std::uint32_t) const override { return 0.0; }
+    void                       flushParams(const EventBlock&, EventSink*) override {}
+    bool                       saveState(std::vector<std::byte>&) const override { return true; }
+    bool                       loadState(const std::byte*, std::size_t) override { return true; }
+    void                       idle() override {}
+
+    void process(const ProcessContext& ctx) noexcept override {
+        ++processed;
+        processing = true;
+        lastInputChannels = ctx.audioIn.channelCount;
+        for (std::uint32_t c = 0; c < ctx.audioOut.channelCount; ++c)
+            for (std::uint32_t f = 0; f < ctx.frameCount; ++f) {
+                const float in = ctx.audioIn.channelCount == 0
+                                     ? 0.0f
+                                     : ctx.audioIn.channels[std::min(c, ctx.audioIn.channelCount - 1)][f];
+                ctx.audioOut.channels[c][f] = in * factor;
+            }
+    }
+    void stopProcessing() noexcept override {
+        if (processing) ++stops;
+        processing = false;
+    }
+
+    PluginDescriptor desc;
+    float            factor;
+    int              processed         = 0;
+    int              stops             = 0;
+    bool             processing        = false;
+    std::uint32_t    lastInputChannels = 0;
+
+private:
+    PortLayout layout;
 };
 
 } // namespace stagehand::test

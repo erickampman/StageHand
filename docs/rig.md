@@ -123,6 +123,16 @@ additive change to the rack format.
 4. **New song as a copy:** "New rack in this set..." copies the current
    song's rack. Independent of 1-3; it can come at any time.
 
+**Progress (2026-10-02): milestone 1 done.** `ClapPlugin` feeds
+`ProcessContext::audioIn` to a plugin's main input port; `SlotRuntime` has
+two ramped send levels (`targetSend`), with the ramps factored into
+`GainRamp`; `EngineGraph` takes up to 2 `BusConfig`s, each with two effect
+slots and buffers built ahead (`BusState`); `Engine::runBuses()` and
+`Engine::setMasterGain()`. A graph swap now stops bus effects that leave the
+rig, as it stops slots. Tests: `testBuses` in `tests/EngineTests.cpp`, with a
+`FakeEffect`. Nothing uses buses yet: that's milestone 2 (the rig file and
+Session) and 3 (UI).
+
 ## Open questions
 
 None at the moment (answered 2026-10-02: a new song copies the current one;

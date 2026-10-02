@@ -152,6 +152,10 @@ private:
     std::vector<clap_audio_buffer_t> outputBuffers;
     std::vector<NoteDialectMask>     noteDialects;
     int                              mainOutput = -1;
+    // The main audio input: fed from ProcessContext::audioIn when the engine
+    // gives audio (an effect on a bus), else its silent scratch buffer.
+    int                              mainInput        = -1;
+    float**                          mainInputSilence = nullptr;
     std::vector<EventStorage>        inEvents;
     std::uint32_t                    inEventCount = 0;
     clap_input_events_t              inList{};

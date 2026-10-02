@@ -239,12 +239,18 @@ void ClapPlugin::prepareBuffers(const PortLayout& layout, std::uint32_t maxBlock
         return buffer;
     };
 
-    // Inputs: silence (instrument hosting has no audio in yet), marked constant.
+    // Inputs: silence, marked constant, unless the engine gives the main one
+    // audio (process()). The main input is the first flagged main, else the first.
+    mainInput = -1;
+    for (std::size_t i = 0; i < layout.audioInputs.size() && mainInput < 0; ++i)
+        if (layout.audioInputs[i].isMain) mainInput = static_cast<int>(i);
+    if (mainInput < 0 && !layout.audioInputs.empty()) mainInput = 0;
     for (const AudioPortInfo& port : layout.audioInputs) {
         clap_audio_buffer_t buffer = scratchPort(port.channelCount);
         buffer.constant_mask       = allChannels(port.channelCount);
         inputBuffers.push_back(buffer);
     }
+    mainInputSilence = mainInput >= 0 ? inputBuffers[static_cast<std::size_t>(mainInput)].data32 : nullptr;
     // Outputs: the main port writes straight into the engine's buffer (set per
     // block in process()); any others go to scratch.
     for (std::size_t i = 0; i < layout.audioOutputs.size(); ++i) {
@@ -283,6 +289,16 @@ void ClapPlugin::process(const ProcessContext& ctx) noexcept {
     }
 
     convertAll(ctx.eventsIn);
+    if (mainInput >= 0) {   // the engine's audio when it gives the port's channel count, else silence
+        clap_audio_buffer_t& in = inputBuffers[static_cast<std::size_t>(mainInput)];
+        if (ctx.audioIn.channelCount == in.channel_count && ctx.audioIn.channelCount > 0) {
+            in.data32        = const_cast<float**>(ctx.audioIn.channels);
+            in.constant_mask = 0;
+        } else {
+            in.data32        = mainInputSilence;
+            in.constant_mask = allChannels(in.channel_count);
+        }
+    }
     if (mainOutput >= 0) {
         clap_audio_buffer_t& main = outputBuffers[static_cast<std::size_t>(mainOutput)];
         main.data32               = const_cast<float**>(ctx.audioOut.channels);

@@ -493,6 +493,9 @@ void Engine::adoptPendingGraph() noexcept {
     if (currentGraph != nullptr) {
         for (const SlotConfig& slot : currentGraph->configs)
             if (slot.plugin && !next->contains(slot.plugin.get())) slot.plugin->stopProcessing();
+        for (const BusConfig& bus : currentGraph->busConfigs)   // and effects that left the rig
+            for (const auto& effect : bus.effects)
+                if (effect && !next->contains(effect.get())) effect->stopProcessing();
         retiredGraphs.push(currentGraph);   // room checked above; we're the only producer
     }
     currentGraph = next;
@@ -778,6 +781,8 @@ void Engine::runSlots(const AudioCallbackContext& ctx) noexcept {
 
         for (std::uint32_t chunkStart = 0; chunkStart < ctx.frameCount; chunkStart += kMaxPluginBlockFrames) {
             const std::uint32_t chunk = std::min(ctx.frameCount - chunkStart, kMaxPluginBlockFrames);
+            for (EngineGraph::BusState& bus : currentGraph->busStates)   // the sends below sum into these
+                for (float* channel : bus.inputChannels) std::fill_n(channel, chunk, 0.0f);
 
             for (std::size_t i = 0; i < currentGraph->configs.size(); ++i) {
                 const SlotConfig&       config = currentGraph->configs[i];
@@ -806,8 +811,10 @@ void Engine::runSlots(const AudioCallbackContext& ctx) noexcept {
                     continue;
                 }
 
+                const double rate     = ctx.time.sampleRate;
                 float        constant = 1.0f;
-                const float* gains    = advanceGain(runtime, chunk, ctx.time.sampleRate, constant);
+                const float* gains    = advanceGain(runtime.gain, runtime.targetGain.load(std::memory_order_relaxed),
+                                                    chunk, rate, currentGraph->gainRamp.data(), constant);
                 auto destination = [&](std::uint32_t out) {
                     return out < outputs ? ctx.output.channels[out] + chunkStart : nullptr;
                 };
@@ -818,19 +825,55 @@ void Engine::runSlots(const AudioCallbackContext& ctx) noexcept {
                     runtime.meter.add(1, mixInto(destination(config.firstOutput + 1), state.channels[0], chunk,
                                                  gains, constant));
                 }
-                if (runtime.muteApplied && runtime.rampRemaining == 0 && runtime.currentGain == 0.0f) {
+
+                // Sends, after the fader: the slot's gain times each send level.
+                for (std::size_t b = 0; b < currentGraph->busStates.size(); ++b) {
+                    float*       sendBuffer = currentGraph->sendRamp.data();
+                    float        sendLevel  = 0.0f;
+                    const float* sends      = advanceGain(runtime.send[b], runtime.targetSend[b].load(std::memory_order_relaxed),
+                                                          chunk, rate, sendBuffer, sendLevel);
+                    if (sends == nullptr && sendLevel == 0.0f) continue;   // off
+                    const float* combined   = nullptr;
+                    float        level      = sendLevel * constant;
+                    if (sends != nullptr || gains != nullptr) {
+                        for (std::uint32_t f = 0; f < chunk; ++f)
+                            sendBuffer[f] = (sends != nullptr ? sends[f] : sendLevel) * (gains != nullptr ? gains[f] : constant);
+                        combined = sendBuffer;
+                    } else if (level == 0.0f) {
+                        continue;   // a muted slot sends nothing
+                    }
+                    EngineGraph::BusState& bus = currentGraph->busStates[b];
+                    for (std::uint32_t c = 0; c < 2 && state.audioChannels > 0; ++c)   // mono feeds both sides
+                        mixInto(bus.inputChannels[c], state.channels[std::min(c, state.audioChannels - 1)], chunk,
+                                combined, level);
+                }
+
+                if (runtime.muteApplied && runtime.gain.settledAt(0.0f)) {
                     float peak = 0.0f;   // its own output, before the (zero) gain
                     for (std::uint32_t c = 0; c < state.audioChannels; ++c)
                         for (std::uint32_t f = 0; f < chunk; ++f) peak = std::max(peak, std::fabs(state.channels[c][f]));
                     runtime.quietFrames = peak < kQuietLevel ? runtime.quietFrames + chunk : 0;
                     runtime.mutedFrames += chunk;
-                    const double rate = ctx.time.sampleRate;
                     if (runtime.quietFrames >= kQuietSeconds * rate || runtime.mutedFrames >= kMaxMutedSeconds * rate) {
                         runtime.suspended = true;
                         config.plugin->stopProcessing();
                     }
                 }
             }
+            runBuses(ctx, chunkStart, chunk);
+        }
+    }
+
+    // The master level, over the whole block (in chunks of the ramp buffer).
+    for (std::uint32_t chunkStart = 0; chunkStart < ctx.frameCount; chunkStart += kMaxPluginBlockFrames) {
+        const std::uint32_t chunk  = std::min(ctx.frameCount - chunkStart, kMaxPluginBlockFrames);
+        float               master = 1.0f;
+        const float*        gains  = advanceGain(masterRamp, masterTarget.load(std::memory_order_relaxed), chunk,
+                                                 ctx.time.sampleRate, masterGains, master);
+        if (gains == nullptr && master == 1.0f) continue;
+        for (std::uint32_t c = 0; c < outputs; ++c) {
+            float* out = ctx.output.channels[c] + chunkStart;
+            for (std::uint32_t f = 0; f < chunk; ++f) out[f] *= gains != nullptr ? gains[f] : master;
         }
     }
 
@@ -896,30 +939,59 @@ void Engine::renderClick(const AudioCallbackContext& ctx) noexcept {
 // null with the steady gain in `constantGain`. A new target restarts the ramp
 // from wherever the gain is, so it always takes kGainRampSeconds to arrive,
 // and the last step lands exactly on the target.
-const float* Engine::advanceGain(SlotRuntime& runtime, std::uint32_t frames, double sampleRate,
-                                 float& constantGain) noexcept {
-    const float target = runtime.targetGain.load(std::memory_order_relaxed);
-    if (target != runtime.rampTarget) {
-        const double length   = std::round(kGainRampSeconds * sampleRate);
-        runtime.rampTarget    = target;
-        runtime.rampRemaining = length >= 1.0 ? static_cast<std::uint32_t>(length) : 1;
-        runtime.rampStep      = (target - runtime.currentGain) / static_cast<float>(runtime.rampRemaining);
+// Each bus: its effects in series on what was sent to it, then its return
+// into its output pair at the return level (ramped), metered after the level.
+void Engine::runBuses(const AudioCallbackContext& ctx, std::uint32_t chunkStart, std::uint32_t chunk) noexcept {
+    const std::uint32_t outputs = ctx.output.channelCount;
+    for (std::size_t b = 0; b < currentGraph->busStates.size(); ++b) {
+        const BusConfig&       config = currentGraph->busConfigs[b];
+        EngineGraph::BusState& state  = currentGraph->busStates[b];
+        for (std::size_t e = 0; e < BusConfig::kEffects; ++e) {
+            if (!config.effects[e]) continue;
+            EngineGraph::BusState::Stage& stage = state.stages[e];
+            ProcessContext                pc;
+            pc.frameCount = chunk;
+            pc.time       = timeAt(ctx, chunkStart);
+            pc.audioIn    = ConstAudioBuffer{stage.in.data(), static_cast<std::uint32_t>(stage.in.size()), chunk};
+            pc.audioOut   = AudioBuffer{stage.out.data(), static_cast<std::uint32_t>(stage.out.size()), chunk};
+            config.effects[e]->process(pc);
+        }
+
+        SlotRuntime& runtime = *config.runtime;
+        float        level   = 1.0f;
+        const float* gains   = advanceGain(runtime.gain, runtime.targetGain.load(std::memory_order_relaxed), chunk,
+                                           ctx.time.sampleRate, currentGraph->gainRamp.data(), level);
+        if (state.silent) continue;
+        for (std::uint32_t c = 0; c < 2; ++c) {
+            const std::uint32_t out = config.firstOutput + c;
+            runtime.meter.add(c, mixInto(out < outputs ? ctx.output.channels[out] + chunkStart : nullptr,
+                                         state.returnChannels[c], chunk, gains, level));
+        }
     }
-    if (runtime.rampRemaining == 0) {
-        constantGain = runtime.currentGain;
+}
+
+const float* Engine::advanceGain(GainRamp& ramp, float target, std::uint32_t frames, double sampleRate, float* buffer,
+                                 float& constantGain) noexcept {
+    if (target != ramp.target) {
+        const double length = std::round(kGainRampSeconds * sampleRate);
+        ramp.target         = target;
+        ramp.remaining      = length >= 1.0 ? static_cast<std::uint32_t>(length) : 1;
+        ramp.step           = (target - ramp.current) / static_cast<float>(ramp.remaining);
+    }
+    if (ramp.remaining == 0) {
+        constantGain = ramp.current;
         return nullptr;
     }
-    float* const gains = currentGraph->gainRamp.data();
     for (std::uint32_t f = 0; f < frames; ++f) {
-        if (runtime.rampRemaining > 0) {
-            if (--runtime.rampRemaining == 0)
-                runtime.currentGain = runtime.rampTarget;
+        if (ramp.remaining > 0) {
+            if (--ramp.remaining == 0)
+                ramp.current = ramp.target;
             else
-                runtime.currentGain += runtime.rampStep;
+                ramp.current += ramp.step;
         }
-        gains[f] = runtime.currentGain;
+        buffer[f] = ramp.current;
     }
-    return gains;
+    return buffer;
 }
 
 } // namespace stagehand

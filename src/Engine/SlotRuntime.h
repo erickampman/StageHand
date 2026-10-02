@@ -43,6 +43,20 @@ private:
     std::atomic<bool>  clipped{false};
 };
 
+// A level the audio thread ramps to whenever its target changes, over
+// Engine::kGainRampSeconds, so a change never clicks. Audio thread only.
+struct GainRamp {
+    explicit GainRamp(float initial = 1.0f) noexcept : current(initial), target(initial) {}
+    float         current;
+    float         target;             // the target the running ramp heads for
+    float         step      = 0.0f;
+    std::uint32_t remaining = 0;      // frames left in the ramp; 0 = at target
+    bool          settledAt(float level) const noexcept { return remaining == 0 && current == level; }
+};
+
+// The rig's effect buses (docs/rig.md): every row can send to each.
+inline constexpr std::size_t kBusCount = 2;
+
 // The part of a slot that outlives any one EngineGraph (docs/rack-view.md,
 // section 2). The Session creates one per slot and puts the same one in every
 // graph it builds for that slot. So live gain, the gain ramp's position, the
@@ -51,7 +65,7 @@ private:
 // shared_ptr and released only on the main thread.
 struct SlotRuntime {
     explicit SlotRuntime(float initialGain = 1.0f, bool initiallyMuted = false) noexcept
-        : targetGain(initialGain), muted(initiallyMuted), currentGain(initialGain), rampTarget(initialGain) {}
+        : targetGain(initialGain), muted(initiallyMuted), gain(initialGain) {}
 
     // Main thread writes, audio thread reads. Linear; 0 when muted. The audio
     // thread ramps to each new value over Engine::kGainRampSeconds.
@@ -63,15 +77,16 @@ struct SlotRuntime {
     // for blocks that bring it events (controllers, note-offs). Unmuting
     // resumes it at the next block. Set targetGain to 0 with it.
     std::atomic<bool>  muted;
+    // Main thread writes, audio thread reads: how much of the slot's output
+    // (after its gain and mute) goes to each effect bus. Linear; 0 = off.
+    std::atomic<float> targetSend[kBusCount] = {};
 
     LevelMeter meter;                            // post-gain; audio writes, main takes
     std::atomic<std::uint32_t> midiEvents{0};    // events delivered; audio adds, main compares
 
-    // --- audio thread only: the ramp ---
-    float         currentGain;
-    float         rampTarget;          // the target the running ramp heads for
-    float         rampStep      = 0.0f;
-    std::uint32_t rampRemaining = 0;   // frames left in the ramp; 0 = at rampTarget
+    // --- audio thread only: the ramps ---
+    GainRamp gain;
+    GainRamp send[kBusCount] = {GainRamp(0.0f), GainRamp(0.0f)};
 
     // --- audio thread only: muting ---
     bool          muteApplied = false;   // its notes released for this mute

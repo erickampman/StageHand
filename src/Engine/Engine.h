@@ -42,10 +42,13 @@ namespace stagehand {
 //      queue is in capture order, so each slot's events come out sorted.
 //   5. Split the block into chunks of at most kMaxPluginBlockFrames. For each
 //      chunk, run every slot with its share of the events, then sum the slot
-//      outputs into the backend outputs, times the slot's gain. A change of
-//      gain (SlotRuntime::targetGain) ramps linearly over kGainRampSeconds, per
-//      sample, so a fader move or mute doesn't click. Slot and output meters
-//      are fed post-gain.
+//      outputs into the backend outputs, times the slot's gain, and into each
+//      effect bus times gain and send level (docs/rig.md). Then each bus runs
+//      its effects in series on what it was sent and adds its return, times
+//      the return level. Last, the master level scales the main outputs. Every
+//      level (gain, send, return, master) ramps linearly over
+//      kGainRampSeconds, per sample, so a move or mute doesn't click. Slot,
+//      return and output meters are fed post-level.
 //
 // Plugin lifecycle across threads (CLAP's thread rules):
 //   main:  create, loadState, activate(rate, kMaxPluginBlockFrames), commit
@@ -175,6 +178,10 @@ public:
     static constexpr double kMinTempo = 20.0;
     static constexpr double kMaxTempo = 400.0;
 
+    // The master level (docs/rig.md): scales every main output (not the
+    // click's aux outputs), ramped like a slot's gain. Linear. Any thread.
+    void setMasterGain(float gain) noexcept { masterTarget.store(gain, std::memory_order_relaxed); }
+
     // The backend outputs' level (the master meter): outputs 1 and 2, with any
     // further outputs folded into the second channel. take() from the main thread.
     LevelMeter& outputMeter() noexcept { return outputLevels; }
@@ -251,8 +258,11 @@ private:
     void                 sequenceCommand(const AudioCallbackContext& ctx, MidiSourceHandle source,
                                          SequenceCommand command, std::uint32_t frame) noexcept;
     TimeInfo             timeAt(const AudioCallbackContext& ctx, std::uint32_t frame) const noexcept;
-    const float*         advanceGain(SlotRuntime& runtime, std::uint32_t frames, double sampleRate,
-                                     float& constantGain) noexcept;
+    // Move `ramp` toward `target` over `frames`: per-sample gains written to
+    // `buffer` (returned), or null with `constantGain` set when it's steady.
+    static const float*  advanceGain(GainRamp& ramp, float target, std::uint32_t frames, double sampleRate,
+                                     float* buffer, float& constantGain) noexcept;
+    void                 runBuses(const AudioCallbackContext& ctx, std::uint32_t chunkStart, std::uint32_t chunk) noexcept;
 
     HeldNote    heldNotes[256];     // audio thread only
     SourceState sourceStates[16];   // audio thread only
@@ -264,6 +274,9 @@ private:
     SpscQueue<EngineGraph*, 16>   retiredGraphs;            // audio -> main
     EngineGraph*                  currentGraph = nullptr;   // audio thread only
     LevelMeter                    outputLevels;
+    std::atomic<float>            masterTarget{1.0f};
+    GainRamp                      masterRamp{1.0f};                     // audio thread only
+    float                         masterGains[kMaxPluginBlockFrames] = {};   // its per-sample gains
 
     // Sequences: snapshots main -> audio -> main like graphs, commands main ->
     // audio, and this block's generated events (sorted by offset).

@@ -14,6 +14,7 @@
 #include "FakePlugin.h"
 
 using namespace stagehand;
+using stagehand::test::FakeEffect;
 using stagehand::test::FakePlugin;
 
 namespace {
@@ -406,6 +407,106 @@ void testMute() {
     engine->collect();
 }
 
+// The rig's buses (docs/rig.md): post-fader sends, effects in series (an empty
+// slot passes audio on), the return level and output pair, the master, and
+// bus plugins kept across commits. A slot outputs a constant, so after the
+// 10 ms ramps every sample is the same.
+void testBuses() {
+    // Run 2048 frames (past every ramp) in 64-frame blocks with `outputs`
+    // outputs; the last block's samples.
+    auto settle = [](Engine& engine, std::uint32_t outputs = 2) {
+        std::vector<std::vector<float>> last;
+        for (int i = 0; i < 32; ++i) {
+            Block block(64, 48000.0, T, outputs);
+            engine.process(block.ctx);
+            last = block.samples;
+        }
+        return last;
+    };
+    auto bus = [](std::shared_ptr<HostedPlugin> first, std::shared_ptr<HostedPlugin> second, float level = 1.0f,
+                  std::uint32_t firstOutput = 0) {
+        BusConfig b;
+        b.effects[0]  = std::move(first);
+        b.effects[1]  = std::move(second);
+        b.runtime     = std::make_shared<SlotRuntime>(level);
+        b.firstOutput = firstOutput;
+        return b;
+    };
+
+    auto engine  = std::make_unique<Engine>();
+    auto synth   = std::make_shared<FakePlugin>(2, NoteDialect::Midi, 1.0f);   // outputs 1.0
+    auto doubler = std::make_shared<FakeEffect>(2.0f);
+    auto tripler = std::make_shared<FakeEffect>(3.0f);
+    SlotConfig slot = slotFor(synth);
+    slot.runtime    = std::make_shared<SlotRuntime>(1.0f);
+    slot.runtime->targetSend[0].store(0.5f);
+    engine->commit(std::make_unique<EngineGraph>(std::vector<SlotConfig>{slot},
+                                                 std::vector<BusConfig>{bus(doubler, nullptr), bus(tripler, nullptr)}));
+
+    // Dry 1.0, plus 0.5 sent to A and doubled: 2.0. B gets nothing (its send is off).
+    auto out = settle(*engine);
+    CHECK(std::fabs(out[0][63] - 2.0f) < 1e-5f && std::fabs(out[1][63] - 2.0f) < 1e-5f);
+    CHECK(doubler->lastInputChannels == 2 && tripler->processed > 0);
+
+    // After the fader: at gain 0.5, the dry half and the send half: 0.5 + 0.5 * 0.5 * 2.
+    slot.runtime->targetGain.store(0.5f);
+    out = settle(*engine);
+    CHECK(std::fabs(out[0][63] - 1.0f) < 1e-5f);
+
+    // Muted: nothing dry and nothing sent.
+    slot.runtime->targetGain.store(0.0f);
+    out = settle(*engine);
+    CHECK(out[0][63] == 0.0f && out[1][63] == 0.0f);
+    slot.runtime->targetGain.store(1.0f);
+
+    // Both sends: 1 + 0.5 * 2 + 0.25 * 3.
+    slot.runtime->targetSend[1].store(0.25f);
+    out = settle(*engine);
+    CHECK(std::fabs(out[0][63] - 2.75f) < 1e-5f);
+
+    // The master scales it all.
+    engine->setMasterGain(0.5f);
+    out = settle(*engine);
+    CHECK(std::fabs(out[0][63] - 1.375f) < 1e-5f);
+    engine->setMasterGain(1.0f);
+
+    // In series (2 then 3), an empty first slot passing audio on, a return at
+    // half level, and a return on outputs 3-4. Same plugins: kept across the
+    // commit, never stopped.
+    slot.runtime->targetSend[1].store(0.0f);
+    engine->commit(std::make_unique<EngineGraph>(
+        std::vector<SlotConfig>{slot}, std::vector<BusConfig>{bus(doubler, tripler, 0.5f), bus(nullptr, nullptr)}));
+    out = settle(*engine);
+    CHECK(std::fabs(out[0][63] - (1.0f + 0.5f * 6.0f * 0.5f)) < 1e-5f);   // 2.5
+    engine->collect();
+    CHECK(doubler->stops == 0 && tripler->stops == 0);
+
+    slot.runtime->targetSend[0].store(0.0f);
+    slot.runtime->targetSend[1].store(1.0f);   // B is empty: what's sent comes back as is
+    out = settle(*engine);
+    CHECK(std::fabs(out[0][63] - 2.0f) < 1e-5f);
+
+    engine->commit(std::make_unique<EngineGraph>(std::vector<SlotConfig>{slot},
+                                                 std::vector<BusConfig>{bus(doubler, nullptr, 1.0f, 2), bus(nullptr, nullptr)}));
+    slot.runtime->targetSend[0].store(1.0f);
+    slot.runtime->targetSend[1].store(0.0f);
+    out = settle(*engine, 4);
+    CHECK(std::fabs(out[0][63] - 1.0f) < 1e-5f && std::fabs(out[2][63] - 2.0f) < 1e-5f &&
+          std::fabs(out[3][63] - 2.0f) < 1e-5f);
+    engine->collect();
+    CHECK(tripler->stops == 1 && doubler->stops == 0);   // tripler left the rig
+
+    // A mono effect input takes the left; a mono output feeds both sides.
+    auto mono = std::make_shared<FakeEffect>(1.0f, 1, 1);
+    engine->commit(std::make_unique<EngineGraph>(std::vector<SlotConfig>{slot}, std::vector<BusConfig>{bus(mono, nullptr)}));
+    out = settle(*engine);
+    CHECK(mono->lastInputChannels == 1 && std::fabs(out[0][63] - 2.0f) < 1e-5f && std::fabs(out[1][63] - 2.0f) < 1e-5f);
+
+    engine->commit(nullptr);
+    settle(*engine);
+    engine->collect();
+}
+
 void testSlotMeters() {
     auto engine = std::make_unique<Engine>();
     auto stereo = std::make_shared<FakePlugin>(2, NoteDialect::Midi, 1.0f);
@@ -655,6 +756,7 @@ int main() {
     testGainRamp();
     testSlotMeters();
     testMute();
+    testBuses();
     testTransport();
     testGraphLifecycle();
     return test::finish("Engine");

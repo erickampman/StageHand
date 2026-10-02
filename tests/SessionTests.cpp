@@ -164,7 +164,7 @@ void testLiveEdits() {
     // A reloaded muted slot starts silent, without ramping down.
     CHECK(session.load(captured, 48000.0, report));
     CHECK(session.slot("a")->runtime->targetGain.load() == 0.0f);
-    CHECK(session.slot("a")->runtime->currentGain == 0.0f);
+    CHECK(session.slot("a")->runtime->gain.current == 0.0f);
     session.unload();
     runBlock(*engine);
     engine->collect();
