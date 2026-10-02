@@ -1412,6 +1412,14 @@ void testLoopers() {
           (view.loopers[0].targetNames == std::vector<std::string>{"keys"}));
     CHECK(view.loopers[0].state == LooperState::Empty && view.loopers[0].capacity == LooperRuntime::kMaxNotes);
 
+    // Named: trimmed; an empty name refused (a notice), the old one kept.
+    controller.renameLooper(id, "  Bass vamp ");
+    controller.takeNotices();
+    controller.renameLooper(id, "   ");
+    tick();
+    CHECK(view.loopers[0].name == "Bass vamp" && controller.looper(id) != nullptr &&
+          controller.looper(id)->name == "Bass vamp" && controller.takeNotices().size() == 1);
+
     // The row's tap with the transport stopped: it starts, and records a bar (2 s at 120 BPM).
     controller.tapLooper(id);
     runBlock(*rig.engine);
@@ -1452,6 +1460,7 @@ void testLoopers() {
     CHECK(controller.save());
     Rack saved;
     CHECK(loadRack(rackPath, saved).ok && saved.loopers.size() == 1 && saved.loopers[0].fixedLength == 1 &&
+          saved.loopers[0].name == "Bass vamp" &&
           !saved.loopers[0].atBar && saved.loopers[0].quantize == 0.0);
     stagehand::Rig savedRig;
     CHECK(loadRig(config.defaultRigPath, savedRig).ok && savedRig.looperSwitch &&
@@ -1464,7 +1473,7 @@ void testLoopers() {
     CHECK(controller.openRack(rackPath));
     tick();
     CHECK(view.loopers.size() == 1 && view.loopers[0].current && view.loopers[0].state == LooperState::Empty &&
-          view.loopers[0].notes == 0);
+          view.loopers[0].notes == 0 && view.loopers[0].name == "Bass vamp");
 
     // A row removed leaves its targets; a looper removed is gone.
     controller.removeSlot("keys");

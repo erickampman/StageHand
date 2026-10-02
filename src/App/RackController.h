@@ -194,8 +194,11 @@ public:
     // (rows' ids), quantized to a sixteenth, from the next bar, ended by a
     // press, and is the current looper. Returns its id.
     std::string addLooper(const MidiSourceRef& input, const std::vector<std::string>& targets);
+    const LooperSetup* looper(const std::string& id) const;   // as the Session has it; null if none
     void        removeLooper(const std::string& id);
     void        selectLooper(const std::string& id);   // the current looper: the looper switch drives it
+    // Leading and trailing spaces go; an empty name is refused (with a notice);
+    // at most kMaxNameBytes. Saved with the rack.
     void        renameLooper(const std::string& id, const std::string& name);
     void        setLooperInput(const std::string& id, const MidiSourceRef& input);
     void        setLooperTarget(const std::string& id, const std::string& row, bool on);
