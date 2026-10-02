@@ -229,6 +229,33 @@ public:
     static constexpr double kMinAudition = 0.12;
     static constexpr double kMaxAudition = 1.0;
 
+    // --- loopers (docs/looper.md): MIDI sources the rack owns, like sequences,
+    // playing into their targets. Their settings are saved with the rack;
+    // what they record never is: every load (a song switch included) makes
+    // them empty. Edits are committed by flush().
+    struct LooperEntry {
+        LooperSetup                    setup;
+        MidiSourceHandle               source = kInvalidMidiSource;   // its playback, never reused in a session
+        std::shared_ptr<LooperRuntime> runtime;
+        MidiSourceHandle               input = kInvalidMidiSource;    // setup.source resolved
+        std::string                    inputProblem;                  // why it didn't resolve: it records nothing
+    };
+    const std::vector<LooperEntry>& loopers() const noexcept { return looperList; }
+    const LooperEntry*              looper(const std::string& id) const noexcept;
+    // A new one, empty; its id unique (from its name). Targets kept to rows that exist.
+    std::string addLooper(LooperSetup setup);
+    bool        setLooper(const LooperSetup& setup);   // by id; what it recorded is kept
+    bool        removeLooper(const std::string& id);   // its notes end
+    bool        looperCommand(const std::string& id, LooperCommand command);   // at the next block
+    // The one the looper switch drives (docs/looper.md, "Controls"); "" = none.
+    void        setCurrentLooper(const std::string& id);
+    const std::string& currentLooper() const noexcept { return currentLooperId; }
+    // The looper switch, in the rig (the performer's, the same in every song):
+    // none = off. Marks the rig modified.
+    void        setLooperSwitch(const std::optional<SequenceTrigger>& trigger);
+    // Why it doesn't act, if its input isn't connected.
+    const std::string& looperSwitchProblem() const noexcept { return looperSwitchIssue; }
+
     // --- the transport (docs/sequences.md, section 7): Start puts beat 1 at the
     // next block; Stop ends every sequence and returns to bar 1. Its MIDI
     // control is saved with the rack and published with the sequences.
@@ -329,6 +356,12 @@ private:
     LoadedRig                               rigState;
     std::vector<SlotConfig>                 draining;   // drainingSlots()
     std::vector<SetlistTrigger>             setlistControls;
+    std::vector<LooperEntry>                looperList;
+    std::string                             currentLooperId;
+    MidiSourceHandle                        looperSwitchSource = kInvalidMidiSource;
+    std::string                             looperSwitchIssue;
+    void                                    resolveLooper(LooperEntry& entry);
+    LooperEntry*                            findLooper(const std::string& id) noexcept;
     std::vector<MidiSourceHandle>           setlistSources;   // setlistControls' inputs, resolved
 };
 
@@ -352,6 +385,7 @@ private:
     double                               rate = 0.0;
     std::vector<Session::Slot>           slots;       // the first preparedCount() of source.slots
     std::vector<Session::SequenceEntry>  sequences;   // triggers resolve at activate()
+    std::vector<Session::LooperEntry>    loopers;     // empty; inputs resolve at activate()
     std::vector<std::string>             warnings;    // from creating the plugins
     std::vector<PluginDescriptor>        scanned;     // the plugin scan, done at most once
     bool                                 haveScan = false;

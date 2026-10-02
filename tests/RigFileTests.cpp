@@ -55,6 +55,12 @@ void testRoundTrip(const fs::path& dir) {
     rig.buses[1].effects[1]   = effect("delay", "delay-state");   // the first slot empty
     rig.buses[1].muted        = true;
     rig.buses[1].firstOutput  = 2;
+    SequenceTrigger looper;   // the looper switch (docs/looper.md)
+    looper.source  = MidiSourceRef{MidiSourceRef::Kind::Device, "FCB1010:FCB1010 MIDI 1"};
+    looper.control = SequenceTrigger::Control::Controller;
+    looper.number  = 82;
+    looper.channel = 1;
+    rig.looperSwitch          = looper;
     const std::string path    = (dir / "Stage.rig").string();
     CHECK(saveRig(path, rig).ok);
     CHECK(fs::exists(dir / "Stage.rig/state/A1.bin") && !fs::exists(dir / "Stage.rig/state/A2.bin"));

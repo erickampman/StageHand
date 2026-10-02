@@ -162,6 +162,24 @@ after the length it was played, from its quantized start. Tests:
 `tests/LooperTests.cpp`. Not yet: making loopers, saving them and the
 footswitch's MIDI (milestone 2).
 
+**Milestone 2 implemented (2026-10-02):** `LooperSetup` in the rack (rack.json's
+`"loopers"`, docs/rack-format.md) and the Session's looper entries, MIDI
+sources the rack owns like sequences, built empty on every load (a song switch
+included) and published with the sequences. The looper switch is in the rig
+(rig.json's `"looperSwitch"`; decided while building it, since it's the
+performer's footswitch, the same in every song), learned like a trigger and
+matched on the audio thread after the setlist's triggers; its press and
+release go to the current looper (`Engine::setCurrentLooper()`). The
+controller's intents make and edit loopers (input, targets, quantize, beat or
+bar, length), choose the current one (a new one is current; a rack's first,
+when there's none), and tap, clear and undo. UI: + Looper (an input, then a
+row), one row per looper under the sequences (its button is the switch's tap;
+state, length, overdubs, input and targets, its place in the loop, how full it
+is past 75%; Undo, Clear, Input, Q, Bar/Beat, Length, the red X), the current
+looper highlighted, and the Looper switch button in the dock's header. Tests:
+`testLoopers` (controller), loopers in the rack file tests, the switch in the
+rig file tests.
+
 ## Open questions
 
 None at the moment (answered 2026-10-02: one button, tap to record, play,

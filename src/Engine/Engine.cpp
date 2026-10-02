@@ -449,13 +449,16 @@ void Engine::adoptSequences(const AudioCallbackContext& ctx, bool switching) noe
     while (transportCommands.pop(transport)) transportAction(ctx, transport, 0);
     QueuedCommand queued;
     while (sequenceCommands.pop(queued)) sequenceCommand(ctx, queued.source, queued.command, 0);
-    for (QueuedLooperCommand looper; looperCommands.pop(looper);) {
-        if (currentSequences == nullptr) continue;
-        const bool running = clock.running && !clock.stopPending;
-        if (currentSequences->looperCommand(looper.looper, looper.command, sequenceBlock, running) &&
-            !currentSequences->hasTransportStart())
-            startTransport(ctx, 0);   // armed while stopped: the recording starts on its first beat
-    }
+    for (QueuedLooperCommand looper; looperCommands.pop(looper);) looperAction(ctx, looper.looper, looper.command, 0);
+}
+
+void Engine::looperAction(const AudioCallbackContext& ctx, MidiSourceHandle looper, LooperCommand command,
+                          std::uint32_t frame) noexcept {
+    if (currentSequences == nullptr) return;
+    const bool running = clock.running && !clock.stopPending;
+    if (currentSequences->looperCommand(looper, command, sequenceBlock.from(frame), running) &&
+        !currentSequences->hasTransportStart())
+        startTransport(ctx, frame);   // armed while stopped: the recording starts on its first beat
 }
 
 // The loopers record what they hear of this block's input, each message at
@@ -687,6 +690,14 @@ void Engine::takeMidi(const AudioCallbackContext& ctx) noexcept {
             bool                    setlistFired = false;
             if (currentSequences->matchSetlist(entry.item.source, m, setlistHit, setlistFired)) {
                 if (setlistFired) setlistRequests.push(setlistHit);   // full: dropped (16 presses in one tick)
+                continue;
+            }
+            // Then the looper switch, for the current looper (docs/looper.md, "Controls").
+            bool pressed = false, released = false;
+            if (currentSequences->matchLooperSwitch(entry.item.source, m, pressed, released)) {
+                const MidiSourceHandle looper = currentLooper.load(std::memory_order_relaxed);
+                if (looper != kInvalidMidiSource && (pressed || released))
+                    looperAction(ctx, looper, pressed ? LooperCommand::Press : LooperCommand::Release, entry.offset);
                 continue;
             }
             SequenceSet::TriggerHit hits[16];

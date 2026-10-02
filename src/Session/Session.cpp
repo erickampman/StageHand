@@ -58,6 +58,10 @@ std::unique_ptr<PreparedRack> Session::prepare(const Rack& rack, double rate) {
     for (const Sequence& seq : sequencesIn)
         prepared->sequences.push_back(
             SequenceEntry{seq, nextSequenceSource++, std::make_shared<SequenceRuntime>(), {}});
+    // Loopers come empty: what they record is never saved (docs/looper.md).
+    for (const LooperSetup& setup : rack.loopers)
+        prepared->loopers.push_back(
+            LooperEntry{setup, nextSequenceSource++, std::make_shared<LooperRuntime>(), kInvalidMidiSource, {}});
     return prepared;
 }
 
@@ -104,6 +108,15 @@ bool Session::activate(std::unique_ptr<PreparedRack> prepared, LoadReport& repor
     // Sources and triggers resolve now, not when prepared: a device may have
     // come or gone since.
     sequenceList = std::move(p.sequences);
+    looperList   = std::move(p.loopers);   // the old ones' notes end with the switch
+    currentLooperId.clear();
+    engine.setCurrentLooper(kInvalidMidiSource);
+    for (LooperEntry& entry : looperList) {
+        resolveLooper(entry);
+        if (!entry.inputProblem.empty())
+            report.warnings.push_back("looper '" + entry.setup.name + "': " + entry.inputProblem +
+                                      "; it records nothing from it");
+    }
     for (SequenceEntry& entry : sequenceList)
         for (const std::string& problem : resolveTriggers(entry))
             report.warnings.push_back("sequence '" + entry.sequence.id + "': a MIDI trigger won't act: " + problem);
@@ -169,6 +182,7 @@ Rack Session::capture() const {
     rack.timeSigNumerator   = sigNumerator;
     rack.timeSigDenominator = sigDenominator;
     for (const SequenceEntry& entry : sequenceList) rack.sequences.push_back(entry.sequence);
+    for (const LooperEntry& entry : looperList) rack.loopers.push_back(entry.setup);   // the container, not its notes
     rack.transport = transportSetup;
     rack.metronome = metronomeSetup;
     for (const Slot& slot : loaded) {
@@ -270,6 +284,7 @@ void Session::loadRig(const Rig& rig, double rate, LoadReport& report) {
         next.returns[b] = std::make_shared<SlotRuntime>(0.0f);
     }
     rigState  = std::move(next);   // the old effects live on in the old graph until it's collected
+    setLooperSwitch(rigState.saved.looperSwitch);   // resolved; sent with the sequences
     rigLoaded = true;
     rigRate   = rate;
     rigDirty  = false;
@@ -424,6 +439,10 @@ bool Session::removeSlot(const std::string& id) {
     loaded.erase(it);   // the running graph still holds the plugin until flush() replaces it
     for (SequenceEntry& entry : sequenceList) {   // no sequence plays into it any more
         auto& targets = entry.sequence.targets;
+        targets.erase(std::remove(targets.begin(), targets.end(), id), targets.end());
+    }
+    for (LooperEntry& entry : looperList) {   // nor any looper
+        auto& targets = entry.setup.targets;
         targets.erase(std::remove(targets.begin(), targets.end(), id), targets.end());
     }
     graphDirty = dirty = true;
@@ -611,6 +630,12 @@ std::unique_ptr<SequenceSet> Session::buildSequences() const {
     }
     TransportControl transport;
     compileTriggers(transportSetup.triggers, transportTriggerSources, transport.triggers);
+    if (const auto& t = rigState.saved.looperSwitch;
+        rigLoaded && t && (looperSwitchSource != kInvalidMidiSource || t->source.kind == MidiSourceRef::Kind::All)) {
+        transport.hasLooperSwitch = true;
+        transport.looperSwitch    = CompiledSequence::Trigger{looperSwitchSource, t->action, t->control, t->group,
+                                                           t->channel, t->number};
+    }
     for (std::size_t i = 0; i < setlistControls.size() && i < setlistSources.size(); ++i) {
         const SetlistTrigger& t = setlistControls[i];
         if (setlistSources[i] == kInvalidMidiSource && t.source.kind != MidiSourceRef::Kind::All) continue;
@@ -620,7 +645,23 @@ std::unique_ptr<SequenceSet> Session::buildSequences() const {
     // An input that isn't connected: start on first note waits for nothing.
     transport.startOnNote       = transportSetup.startOnNote && startOnNoteProblem.empty();
     transport.startOnNoteSource = startOnNoteHandle;
-    return std::make_unique<SequenceSet>(std::move(compiled), std::move(transport));
+    std::vector<CompiledLooper> loopers;
+    for (const LooperEntry& entry : looperList) {
+        CompiledLooper l;
+        l.source      = entry.source;
+        l.runtime     = entry.runtime;
+        // An input that isn't connected: a handle no live input has, so it records nothing.
+        l.input       = entry.setup.source.kind == MidiSourceRef::Kind::All ? kInvalidMidiSource
+                        : entry.input != kInvalidMidiSource                 ? entry.input
+                                                                            : kSequenceSourceBase;
+        l.channelMask = entry.setup.channelMask;
+        l.quantize    = entry.setup.quantize;
+        l.atBar       = entry.setup.atBar;
+        l.fixedLength = entry.setup.fixedLength;
+        l.fixedInBars = entry.setup.fixedInBars;
+        loopers.push_back(std::move(l));
+    }
+    return std::make_unique<SequenceSet>(std::move(compiled), std::move(transport), std::move(loopers));
 }
 
 void Session::commitSequences() {
@@ -645,6 +686,81 @@ std::vector<std::string> Session::setSetlistTriggers(const std::vector<SetlistTr
     return problems;
 }
 
+// --- loopers (docs/looper.md) ----------------------------------------------------------
+
+const Session::LooperEntry* Session::looper(const std::string& id) const noexcept {
+    for (const LooperEntry& entry : looperList)
+        if (entry.setup.id == id) return &entry;
+    return nullptr;
+}
+
+Session::LooperEntry* Session::findLooper(const std::string& id) noexcept {
+    return const_cast<LooperEntry*>(std::as_const(*this).looper(id));
+}
+
+void Session::resolveLooper(LooperEntry& entry) {
+    entry.input = kInvalidMidiSource;
+    entry.inputProblem.clear();
+    if (entry.setup.source.kind != MidiSourceRef::Kind::All) entry.input = resolve(entry.setup.source, entry.inputProblem);
+}
+
+std::string Session::addLooper(LooperSetup setup) {
+    if (setup.name.empty()) setup.name = "Loop " + std::to_string(looperList.size() + 1);
+    const std::string base = slotIdFrom(setup.name);
+    setup.id               = base;
+    for (int n = 2; findLooper(setup.id) != nullptr; ++n) setup.id = base + "-" + std::to_string(n);
+    std::erase_if(setup.targets, [this](const std::string& row) { return find(row) == nullptr; });
+    LooperEntry entry{std::move(setup), nextSequenceSource++, std::make_shared<LooperRuntime>(), kInvalidMidiSource, {}};
+    resolveLooper(entry);
+    looperList.push_back(std::move(entry));
+    graphDirty = sequencesDirty = dirty = true;
+    return looperList.back().setup.id;
+}
+
+bool Session::setLooper(const LooperSetup& setup) {
+    LooperEntry* entry = findLooper(setup.id);
+    if (entry == nullptr) return false;
+    const bool newInput   = setup.source != entry->setup.source;
+    entry->setup          = setup;
+    std::erase_if(entry->setup.targets, [this](const std::string& row) { return find(row) == nullptr; });
+    if (newInput) resolveLooper(*entry);
+    graphDirty = sequencesDirty = dirty = true;   // targets are part of the graph
+    return true;
+}
+
+bool Session::removeLooper(const std::string& id) {
+    const auto it = std::find_if(looperList.begin(), looperList.end(),
+                                 [&](const LooperEntry& e) { return e.setup.id == id; });
+    if (it == looperList.end()) return false;
+    if (id == currentLooperId) setCurrentLooper({});
+    looperList.erase(it);   // the engine ends its notes when it adopts the new set
+    graphDirty = sequencesDirty = dirty = true;
+    return true;
+}
+
+bool Session::looperCommand(const std::string& id, LooperCommand command) {
+    const LooperEntry* entry = looper(id);
+    if (entry == nullptr) return false;
+    flush();   // a looper just added must be in the engine first
+    return engine.sendLooperCommand(entry->source, command);
+}
+
+void Session::setCurrentLooper(const std::string& id) {
+    const LooperEntry* entry = looper(id);
+    currentLooperId          = entry != nullptr ? id : std::string{};
+    engine.setCurrentLooper(entry != nullptr ? entry->source : kInvalidMidiSource);
+}
+
+void Session::setLooperSwitch(const std::optional<SequenceTrigger>& trigger) {
+    if (trigger != rigState.saved.looperSwitch) rigDirty = true;
+    rigState.saved.looperSwitch = trigger;
+    looperSwitchSource          = kInvalidMidiSource;
+    looperSwitchIssue.clear();
+    if (trigger && trigger->source.kind != MidiSourceRef::Kind::All)
+        looperSwitchSource = resolve(trigger->source, looperSwitchIssue);
+    sequencesDirty = true;
+}
+
 // --- helpers -----------------------------------------------------------------------
 
 SlotConfig Session::configOf(const Slot& slot) const {
@@ -657,6 +773,9 @@ SlotConfig Session::configOf(const Slot& slot) const {
     for (const SequenceEntry& entry : sequenceList)   // the sequences that play into it
         if (std::find(entry.sequence.targets.begin(), entry.sequence.targets.end(), slot.saved.id) !=
             entry.sequence.targets.end())
+            config.sequenceSources.push_back(entry.source);
+    for (const LooperEntry& entry : looperList)   // and the loopers
+        if (std::find(entry.setup.targets.begin(), entry.setup.targets.end(), slot.saved.id) != entry.setup.targets.end())
             config.sequenceSources.push_back(entry.source);
     config.notePort              = slot.saved.notePort;
     config.firstOutput           = slot.saved.firstOutput;

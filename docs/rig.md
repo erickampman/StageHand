@@ -184,6 +184,11 @@ its output pair), and the master fader in the status bar. "+ Add plugin"
 still lists the effects greyed (they belong on the buses). The toolbar marks
 unsaved rig changes too. Tests: `testRigControls` (controller).
 
+**Added 2026-10-02 (docs/looper.md):** the rig also holds the looper switch
+(`"looperSwitch"` in rig.json: a source and a note or controller, as a
+trigger is written), since it's the performer's footswitch, the same in every
+song. It drives the current looper.
+
 ## Open questions
 
 None at the moment (answered 2026-10-02: a new song copies the current one;

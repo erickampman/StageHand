@@ -18,6 +18,7 @@ namespace {
 // learningId while learning the transport's or the setlist's trigger: no sequence id can look like these.
 const std::string kTransportLearn = "\x01transport";
 const std::string kSetlistLearn   = "\x01setlist";
+const std::string kLooperLearn    = "\x01looper";
 
 SourceProtocol toSourceProtocol(MidiProtocol p) {
     return p == MidiProtocol::Midi2 ? SourceProtocol::Midi2 : SourceProtocol::Midi1;
@@ -331,6 +332,141 @@ void RackController::buildDock(double now) {
         row.learningAction = learningAction;
         model.sequences.push_back(std::move(row));
     }
+    buildLoopers();
+}
+
+void RackController::buildLoopers() {
+    // Always a current looper while there are any (a new rack's: its first).
+    const auto& loopers = session.loopers();
+    if (!loopers.empty() && session.looper(session.currentLooper()) == nullptr)
+        session.setCurrentLooper(loopers.front().setup.id);
+    model.loopers.clear();
+    for (const Session::LooperEntry& entry : loopers) {
+        const LooperSetup& setup = entry.setup;
+        LooperRuntime&     rt    = *entry.runtime;
+        LooperRowModel     row;
+        row.id             = setup.id;
+        row.name           = setup.name;
+        row.inputLabel     = sourceLabel(setup.source) + (entry.inputProblem.empty() ? "" : " (not connected)");
+        row.inputConnected = entry.inputProblem.empty();
+        for (const Session::Slot& slot : session.slots())   // in rack order
+            if (std::find(setup.targets.begin(), setup.targets.end(), slot.saved.id) != setup.targets.end()) {
+                row.targetIds.push_back(slot.saved.id);
+                row.targetNames.push_back(slot.saved.name);
+            }
+        row.state       = rt.state.load(std::memory_order_relaxed);
+        row.waiting     = rt.waiting.load(std::memory_order_relaxed);
+        row.current     = setup.id == session.currentLooper();
+        row.lengthBeats = rt.length.load(std::memory_order_relaxed);
+        row.position    = rt.position.load(std::memory_order_relaxed);
+        row.notes       = rt.noteCount.load(std::memory_order_relaxed);
+        row.capacity    = static_cast<std::uint32_t>(rt.capacity);
+        row.dropped     = rt.dropped.load(std::memory_order_relaxed);
+        row.passes      = rt.passes.load(std::memory_order_relaxed);
+        row.quantize    = setup.quantize;
+        row.atBar       = setup.atBar;
+        row.fixedLength = setup.fixedLength;
+        row.fixedInBars = setup.fixedInBars;
+        model.loopers.push_back(std::move(row));
+    }
+    const auto& looperSwitch = session.rig().saved.looperSwitch;
+    if (looperSwitch) {
+        const std::string text = triggerText(*looperSwitch);
+        model.looperSwitch     = text.substr(text.find(": ") + 2);   // without the action
+    } else {
+        model.looperSwitch.clear();
+    }
+    model.looperSwitchConnected = session.looperSwitchProblem().empty();
+    model.looperSwitchLearning  = learningId == kLooperLearn;
+}
+
+// --- loopers (docs/looper.md) ----------------------------------------------------------
+
+template <typename Change>
+void RackController::editLooper(const std::string& id, Change change) {
+    const Session::LooperEntry* entry = session.looper(id);
+    if (entry == nullptr) return;
+    LooperSetup setup = entry->setup;
+    change(setup);
+    session.setLooper(setup);
+}
+
+std::string RackController::addLooper(const MidiSourceRef& input, const std::vector<std::string>& targets) {
+    LooperSetup setup;
+    setup.source  = input;
+    setup.targets = targets;
+    const std::string id = session.addLooper(setup);
+    session.setCurrentLooper(id);
+    return id;
+}
+
+void RackController::removeLooper(const std::string& id) {
+    session.removeLooper(id);
+}
+
+void RackController::selectLooper(const std::string& id) {
+    if (session.looper(id) != nullptr) session.setCurrentLooper(id);
+}
+
+void RackController::renameLooper(const std::string& id, const std::string& name) {
+    const std::size_t first = name.find_first_not_of(" \t");
+    if (first == std::string::npos) {
+        notice("A looper needs a name");
+        return;
+    }
+    std::string text = name.substr(first, name.find_last_not_of(" \t") - first + 1);
+    if (text.size() > kMaxNameBytes) text.resize(kMaxNameBytes);
+    editLooper(id, [&text](LooperSetup& s) { s.name = text; });
+}
+
+void RackController::setLooperInput(const std::string& id, const MidiSourceRef& input) {
+    editLooper(id, [&input](LooperSetup& s) { s.source = input; });
+    if (const Session::LooperEntry* entry = session.looper(id); entry != nullptr && !entry->inputProblem.empty())
+        notice(entry->setup.name + ": " + entry->inputProblem + "; it records nothing from it");
+}
+
+void RackController::setLooperTarget(const std::string& id, const std::string& row, bool on) {
+    editLooper(id, [&row, on](LooperSetup& s) {
+        std::erase(s.targets, row);
+        if (on) s.targets.push_back(row);
+    });
+}
+
+void RackController::setLooperQuantize(const std::string& id, double beats) {
+    editLooper(id, [beats](LooperSetup& s) { s.quantize = std::max(0.0, beats); });
+}
+
+void RackController::setLooperStart(const std::string& id, bool atBar) {
+    editLooper(id, [atBar](LooperSetup& s) { s.atBar = atBar; });
+}
+
+void RackController::setLooperLength(const std::string& id, std::uint32_t count, bool inBars) {
+    editLooper(id, [count, inBars](LooperSetup& s) {
+        s.fixedLength = std::min<std::uint32_t>(count, 1024);
+        s.fixedInBars = inBars;
+    });
+}
+
+void RackController::tapLooper(const std::string& id) {
+    session.looperCommand(id, LooperCommand::Press);
+    session.looperCommand(id, LooperCommand::Release);
+}
+
+void RackController::clearLooper(const std::string& id) {
+    session.looperCommand(id, LooperCommand::Clear);
+}
+
+void RackController::undoLooper(const std::string& id) {
+    session.looperCommand(id, LooperCommand::Undo);
+}
+
+void RackController::learnLooperSwitch() {
+    learningId = kLooperLearn;
+    engine.armLearn();
+}
+
+void RackController::removeLooperSwitch() {
+    session.setLooperSwitch(std::nullopt);
 }
 
 std::vector<std::string> RackController::takeNotices() {
@@ -919,9 +1055,13 @@ void RackController::finishLearn(const Engine::Learned& learned) {
     const std::string id        = std::exchange(learningId, {});
     const bool        transport = id == kTransportLearn;
     const bool        forSet    = id == kSetlistLearn;
-    const Session::SequenceEntry* entry = transport || forSet ? nullptr : session.sequence(id);
-    if (forSet ? !setlistOpen : !transport && entry == nullptr) return;   // closed or removed meanwhile
-    const std::string who = forSet ? std::string("Setlist") : transport ? std::string("Transport") : entry->sequence.name;
+    const bool        forLooper = id == kLooperLearn;
+    const Session::SequenceEntry* entry = transport || forSet || forLooper ? nullptr : session.sequence(id);
+    if (forSet ? !setlistOpen : !transport && !forLooper && entry == nullptr) return;   // closed or removed meanwhile
+    const std::string who = forSet      ? std::string("Setlist")
+                            : forLooper ? std::string("Looper switch")
+                            : transport ? std::string("Transport")
+                                        : entry->sequence.name;
     const auto input = std::find_if(session.openInputs().begin(), session.openInputs().end(),
                                     [&](const Session::OpenInput& in) { return in.handle == learned.source; });
     if (input == session.openInputs().end()) {
@@ -946,6 +1086,18 @@ void RackController::finishLearn(const Engine::Learned& learned) {
         for (const Session::SequenceEntry& e : session.sequences()) sequences.push_back(&e.sequence);
         for (const std::string& warning : triggerConflicts(session.rackName(), session.transportSettings(), sequences))
             notice(warning);
+        return;
+    }
+    if (forLooper) {   // in the rig: the performer's, the same in every song
+        SequenceTrigger t;
+        t.source  = input->ref;
+        t.control = ump::isNoteOn(learned.message) ? SequenceTrigger::Control::Note : SequenceTrigger::Control::Controller;
+        t.group   = ump::group(learned.message);
+        t.channel = ump::channel(learned.message);
+        t.number  = static_cast<std::uint8_t>((learned.message.words[0] >> 8) & 0x7F);
+        session.setLooperSwitch(t);
+        const std::string text = triggerText(t);
+        notice(who + ": " + text.substr(text.find(": ") + 2));
         return;
     }
     SequenceTrigger t;

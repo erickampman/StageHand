@@ -117,6 +117,7 @@ get a **layer**.
 | `timeSignature` | no | `[numerator, denominator]`: 1-32 over 1, 2, 4, 8, 16 or 32; default `[4, 4]` |
 | `slots` | yes | Plugin slots, in order |
 | `sequences` | no | The rack's step sequences; see "Sequences" |
+| `loopers` | no | The rack's loopers, their settings only (never what they record); see "Loopers" |
 | `transport` | no | The transport's MIDI control; see "Transport" |
 | `metronome` | no | What the beat lights and click count, and the click; see "Metronome" |
 
@@ -250,6 +251,30 @@ section 4). Usually made with MIDI learn in the dock.
 
 Messages that match a trigger go only to it. A trigger whose device isn't
 connected is kept and does nothing, with a warning at load.
+
+## Loopers
+
+A looper (docs/looper.md) is saved as a container: its settings. What it
+records never is; a loaded rack's loopers are empty. Added 2026-10-02; an
+additive field, so the format version doesn't change.
+
+```json
+"loopers": [
+  { "id": "loop", "name": "Loop 1", "source": "device:<id>", "channels": [1],
+    "targets": ["keys"], "quantize": "1/4", "start": "bar", "length": { "bars": 4 } }
+]
+```
+
+| Field | Default | Meaning |
+|---|---|---|
+| `id` | required | Unique among the loopers; letters, digits, `-`, `_` |
+| `name` | the id | Its display name |
+| `source` | `"all"` | The input it records (see "Sources"; not `"none"`) |
+| `channels` | all | The channels it records, 1-16 |
+| `targets` | none | The slots it plays into; each must be one of the rack's |
+| `quantize` | `"1/4"` (a sixteenth: a quarter of a beat) | Beats, as `"1/4"`, `"1"`, `"2"`..., or `"off"` |
+| `start` | `"bar"` | `"bar"` or `"beat"`: where it starts, ends and stops |
+| `length` | none: ended by a press | `{"bars": N}` or `{"beats": N}` |
 
 ## Transport
 

@@ -189,6 +189,27 @@ public:
     void cancelLearn();
     void removeTrigger(const std::string& id, std::size_t index);   // index into Sequence::triggers
     void setSequenceAtStart(const std::string& id, bool atStart);
+
+    // --- loopers (docs/looper.md). A new one records `input` into `targets`
+    // (rows' ids), quantized to a sixteenth, from the next bar, ended by a
+    // press, and is the current looper. Returns its id.
+    std::string addLooper(const MidiSourceRef& input, const std::vector<std::string>& targets);
+    void        removeLooper(const std::string& id);
+    void        selectLooper(const std::string& id);   // the current looper: the looper switch drives it
+    void        renameLooper(const std::string& id, const std::string& name);
+    void        setLooperInput(const std::string& id, const MidiSourceRef& input);
+    void        setLooperTarget(const std::string& id, const std::string& row, bool on);
+    void        setLooperQuantize(const std::string& id, double beats);   // 0 = off
+    void        setLooperStart(const std::string& id, bool atBar);        // and its end and stop
+    void        setLooperLength(const std::string& id, std::uint32_t count, bool inBars);   // 0 = ended by a press
+    // Its row's button: a tap of the looper switch (record, end and play, stop, play).
+    void        tapLooper(const std::string& id);
+    void        clearLooper(const std::string& id);
+    void        undoLooper(const std::string& id);   // the last overdub pass
+    // The looper switch: learned like a trigger (the next note-on or
+    // controller press), saved in the rig. A momentary switch, for hold.
+    void        learnLooperSwitch();
+    void        removeLooperSwitch();
     // Leading and trailing spaces go; an empty name is refused (with a notice);
     // at most kMaxNameBytes. The id stays: rows keep playing it.
     void renameSequence(const std::string& id, const std::string& name);
@@ -337,6 +358,9 @@ private:
     // Apply `change` to a copy of the sequence and hand it to the Session.
     template <typename Change>
     void           editSequence(const std::string& id, Change change);
+    template <typename Change>
+    void           editLooper(const std::string& id, Change change);
+    void           buildLoopers();   // model.loopers
     bool           replaceRack(const Rack& rack, const std::string& path, const std::vector<std::string>& warnings);
     // Save the running rack as quitting would, close what belongs to it, and
     // make `next` the running rack (one graph commit). `next` is taken only on

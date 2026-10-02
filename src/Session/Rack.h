@@ -61,6 +61,22 @@ struct MetronomeSettings {
     bool operator==(const MetronomeSettings&) const = default;
 };
 
+// A looper (docs/looper.md), saved as a container: its settings. What it
+// records never is.
+struct LooperSetup {
+    std::string              id;            // unique among the rack's loopers
+    std::string              name;
+    MidiSourceRef            source;        // the input it records; All = any input
+    std::uint16_t            channelMask = 0xFFFF;
+    std::vector<std::string> targets;       // the rows it plays into
+    double                   quantize    = 0.25;   // in beats; 0 = off (the played timing)
+    bool                     atBar       = true;   // start, end and stop at a bar, else a beat
+    std::uint32_t            fixedLength = 0;      // 0 = ended by a press
+    bool                     fixedInBars = true;
+
+    bool operator==(const LooperSetup&) const = default;
+};
+
 // A complete setup (docs/rack-format.md). Its sequences are kept separate from
 // `slots` because a sequence is a MIDI source, not something that makes sound.
 struct Rack {
@@ -70,6 +86,7 @@ struct Rack {
     int                   timeSigDenominator = 4;
     std::vector<RackSlot> slots;
     std::vector<Sequence> sequences;
+    std::vector<LooperSetup> loopers;   // docs/looper.md
     TransportSettings     transport;
     MetronomeSettings     metronome;
 };

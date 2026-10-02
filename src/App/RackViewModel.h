@@ -189,6 +189,31 @@ struct InputChipModel {
     bool operator==(const InputChipModel&) const = default;
 };
 
+// A looper's row in the dock, under the sequences (docs/looper.md).
+struct LooperRowModel {
+    std::string              id;
+    std::string              name;
+    std::string              inputLabel;          // what it records: "All inputs", "KeyLab 88"
+    bool                     inputConnected = true;
+    std::vector<std::string> targetIds;           // the rows it plays into, in rack order
+    std::vector<std::string> targetNames;
+    LooperState              state   = LooperState::Empty;
+    bool                     waiting = false;     // a start, play or stop waits for its beat or bar
+    bool                     current = false;     // the one the looper switch drives
+    double                   lengthBeats = 0.0;   // 0 until the first recording ends
+    double                   position    = 0.0;   // beats into the loop, while it plays
+    std::uint32_t            notes    = 0;
+    std::uint32_t            capacity = 0;
+    std::uint32_t            dropped  = 0;        // past the cap
+    std::uint32_t            passes   = 0;        // the recording, then each overdub kept (undo while > 1)
+    double                   quantize    = 0.25;  // in beats; 0 = off
+    bool                     atBar       = true;
+    std::uint32_t            fixedLength = 0;     // 0 = ended by a press
+    bool                     fixedInBars = true;
+
+    bool operator==(const LooperRowModel&) const = default;
+};
+
 // The open setlist (docs/setlists.md), for the setlist row and its song list.
 struct SongModel {
     std::string name;      // the song's name in the set, else its rack's
@@ -227,6 +252,11 @@ struct RackViewModel {
     std::vector<SourceChoice> sources;   // for a row's input menu: All, None, devices, virtual inputs
     std::vector<InputChipModel>   inputs;      // the dock's inputs row
     std::vector<SequenceRowModel> sequences;   // the dock's sequence rows
+    std::vector<LooperRowModel>   loopers;     // the dock's looper rows, under the sequences
+    // The looper switch (in the rig): "" = none; else as a trigger is described.
+    std::string                   looperSwitch;
+    bool                          looperSwitchConnected = true;
+    bool                          looperSwitchLearning  = false;
     StatusModel               status;
     SetlistModel              setlist;
     RigModel                  rig;

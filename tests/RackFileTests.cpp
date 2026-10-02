@@ -23,6 +23,11 @@ fs::path scratch() {
     return dir;
 }
 
+std::string readText(const fs::path& path) {
+    std::ifstream in(path);
+    return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+}
+
 void writeText(const fs::path& path, const std::string& text) {
     fs::create_directories(path.parent_path());
     std::ofstream(path) << text;
@@ -325,6 +330,45 @@ void testSequenceTargets(const fs::path& dir) {
     CHECK(!result.ok && result.error.find("no slot 'ghost'") != std::string::npos);
 }
 
+// Loopers (docs/looper.md): saved as containers, their settings only;
+// defaults left out; a target that isn't a slot refused.
+void testLoopers(const fs::path& dir) {
+    Rack rack;
+    RackSlot keys;
+    keys.id            = "keys";
+    keys.plugin.format = PluginFormat::Clap;
+    keys.plugin.id     = "x";
+    rack.slots         = {keys};
+    LooperSetup loop;
+    loop.id          = "loop";
+    loop.name        = "Loop 1";
+    loop.source      = MidiSourceRef{MidiSourceRef::Kind::Device, "Keys:Keys MIDI 1"};
+    loop.channelMask = 0x0003;   // channels 1 and 2
+    loop.targets     = {"keys"};
+    loop.quantize    = 0.5;
+    loop.atBar       = false;
+    loop.fixedLength = 4;
+    loop.fixedInBars = true;
+    LooperSetup free;   // the defaults, but quantize off
+    free.id       = "free";
+    free.name     = "Free";
+    free.quantize = 0.0;
+    rack.loopers  = {loop, free};
+    const std::string path = (dir / "Loops.rack").string();
+    CHECK(saveRack(path, rack).ok);
+    const std::string text = readText(dir / "Loops.rack/rack.json");
+    CHECK(text.find("\"quantize\": \"1/2\"") != std::string::npos && text.find("\"bars\": 4") != std::string::npos);
+    CHECK(text.find("\"quantize\": \"off\"") != std::string::npos);
+    Rack back;
+    CHECK(loadRack(path, back).ok && back.loopers == rack.loopers);
+
+    writeText(dir / "BadLoop.rack/rack.json", R"({"format":"stagehand-rack","version":2,
+        "slots":[],"loopers":[{"id":"loop","targets":["ghost"]}]})");
+    Rack bad;
+    const RackFileResult result = loadRack((dir / "BadLoop.rack").string(), bad);
+    CHECK(!result.ok && result.error.find("no slot 'ghost'") != std::string::npos);
+}
+
 } // namespace
 
 int main() {
@@ -335,6 +379,7 @@ int main() {
     testFailures(dir);
     testMissingStateWarns(dir);
     testSequenceTargets(dir);
+    testLoopers(dir);
     fs::remove_all(dir);
     return test::finish("RackFile");
 }

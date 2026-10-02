@@ -1364,6 +1364,121 @@ void testSavingInASet() {
     fs::remove_all(dir);
 }
 
+// Loopers (docs/looper.md, milestone 2): made with an input and targets (the
+// current looper), their settings edited and saved with the rack while what
+// they record never is, the row's tap, the looper switch learned into the rig
+// (press and release reaching the current looper), and a rack switch leaving
+// the new rack's loopers empty.
+void testLoopers() {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / "stagehand-loopers-test";
+    fs::remove_all(dir);
+    Rig rig;
+    rig.session->addOpenSource(MidiSourceRef{MidiSourceRef::Kind::Virtual, "MIDI 2.0 In"}, 7);
+    Rack rack;
+    rack.name  = "Song";
+    rack.slots = {slot("keys", "synth", "/clap/Synth.clap")};
+    Session::LoadReport report;
+    rig.session->load(rack, 48000.0, report);
+    const std::string rackPath = (dir / "Song.rack").string();
+    RackController::Config config = rig.config(rackPath);
+    config.defaultRigPath         = (dir / "Default.rig").string();
+    RackController       controller(*rig.session, *rig.engine, rig.midi, rig.factory, config);
+    const RackViewModel& view = controller.view();
+    double               now  = 0.0;
+    auto tick = [&] { controller.tick(now += 0.05); };
+    auto send = [&](std::uint32_t word) {
+        TimedMidiMessage m;
+        m.captureTime       = 1'000'000'000 - 1'000'000;
+        m.message.words[0]  = word;
+        m.message.wordCount = 1;
+        rig.engine->onMidi(7, m);
+        runBlock(*rig.engine);
+    };
+    auto run = [&](int blocks) {
+        for (int i = 0; i < blocks; ++i) runBlock(*rig.engine);
+        tick();
+    };
+
+    // Made, and current; then set to record one bar, from a beat, unquantized.
+    const MidiSourceRef input{MidiSourceRef::Kind::Virtual, "MIDI 2.0 In"};
+    const std::string   id = controller.addLooper(input, {"keys"});
+    controller.setLooperStart(id, false);
+    controller.setLooperQuantize(id, 0.0);
+    controller.setLooperLength(id, 1, true);
+    tick();
+    CHECK(view.loopers.size() == 1 && view.loopers[0].current && view.loopers[0].name == "Loop 1");
+    CHECK(view.loopers[0].inputLabel == "From other apps (MIDI 2.0)" &&
+          (view.loopers[0].targetNames == std::vector<std::string>{"keys"}));
+    CHECK(view.loopers[0].state == LooperState::Empty && view.loopers[0].capacity == LooperRuntime::kMaxNotes);
+
+    // The row's tap with the transport stopped: it starts, and records a bar (2 s at 120 BPM).
+    controller.tapLooper(id);
+    runBlock(*rig.engine);
+    send(0x20903C64u);   // a note in the take
+    send(0x20803C00u);
+    run(10);
+    CHECK(rig.engine->transport().running && view.loopers[0].state == LooperState::Recording);
+    run(1600);   // past the bar: 1600 blocks of 64 frames
+    CHECK(view.loopers[0].state == LooperState::Playing && view.loopers[0].lengthBeats == 4.0 &&
+          view.loopers[0].notes == 1);
+
+    // The looper switch: learned into the rig; a quick press and release (a
+    // tap) stops the current looper at the next beat.
+    controller.learnLooperSwitch();
+    tick();
+    CHECK(view.looperSwitchLearning);
+    send(0x20B0527Fu);   // CC 82 pressed
+    tick();
+    send(0x20B05200u);
+    CHECK(!view.looperSwitchLearning && view.looperSwitch == "From other apps (MIDI 2.0), CC 82, ch 1");
+    CHECK(rig.session->rigModified());
+    send(0x20B0527Fu);
+    send(0x20B05200u);
+    run(400);   // past the next beat (375 blocks)
+    CHECK(view.loopers[0].state == LooperState::Stopped);
+    controller.undoLooper(id);    // nothing to undo: just the first recording
+    controller.clearLooper(id);
+    run(2);
+    CHECK(view.loopers[0].state == LooperState::Empty && view.loopers[0].notes == 0);
+
+    // Saved: the looper with its settings (never notes), the switch in the rig.
+    controller.tapLooper(id);   // something recorded again (from the next beat), which isn't saved
+    run(400);
+    send(0x20903E64u);
+    send(0x20803E00u);
+    run(1700);
+    CHECK(view.loopers[0].notes == 1);
+    CHECK(controller.save());
+    Rack saved;
+    CHECK(loadRack(rackPath, saved).ok && saved.loopers.size() == 1 && saved.loopers[0].fixedLength == 1 &&
+          !saved.loopers[0].atBar && saved.loopers[0].quantize == 0.0);
+    stagehand::Rig savedRig;
+    CHECK(loadRig(config.defaultRigPath, savedRig).ok && savedRig.looperSwitch &&
+          savedRig.looperSwitch->number == 82);
+
+    // Another rack, then this one again: its looper is back, empty.
+    CHECK(controller.newRack());
+    tick();
+    CHECK(view.loopers.empty());
+    CHECK(controller.openRack(rackPath));
+    tick();
+    CHECK(view.loopers.size() == 1 && view.loopers[0].current && view.loopers[0].state == LooperState::Empty &&
+          view.loopers[0].notes == 0);
+
+    // A row removed leaves its targets; a looper removed is gone.
+    controller.removeSlot("keys");
+    tick();
+    CHECK(view.loopers[0].targetNames.empty());
+    controller.removeLooper(view.loopers[0].id);
+    tick();
+    CHECK(view.loopers.empty());
+
+    runBlock(*rig.engine);
+    rig.engine->collect();
+    fs::remove_all(dir);
+}
+
 } // namespace
 
 int main() {
@@ -1387,5 +1502,6 @@ int main() {
     testRigControls();
     testSwitchSettings();
     testSavingInASet();
+    testLoopers();
     return test::finish("RackController");
 }
