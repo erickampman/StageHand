@@ -1293,7 +1293,48 @@ void RackWidget::openFileMenu(float x, float y) {
                                                       switchSong([this, path] { controller.openSetlist(path); });
                                                   });
                                }});
-    if (inSet) m.items.push_back(MenuItem{"Close setlist", [this] { controller.closeSetlist(); }});
+    if (inSet) {
+        m.items.push_back(MenuItem{"Setlist settings...", [this, x, y] { openSwitchMenu(x, y); }});
+        m.items.push_back(MenuItem{"Close setlist", [this] { controller.closeSetlist(); }});
+    }
+    openMenu(std::move(m));
+}
+
+// How a song switch behaves (docs/setlists.md, section 5): one choice ticked
+// in each group; a click changes it and the menu stays open on the new state.
+void RackWidget::openSwitchMenu(float x, float y) {
+    const SwitchSettings s = controller.view().setlist.switching;
+    Menu                 m;
+    m.x     = x;
+    m.y     = y;
+    m.w     = 330.0f;
+    m.title = "Switching songs (this setlist)";
+    auto choice = [&](const char* text, bool checked, SwitchSettings changed) {
+        m.items.push_back(MenuItem{std::string("   ") + text, [this, changed, x, y] {
+                                       controller.setSwitchSettings(changed);
+                                       openSwitchMenu(x, y);
+                                   },
+                                   checked});
+    };
+    using S = SwitchSettings;
+    S next = s;
+    m.items.push_back(MenuItem{"The transport", {}});
+    next.transport = S::Transport::Keep;
+    choice("keeps running (medleys)", s.transport == S::Transport::Keep, next);
+    next.transport = S::Transport::Stop;
+    choice("stops: the song starts from bar 1", s.transport == S::Transport::Stop, next);
+    next = s;
+    m.items.push_back(MenuItem{"A switch happens", {}});
+    next.when = S::When::Now;
+    choice("at once", s.when == S::When::Now, next);
+    next.when = S::When::NextBar;
+    choice("at the next bar (while it runs)", s.when == S::When::NextBar, next);
+    next = s;
+    m.items.push_back(MenuItem{"The old song", {}});
+    next.oldRack = S::OldRack::RingOut;
+    choice("rings out", s.oldRack == S::OldRack::RingOut, next);
+    next.oldRack = S::OldRack::Cut;
+    choice("is cut (its notes end, faded)", s.oldRack == S::OldRack::Cut, next);
     openMenu(std::move(m));
 }
 

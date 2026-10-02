@@ -168,6 +168,24 @@ std::size_t Engine::collect() {
     return count;
 }
 
+void Engine::commitSwitch(std::unique_ptr<EngineGraph> graph, std::unique_ptr<SequenceSet> sequences,
+                          const SwitchPlan& plan) {
+    // Pending first, so setTempo() from here on waits for the switch too; then
+    // the plan: the audio thread must never take the graph without it.
+    switchesPending.fetch_add(1);
+    setTempo(plan.tempoBpm);
+    setTimeSignature(plan.numerator, plan.denominator);
+    if (!switchPlans.push(QueuedSwitch{plan, issuedSequence.load(std::memory_order_relaxed) + 1})) {
+        // Full: the audio thread hasn't run for 8 switches. The graph goes in
+        // as an ordinary commit, with the tempo and signature set now.
+        switchesPending.fetch_sub(1);
+        setTempo(plan.tempoBpm);
+        setTimeSignature(plan.numerator, plan.denominator);
+    }
+    commit(std::move(graph));
+    commitSequences(std::move(sequences));
+}
+
 void Engine::commitSequences(std::unique_ptr<SequenceSet> sequences) {
     if (!sequences) sequences = std::make_unique<SequenceSet>(std::vector<CompiledSequence>{});
     delete pendingSequences.exchange(sequences.release(), std::memory_order_acq_rel);   // superseded, never ran
@@ -249,15 +267,21 @@ Engine::Stats Engine::stats() const noexcept {
     return s;
 }
 
+// The rack's tempo and signature: now, or, while a switch is on its way, at
+// the switch (it's the new rack's). The audio thread counts a switch done
+// before it reads them, so neither a value nor the switch is ever missed.
 void Engine::setTempo(double bpm) noexcept {
-    tempo.store(std::clamp(bpm, kMinTempo, kMaxTempo), std::memory_order_relaxed);
+    const double clamped = std::clamp(bpm, kMinTempo, kMaxTempo);
+    nextTempo.store(clamped);
+    if (switchesPending.load() == 0) tempo.store(clamped);
 }
 
 void Engine::setTimeSignature(int numerator, int denominator) noexcept {
     const bool powerOfTwo = denominator > 0 && (denominator & (denominator - 1)) == 0;
     if (numerator < 1 || numerator > 32 || !powerOfTwo || denominator > 32) return;
-    signature.store((static_cast<std::uint32_t>(numerator) << 16) | static_cast<std::uint32_t>(denominator),
-                    std::memory_order_relaxed);
+    const std::uint32_t sig = (static_cast<std::uint32_t>(numerator) << 16) | static_cast<std::uint32_t>(denominator);
+    nextSignature.store(sig);
+    if (switchesPending.load() == 0) signature.store(sig);
 }
 
 Engine::Transport Engine::transport() const noexcept {
@@ -285,9 +309,10 @@ void Engine::onMidi(MidiSourceHandle source, const TimedMidiMessage& msg) noexce
 // --- audio thread ----------------------------------------------------------------
 
 void Engine::process(const AudioCallbackContext& ctx) noexcept {
-    adoptPendingGraph();
+    const bool switching = takeSwitch(ctx);
+    if (!holdSwitch) adoptPendingGraph();
     advanceTransport(ctx);
-    adoptSequences(ctx);
+    adoptSequences(ctx, switching);
     takeMidi(ctx);
     generateSequences(ctx);
     routeMidi(ctx.frameCount);
@@ -399,12 +424,12 @@ void Engine::sequenceCommand(const AudioCallbackContext& ctx, MidiSourceHandle s
 
 // Adopt a new sequence snapshot, if any, and apply the transport's and the
 // dock's commands (at the block's start).
-void Engine::adoptSequences(const AudioCallbackContext& ctx) noexcept {
+void Engine::adoptSequences(const AudioCallbackContext& ctx, bool switching) noexcept {
     sequenceEventCount = 0;
     makeSequenceBlock(ctx);
     SequenceSet::Block& block = sequenceBlock;
 
-    if (pendingSequences.load(std::memory_order_acquire) != nullptr &&
+    if (!holdSwitch && pendingSequences.load(std::memory_order_acquire) != nullptr &&
         (currentSequences == nullptr || retiredSequences.canPush())) {
         if (SequenceSet* next = pendingSequences.exchange(nullptr, std::memory_order_acq_rel)) {
             sequenceEventCount += next->adoptFrom(currentSequences, block, sequenceEvents, kMaxSequenceEvents);
@@ -412,6 +437,7 @@ void Engine::adoptSequences(const AudioCallbackContext& ctx) noexcept {
             currentSequences = next;
         }
     }
+    if (switching) applySwitch(ctx);   // before this block's commands: they act on the new song
     TransportCommand transport;
     while (transportCommands.pop(transport)) transportAction(ctx, transport, 0);
     QueuedCommand queued;
@@ -527,6 +553,70 @@ void Engine::adoptPendingGraph() noexcept {
     }
     currentGraph = next;
     adoptedSequence.store(next->sequence, std::memory_order_release);
+}
+
+bool Engine::takeSwitch(const AudioCallbackContext& ctx) noexcept {
+    holdSwitch = false;
+    for (QueuedSwitch next; switchPlans.pop(next);) {   // only the latest counts
+        armedSwitch = next;
+        switchArmed = true;
+        ++switchesTaken;
+    }
+    if (!switchArmed) return false;
+    // Not until its graph has been committed (it follows the plan at once).
+    if (issuedSequence.load(std::memory_order_acquire) < armedSwitch.graph) {
+        holdSwitch = true;
+        return false;
+    }
+    switchBar = -1.0;
+    const bool forced = switchForced.exchange(false, std::memory_order_acq_rel);
+    if (armedSwitch.plan.atNextBar && clock.running && !clock.stopPending && !forced && clock.beatsPerFrame > 0.0) {
+        const TimeInfo now      = timeAt(ctx, 0);
+        const double   barBeats = clock.numerator * 4.0 / clock.denominator;
+        double         bar      = now.barStartBeats;
+        if (bar < now.beatPosition - 1e-9) bar += barBeats;   // the next line (or this one, if right on it)
+        // (A hair of tolerance: a line right on the next block's start is that block's.)
+        if ((bar - now.beatPosition) / clock.beatsPerFrame + 1e-6 >= static_cast<double>(ctx.frameCount)) {
+            holdSwitch = true;   // a later block's
+            return false;
+        }
+        switchBar = bar;
+    }
+    switchArmed = false;
+    // The new rack's tempo and signature (as edited since, if they were), read
+    // by advanceTransport() below. At a bar line, its bars count from that line.
+    switchesPending.fetch_sub(std::exchange(switchesTaken, 0u));
+    const std::uint32_t sig = nextSignature.load();
+    tempo.store(nextTempo.load());
+    signature.store(sig);
+    if (switchBar >= 0.0) {
+        const double oldBarBeats = clock.numerator * 4.0 / clock.denominator;   // the line's number, in the old bars
+        clock.barAnchor += static_cast<std::int32_t>(std::floor((switchBar - clock.barAnchorBeat) / oldBarBeats + 1e-9));
+        clock.barAnchorBeat = switchBar;
+        clock.numerator     = static_cast<int>(sig >> 16);
+        clock.denominator   = static_cast<int>(sig & 0xFFFF);
+    }
+    return true;
+}
+
+// The switch's transport: stopped, or running on with the new rack's At Start
+// sequences from the next bar (the switch's own, when it's at one).
+void Engine::applySwitch(const AudioCallbackContext& ctx) noexcept {
+    if (!clock.running || clock.stopPending) return;
+    if (armedSwitch.plan.stopTransport) {
+        stopTransport(0);
+        return;
+    }
+    if (currentSequences == nullptr) return;
+    double bar = switchBar;
+    if (bar < 0.0) {
+        const TimeInfo now      = timeAt(ctx, 0);
+        bar                     = now.barStartBeats;
+        if (bar < now.beatPosition - 1e-9) bar += clock.numerator * 4.0 / clock.denominator;
+    }
+    SequenceSet::Block at = sequenceBlock;
+    at.beat               = bar;
+    currentSequences->transportStarted(at);
 }
 
 // Take the MIDI captured before this block started, placed one period behind

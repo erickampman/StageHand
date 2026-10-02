@@ -553,6 +553,86 @@ void testSetlistTriggers() {
     engine->collect();
 }
 
+// A song switch (docs/setlists.md, section 5): the graph and sequences adopted
+// together, with the new rack's tempo and signature; at once, or at the block
+// holding the next bar line (while the transport runs), with later commits
+// waiting too; the transport kept (the new At Start sequences from the next
+// bar) or stopped; a tempo set while it waits applied at it.
+void testSongSwitch() {
+    auto engine  = std::make_unique<Engine>();
+    auto oldSong = std::make_shared<FakePlugin>();
+    auto newSong = std::make_shared<FakePlugin>();
+    engine->commit(graphOf({slotFor(oldSong)}));
+    engine->sendTransportCommand(Engine::TransportCommand::Start);   // 120 BPM, 4/4: a bar is 2 s, 96000 frames
+    std::uint64_t frame = 0;
+    auto block = [&] {
+        Block blk(480, 48000.0, T);
+        engine->process(blk.ctx);
+        frame += 480;
+    };
+    auto atStartSet = [](std::shared_ptr<SequenceRuntime> runtime) {
+        Sequence seq;
+        seq.id      = "intro";
+        seq.atStart = true;
+        seq.notes   = {{0, 1, 60, 100}};
+        std::vector<CompiledSequence> list{CompiledSequence::compile(seq, kSequenceSourceBase + 1, runtime)};
+        return std::make_unique<SequenceSet>(std::move(list));
+    };
+    for (int i = 0; i < 50; ++i) block();   // 24000 frames: a quarter into bar 1
+
+    // At the next bar: the old song plays on until the block holding the line.
+    Engine::SwitchPlan plan;
+    plan.atNextBar     = true;
+    plan.tempoBpm      = 90.0;
+    plan.numerator     = 3;
+    plan.denominator   = 4;
+    auto intro         = std::make_shared<SequenceRuntime>();
+    engine->commitSwitch(graphOf({slotFor(newSong)}), atStartSet(intro), plan);
+    block();
+    engine->commit(graphOf({slotFor(newSong)}));   // an edit meanwhile: it waits too
+    engine->setTempo(95.0);                        // the new song's tempo, edited: at the switch
+    while (newSong->calls.empty() && frame < 200000) block();
+    CHECK(frame == 96000 + 480);   // switched in the block starting on the line (frame 96000)
+    const Engine::Transport t = engine->transport();
+    CHECK(t.running && t.tempoBpm == 95.0 && t.numerator == 3 && t.barNumber == 1 && t.barStartBeats == 4.0);
+    CHECK(oldSong->calls.size() == frame / 480 - 1);
+    CHECK(intro->state.load() == SequenceState::Starting || intro->state.load() == SequenceState::Playing);
+    CHECK(std::fabs(intro->anchorBeat - 4.0) < 1e-9);   // beat 4: the bar line
+    for (int i = 0; i < 4; ++i) block();
+    CHECK(engine->transport().barNumber == 1 && intro->state.load() == SequenceState::Playing);
+    while (engine->transport().barNumber == 1 && frame < 400000) block();
+    CHECK(std::fabs(engine->transport().barStartBeats - 7.0) < 1e-9);   // bars of three beats from the line
+
+    // At once, keeping the transport: the next song's At Start waits for the next bar.
+    auto other = std::make_shared<SequenceRuntime>();
+    plan.atNextBar = false;
+    plan.tempoBpm  = 120.0;
+    engine->commitSwitch(graphOf({slotFor(oldSong)}), atStartSet(other), plan);
+    oldSong->calls.clear();
+    block();
+    CHECK(oldSong->calls.size() == 1 && engine->transport().running);
+    CHECK(other->state.load() == SequenceState::Starting && other->anchorBeat > engine->transport().beatPosition);
+
+    // Stopping it: the switch stops the transport.
+    plan.stopTransport = true;
+    engine->commitSwitch(graphOf({slotFor(newSong)}), nullptr, plan);
+    block();
+    block();
+    CHECK(!engine->transport().running);
+
+    // Stopped, "at the next bar" is at once.
+    plan.atNextBar     = true;
+    plan.stopTransport = false;
+    oldSong->calls.clear();
+    engine->commitSwitch(graphOf({slotFor(oldSong)}), nullptr, plan);
+    block();
+    CHECK(oldSong->calls.size() == 1);
+
+    engine->commit(nullptr);
+    block();
+    engine->collect();
+}
+
 // The rig's buses (docs/rig.md): post-fader sends, effects in series (an empty
 // slot passes audio on), the return level and output pair, the master, and
 // bus plugins kept across commits. A slot outputs a constant, so after the
@@ -904,6 +984,7 @@ int main() {
     testMute();
     testDraining();
     testSetlistTriggers();
+    testSongSwitch();
     testBuses();
     testTransport();
     testGraphLifecycle();

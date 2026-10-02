@@ -1137,13 +1137,13 @@ bool RackController::loadRackAt(const std::string& bundle) {
 // Open and New: the rack prepared at once (they aren't live actions).
 bool RackController::replaceRack(const Rack& rack, const std::string& path, const std::vector<std::string>& warnings) {
     std::unique_ptr<PreparedRack> next = session.prepare(rack, session.loadedSampleRate());
-    if (!switchRack(next, path, warnings)) return false;
+    if (!switchRack(next, path, warnings, Session::SwitchOptions{})) return false;
     tick(std::max(lastTick, 0.0));
     return true;
 }
 
 bool RackController::switchRack(std::unique_ptr<PreparedRack>& next, const std::string& path,
-                                 const std::vector<std::string>& warnings) {
+                                 const std::vector<std::string>& warnings, const Session::SwitchOptions& how) {
     // The rack being left, captured once: saved (as at quit), and in a setlist
     // prepared again from it, since it's likely the previous song now.
     const std::string oldPath = target;
@@ -1157,9 +1157,8 @@ bool RackController::switchRack(std::unique_ptr<PreparedRack>& next, const std::
     rows.clear();
     taps.clear();
 
-    session.stopTransport();   // a new song starts from bar 1
     Session::LoadReport report;
-    session.activate(std::move(next), report);   // one commit; the rig's effects stay
+    session.activate(std::move(next), report, how);   // one commit; the rig's effects stay
     target = path;
     routeClick(true);
     ++generation;   // sequence windows close
@@ -1314,7 +1313,15 @@ bool RackController::goTo(std::size_t index, bool now) {
         }
         Ahead ahead = std::move(it->second);
         prepared.erase(it);
-        if (!switchRack(ahead.rack, bundle, ahead.warnings)) {
+        // A live switch follows the setlist's settings; opening the set doesn't.
+        Session::SwitchOptions how;
+        if (!now) {
+            how.oldRack       = setlist.switching.oldRack == SwitchSettings::OldRack::Cut ? Session::OldRack::Cut
+                                                                                         : Session::OldRack::RingOut;
+            how.atNextBar     = setlist.switching.when == SwitchSettings::When::NextBar;
+            how.stopTransport = setlist.switching.transport == SwitchSettings::Transport::Stop;
+        }
+        if (!switchRack(ahead.rack, bundle, ahead.warnings, how)) {
             prepared[bundle] = std::move(ahead);   // still ready for another try
             return false;
         }
@@ -1450,6 +1457,12 @@ void RackController::learnSetlistTrigger(SetlistTrigger::Action action) {
     learningId         = kSetlistLearn;
     setlistLearnAction = action;
     engine.armLearn(action == SetlistTrigger::Action::Song);
+}
+
+void RackController::setSwitchSettings(const SwitchSettings& settings) {
+    if (!setlistOpen || settings == setlist.switching) return;
+    setlist.switching = settings;
+    writeSetlist();
 }
 
 void RackController::removeSetlistTrigger(std::size_t index) {
@@ -1641,7 +1654,8 @@ void RackController::buildSetlist() {
     m.current  = onSong ? static_cast<int>(song) : -1;
     m.next     = neighbour(1);
     m.previous = neighbour(-1);
-    m.waiting  = waitingSong ? static_cast<int>(*waitingSong) : -1;
+    m.waiting   = waitingSong ? static_cast<int>(*waitingSong) : -1;
+    m.switching = setlist.switching;
     const auto& handles = session.setlistTriggerHandles();
     for (std::size_t i = 0; i < setlist.triggers.size(); ++i) {
         std::string text = setlistTriggerText(setlist.triggers[i]);

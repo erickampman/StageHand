@@ -81,8 +81,19 @@ public:
     // sequences end with note-offs. A rack still draining from an earlier
     // switch is muted, so at most one rack rings out. flush() removes each
     // slot once it's done.
+    // The engine takes the switch as one (Engine::commitSwitch): the new
+    // graph, sequences, tempo and signature together, at once or, with
+    // `atNextBar` and the transport running, at the next bar line; the
+    // transport stops there, or runs on with the new rack's At Start
+    // sequences from the next bar (section 5).
     enum class OldRack { RingOut, Cut };
-    bool activate(std::unique_ptr<PreparedRack> prepared, LoadReport& report, OldRack oldRack = OldRack::RingOut);
+    struct SwitchOptions {
+        OldRack oldRack       = OldRack::RingOut;
+        bool    atNextBar     = false;
+        bool    stopTransport = true;   // a new song from bar 1, unless the setlist keeps it running
+    };
+    bool activate(std::unique_ptr<PreparedRack> prepared, LoadReport& report, const SwitchOptions& how);
+    bool activate(std::unique_ptr<PreparedRack> prepared, LoadReport& report);   // with the default options
     // The earlier racks' slots still sounding: no rack identity, just the
     // plugin, its runtime and filter.
     const std::vector<SlotConfig>& drainingSlots() const noexcept { return draining; }
@@ -281,6 +292,8 @@ private:
                                                 std::vector<MidiSourceHandle>&      handles);
     std::vector<std::string> resolveTransport();
     void             commitGraph();
+    std::unique_ptr<EngineGraph> buildGraph() const;      // every slot, the draining ones and the rig's buses
+    std::unique_ptr<SequenceSet> buildSequences() const;  // the sequences and the transport's and setlist's control
     SlotConfig       configOf(const Slot& slot) const;   // for the graph; the sequences that play into it included
     void             commitSequences();
     SequenceEntry*   findSequence(const std::string& id) noexcept;

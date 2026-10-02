@@ -107,6 +107,25 @@ public:
     // is destroyed in collect(). Sequences are MIDI sources: rows hear one only
     // if they select it (never through "all inputs").
     void commitSequences(std::unique_ptr<SequenceSet> sequences);
+
+    // --- a song switch (docs/setlists.md, sections 3 and 5) ---
+    struct SwitchPlan {
+        bool   atNextBar     = false;   // at the block holding the next bar line; stopped, at once
+        bool   stopTransport = false;   // else it keeps running (medleys)
+        double tempoBpm      = 120.0;   // the new rack's, from the switch on
+        int    numerator     = 4;
+        int    denominator   = 4;
+    };
+    // Publish the next song's graph and sequences, to be adopted together at
+    // the switch with its tempo and signature (a new signature counts from the
+    // switch's bar line). If the transport runs on, the new rack's At Start
+    // sequences start at the next bar, as if it had just started there. Until
+    // the switch, later commit()s and commitSequences() wait too (they hold the
+    // new rack); a further switch replaces this one's plan.
+    void commitSwitch(std::unique_ptr<EngineGraph> graph, std::unique_ptr<SequenceSet> sequences,
+                      const SwitchPlan& plan);
+    // A switch waiting for its bar happens at the next block instead (unload, shutdown).
+    void switchNow() noexcept { switchForced.store(true, std::memory_order_release); }
     // Start or stop one sequence (kInvalidMidiSource = all of them) at the next
     // block. False if the command queue is full (try again next tick).
     bool sendSequenceCommand(MidiSourceHandle source, SequenceCommand command) noexcept;
@@ -254,7 +273,11 @@ private:
     };
 
     void adoptPendingGraph() noexcept;
-    void adoptSequences(const AudioCallbackContext& ctx) noexcept;
+    // A switch due in this block: true once its plan applies (graph and
+    // sequences adopted with it); `holdSwitch` set while one waits for its bar.
+    bool takeSwitch(const AudioCallbackContext& ctx) noexcept;
+    void applySwitch(const AudioCallbackContext& ctx) noexcept;   // after the sequences are adopted
+    void adoptSequences(const AudioCallbackContext& ctx, bool switching) noexcept;
     void takeMidi(const AudioCallbackContext& ctx) noexcept;
     void generateSequences(const AudioCallbackContext& ctx) noexcept;
     void generateAuditions(const AudioCallbackContext& ctx) noexcept;
@@ -354,6 +377,19 @@ private:
     std::atomic<int>              learnState{kLearnIdle};
     std::atomic<bool>             learnPrograms{false};
     SpscQueue<SequenceSet::SetlistHit, 16> setlistRequests;   // audio -> main
+
+    // Song switches: plans main -> audio (pushed before their graph is
+    // committed), and the one waiting (audio thread only).
+    struct QueuedSwitch {
+        SwitchPlan    plan;
+        std::uint64_t graph = 0;   // the commit() sequence carrying the new rack
+    };
+    SpscQueue<QueuedSwitch, 8>    switchPlans;
+    std::atomic<bool>             switchForced{false};
+    QueuedSwitch                  armedSwitch;             // audio thread only
+    bool                          switchArmed = false;
+    bool                          holdSwitch  = false;    // this block: leave the pending graph and sequences
+    double                        switchBar   = -1.0;     // at-next-bar: the bar line's beat (old signature)
     Learned                       learned;
 
     // Per-input message counts (audio writes, main reads). A slot is claimed by
@@ -369,6 +405,11 @@ private:
     // beat clock itself is audio-thread state, published after each block.
     std::atomic<double>        tempo{120.0};
     std::atomic<std::uint32_t> signature{(4u << 16) | 4u};   // numerator << 16 | denominator
+    // The rack's own, which a pending switch applies (setTempo()).
+    std::atomic<double>        nextTempo{120.0};
+    std::atomic<std::uint32_t> nextSignature{(4u << 16) | 4u};
+    std::atomic<std::uint32_t> switchesPending{0};   // committed, not yet applied
+    std::uint32_t              switchesTaken = 0;    // audio thread: popped, not yet applied
     struct BeatClock {
         double       beat          = 0.0;   // at the current block's first frame
         double       tempoBpm      = 120.0; // this block's tempo
