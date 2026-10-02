@@ -314,12 +314,23 @@ public:
     // Edits, all saved to the setlist file at once. "After the current song":
     // after the song playing, or where its song was if that was removed.
     bool addRackToSetlist(const std::string& chosen);          // after the current song; no switch
-    bool addNewRackToSetlist(const std::string& chosen);       // a new, empty rack saved there; goes to it
+    bool addNewRackToSetlist(const std::string& chosen);       // a copy of the song playing (else empty) saved there; goes to it
     bool addThisRackAgain();                                   // the current song's rack, after it
     bool moveSong(std::size_t index, int delta);               // -1 up, +1 down
     bool renameSong(std::size_t index, const std::string& name);   // "" = the rack's own name
     bool removeSong(std::size_t index);                        // the rack stays on disk
     bool relinkSong(std::size_t index, const std::string& chosen);   // point a (missing) song at another rack
+    // Check setlist (milestone 7, edge case 9): each song's rack is read and
+    // prepared once, in turn (one plugin per tick, after preparing ahead, as
+    // the status bar shows), then dropped, and what reaching it would report
+    // is kept: a rack that can't be read, plugins missing or failing, MIDI
+    // inputs not connected, triggers clashing with the setlist's. The playing
+    // rack is checked as it runs. The song list shows those songs and their
+    // problems in amber until the next check, or until switching to the song
+    // (its switch's warnings then replace them); a notice sums up. False if
+    // there's no setlist; a check under way starts again.
+    bool checkSetlist();
+    bool checkingSetlist() const noexcept { return check.has_value(); }
     // Its MIDI triggers (section 4), saved to the setlist at once. Learned as
     // the transport's are: Next and Previous from the next note-on or
     // controller press, Song from the next Program Change (program n then goes
@@ -392,6 +403,8 @@ private:
     // Each tick: keep the next and previous songs' racks prepared, and the one
     // a switch waits for (first), one plugin per tick; switch when it's ready.
     void           prepareAhead();
+    void           checkStep();   // checkSetlist(), a step a tick
+    void           forgetChecks();   // the set changed: its checks were for another
     void           refreshSongs(double now);   // songCache and songBundles
     int            neighbour(int step) const;  // where Next (1) or Previous (-1) goes, by songCache; -1: none
     // Open the rack bundle at `bundle` (with replaceRack()); false, with a notice, if it can't.
@@ -482,6 +495,17 @@ private:
     std::optional<std::size_t>                            waitingSong;    // a switch waiting for its rack
     std::map<std::string, Rack>                           unsavedRacks;   // by bundle; unsavedRackCount()
     std::string                                           preparingText;  // model.status.preparing
+    // Check setlist: the racks still to check (by bundle, in song order), the
+    // one being prepared, and what's been found, by bundle.
+    struct Check {
+        std::vector<std::string>      bundles;
+        std::size_t                   next = 0;
+        std::string                   bundle;
+        std::unique_ptr<PreparedRack> rack;
+        std::vector<std::string>      found;
+    };
+    std::optional<Check>                                  check;
+    std::map<std::string, std::vector<std::string>>       songProblems;
     bool                                                  ticking = false;
 };
 

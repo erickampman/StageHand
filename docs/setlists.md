@@ -1,6 +1,6 @@
 # StageHand — Setlists and rack switching (design)
 
-Proposed 2026-10-01; milestones 1 to 6 built (notes under "Proposed
+Proposed 2026-10-01; milestones 1 to 7 built (notes under "Proposed
 milestones"). A setlist is an ordered list of racks
 to step through on stage. It builds on decisions already recorded:
 - domain-model.md, "Presets vs Racks": "A setlist is an ordered list of
@@ -201,7 +201,7 @@ All of this is in the app; a setlist never has to be written by hand.
     rack (the setlist's `Racks/` folder by default), adds it after the
     current song, and plays it. Decided 2026-10-02 (rig.md): the new rack
     starts as a copy of the current song's rack, not empty; with no song
-    playing, it starts empty. Not built yet: today it starts empty. It's the way to build a set from scratch:
+    playing, it starts empty (built 2026-10-02, rig.md milestone 4). It's the way to build a set from scratch:
     add, set up, add the next.
   - File → "Add a rack to this set..." (Ctrl-O) adds an existing rack after
     the current song, without switching to it.
@@ -563,6 +563,22 @@ unsaved. Quitting, Close setlist and opening another setlist save the kept
 racks too (unless saving is off). Open and New outside a switch still save
 the running rack first. The toolbar shows "N songs unsaved" and the song
 list marks them. Tests: `testSavingInASet` (controller).
+
+**Milestone 7 implemented (2026-10-02):** File > Check setlist
+(`RackController::checkSetlist()`) goes through the set's racks in song order,
+each once (a reprise shares its rack's result): it reads the rack (its
+in-memory copy if it has unsaved edits), resolves its MIDI inputs as
+activating it would (`Session::sourceProblems()`: slots', loopers', sequence
+triggers' and the transport's; a device that's connected is opened, as it
+would be at the switch), looks for triggers on the setlist's controls, then
+prepares it one plugin per tick, after preparing ahead, and drops it. The
+playing rack is checked as it runs (`Session::runningProblems()`). What it
+finds is kept per rack: the song list shows those songs in amber with their
+problems under them, the setlist row's "next:" turns amber when the next song
+has some, and a notice sums up. They stay until the next check, or until
+switching to the song, when the switch's own warnings replace them; opening
+or closing a setlist forgets them. The status bar shows the progress. Tests:
+`testCheckSetlist` (controller).
 
 ## Open questions
 

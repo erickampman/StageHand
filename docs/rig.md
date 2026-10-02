@@ -1,6 +1,7 @@
 # StageHand — The rig: effect buses, sends and the master (design)
 
-Proposed 2026-10-02; nothing built yet. Shared effects (a reverb, a delay)
+Proposed 2026-10-02; milestones 1 to 4 built (notes under "Proposed
+milestones"). Shared effects (a reverb, a delay)
 that every row can feed, plus one master level for the whole output. Builds
 on:
 - setlists.md, "Domains": the rack owns a piece's sound, the setlist owns
@@ -183,6 +184,19 @@ of the scan's audio effects, with Edit; M, the return fader over its meter,
 its output pair), and the master fader in the status bar. "+ Add plugin"
 still lists the effects greyed (they belong on the buses). The toolbar marks
 unsaved rig changes too. Tests: `testRigControls` (controller).
+
+**Milestone 4 done (2026-10-02):** File > New rack in this set... saves a
+copy of the song playing (`Session::capture()`: its rows with each plugin's
+state, sends, sequences, loopers and settings, unsaved edits included) as the
+new bundle, named for it, adds it after the current song and plays it. With
+no song playing (an empty set, or its song removed) it starts empty, as
+before. The file chooser's title says which. Tests: the copy in
+`testSetlist` (controller).
+
+**Added 2026-10-02 (rows first):** when the rows and the two bus strips don't
+all fit above the Sources dock, the strips scroll with the rows, after the
+last one (`RackWidget::busesScroll()`), so the rows keep the whole height;
+when they fit, the strips stay above the dock.
 
 **Added 2026-10-02 (docs/looper.md):** the rig also holds the looper switch
 (`"looperSwitch"` in rig.json: a source and a note or controller, as a

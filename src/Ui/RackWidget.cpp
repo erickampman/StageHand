@@ -134,13 +134,18 @@ float RackWidget::toolbarY() const {
 float RackWidget::topH() const {
     return toolbarY() + kToolbarH;
 }
-float RackWidget::rowsHeight() {
-    return rigTop() - topH();
+float RackWidget::rowsHeight() {   // the rows' area (and the buses', when they scroll)
+    return busesScroll() ? dockTop() - topH() : dockTop() - rigHeight() - topH();
+}
+bool RackWidget::busesScroll() {
+    const float rows = static_cast<float>(controller.view().rows.size()) * kRowH;
+    return rigHeight() > 0.0f && rows + rigHeight() > dockTop() - topH() + 0.5f;
 }
 float RackWidget::rigHeight() const {
     return controller.view().rig.loaded ? kBusH * kRigBuses : 0.0f;
 }
 float RackWidget::rigTop() {
+    if (busesScroll()) return topH() + static_cast<float>(controller.view().rows.size()) * kRowH - scrollY;
     return dockTop() - rigHeight();
 }
 // The dock grows with its sequences, up to a little over half the space; past
@@ -178,7 +183,8 @@ float RackWidget::faderX1() {   // the gain and output text, then the red X, to 
     return outputX() + outputW() - kPad - 76.0f - 22.0f - kRemoveSize - 8.0f;
 }
 float RackWidget::maxScroll() {
-    return std::max(0.0f, static_cast<float>(controller.view().rows.size()) * kRowH - rowsHeight());
+    const float content = static_cast<float>(controller.view().rows.size()) * kRowH + (busesScroll() ? rigHeight() : 0.0f);
+    return std::max(0.0f, content - rowsHeight());
 }
 
 // --- drawing helpers -----------------------------------------------------------------
@@ -318,7 +324,8 @@ void RackWidget::drawSetlistRow() {
     const float       setW      = labelWidth(name, 13.0f);
     save();
     scissor(x, 0, std::max(0.0f, nameRight - setW - 16.0f - x), kSetlistH);
-    label(x, kSetlistH / 2, next, 13.0f, set.waiting >= 0 ? kAmber : kDim);
+    const bool nextProblems = set.next >= 0 && !set.songs[static_cast<std::size_t>(set.next)].problems.empty();
+    label(x, kSetlistH / 2, next, 13.0f, set.waiting >= 0 || nextProblems ? kAmber : kDim);
     restore();
     label(nameRight, kSetlistH / 2, name, 13.0f, kDim, ALIGN_RIGHT | ALIGN_MIDDLE);
 }
@@ -353,16 +360,24 @@ void RackWidget::openSongMenu(float x, float y) {
     m.x     = x;
     m.y     = y;
     m.w     = 360.0f;
-    m.title = set.name;
+    m.title = set.name + (set.checking ? "   (checking...)" : "");
     for (std::size_t i = 0; i < set.songs.size(); ++i) {
         const SongModel&  s    = set.songs[i];
         const std::string text = std::to_string(i + 1) + "   " + s.name + (s.missing ? "   (rack missing)" : "") +
                                  (s.unsaved ? "   (unsaved)" : "");
-        m.items.push_back(MenuItem{
-            text,
-            s.missing ? std::function<void()>{[this, i, x, y] { openMissingSongMenu(i, x, y); }}
-                      : std::function<void()>{[this, i] { switchSong([this, i] { controller.goToSong(i); }); }},
-            static_cast<int>(i) == set.current});
+        MenuItem item{text,
+                      s.missing ? std::function<void()>{[this, i, x, y] { openMissingSongMenu(i, x, y); }}
+                                : std::function<void()>{[this, i] { switchSong([this, i] { controller.goToSong(i); }); }},
+                      static_cast<int>(i) == set.current};
+        item.warn = !s.problems.empty();
+        m.items.push_back(std::move(item));
+        // What Check setlist found, under the song, in amber.
+        for (const std::string& problem : s.problems) {
+            MenuItem line{"      " + problem, {}};
+            line.warn = true;
+            m.w       = std::max(m.w, std::min(760.0f, 7.5f * static_cast<float>(line.label.size()) + 40.0f));   // about 7.5 px a character
+            m.items.push_back(std::move(line));
+        }
     }
     if (set.songs.empty()) m.items.push_back(MenuItem{"No songs yet", {}});
 
@@ -919,7 +934,13 @@ void RackWidget::sendBox(const RowModel& row, std::size_t bus, float x, float y)
 
 void RackWidget::drawRig() {
     const RigModel& rig = controller.view().rig;
-    for (std::size_t b = 0; b < kRigBuses; ++b) drawBusStrip(rig.buses[b], b, rigTop() + static_cast<float>(b) * kBusH);
+    const float     top = topH(), bottom = top + rowsHeight() + (busesScroll() ? 0.0f : rigHeight());
+    for (std::size_t b = 0; b < kRigBuses; ++b) {
+        const float y = rigTop() + static_cast<float>(b) * kBusH;
+        // Scrolled out of sight: not drawn. Partly in sight, the toolbar and
+        // the dock, drawn after, cover the rest (their regions too).
+        if (y + kBusH > top && y < bottom) drawBusStrip(rig.buses[b], b, y);
+    }
 }
 
 // Bus A: its two effects in series (each a menu, with its editor), then the
@@ -1575,6 +1596,8 @@ void RackWidget::openFileMenu(float x, float y) {
                                                   });
                                }});
     if (inSet) {
+        m.items.push_back(MenuItem{controller.checkingSetlist() ? "Check setlist (checking...)" : "Check setlist",
+                                   [this] { controller.checkSetlist(); }});
         m.items.push_back(MenuItem{"Setlist settings...", [this, x, y] { openSwitchMenu(x, y); }});
         m.items.push_back(MenuItem{"Close setlist", [this] { controller.closeSetlist(); }});
     }
@@ -1633,7 +1656,10 @@ void RackWidget::fileAction(FileAction action) {
     }
     if (controller.hasSetlist() && action == FileAction::New) {   // a new song, after the current one
         if (chooseFile)
-            chooseFile(Choose::Save, "New rack in this set", setRackFolder(), "New song.rack",
+            chooseFile(Choose::Save,
+                       controller.view().setlist.current >= 0 ? "New rack in this set (a copy of this song's)"
+                                                              : "New rack in this set (empty)",
+                       setRackFolder(), "New song.rack",
                        [this](const std::string& path) {
                            switchSong([this, path] { controller.addNewRackToSetlist(path); });
                        });

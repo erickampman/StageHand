@@ -344,7 +344,8 @@ void UiWidget::drawMenu() {
         const float     iy   = listTop + 4.0f + static_cast<float>(i) * kMenuItemH - m.scroll;
         if (iy + kMenuItemH < listTop || iy > listBottom) continue;
         if (item.checked) label(m.x + 12.0f, iy + kMenuItemH / 2, "\xE2\x9C\x93", 14.0f, kAccent);   // U+2713
-        label(m.x + 30.0f, iy + kMenuItemH / 2, item.label, 14.0f, !item.action ? kDim : item.danger ? kRed : kText);
+        label(m.x + 30.0f, iy + kMenuItemH / 2, item.label, 14.0f,
+              item.warn ? kAmber : !item.action ? kDim : item.danger ? kRed : kText);
         const float top = std::max(iy, listTop), bot = std::min(iy + kMenuItemH, listBottom);
         region(m.x, top, m.w, bot - top, [this, action = item.action](const Press&) {
             if (!action) return;   // a disabled item: the menu stays
