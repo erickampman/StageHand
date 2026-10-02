@@ -994,7 +994,8 @@ void testPreparedRacks() {
     CHECK(rig.session->slots().size() == 2 && view.setlist.current == 1);
     runBlock(*rig.engine);
     rig.engine->collect();
-    CHECK(oldRow.expired() && rig.session->rig().effects[0][0].plugin.get() == fx);
+    CHECK(!oldRow.expired() && rig.session->drainingSlots().size() == 1);   // ringing out
+    CHECK(rig.session->rig().effects[0][0].plugin.get() == fx);
 
     // Then C (next) and A again (previous), one plugin per tick; A from memory,
     // with its edit, though nothing was saved.

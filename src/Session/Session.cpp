@@ -92,7 +92,7 @@ bool Session::prepareStep(PreparedRack& prepared) {
     return prepared.ready();
 }
 
-bool Session::activate(std::unique_ptr<PreparedRack> prepared, LoadReport& report) {
+bool Session::activate(std::unique_ptr<PreparedRack> prepared, LoadReport& report, OldRack oldRack) {
     while (!prepareStep(*prepared)) {}
     PreparedRack& p = *prepared;
     for (const std::string& warning : p.warnings) report.warnings.push_back(warning);
@@ -117,7 +117,21 @@ bool Session::activate(std::unique_ptr<PreparedRack> prepared, LoadReport& repor
                                       "; this slot will hear nothing from it");
     }
 
-    loaded     = std::move(p.slots);   // the old plugins live on in the old graph until it's collected
+    // The rack being replaced rings out (or is cut); one still draining fades out now.
+    auto mute = [](SlotRuntime& runtime) {
+        runtime.targetGain.store(0.0f, std::memory_order_relaxed);
+        runtime.muted.store(true, std::memory_order_relaxed);
+    };
+    for (SlotConfig& earlier : draining) mute(*earlier.runtime);
+    for (const Slot& slot : loaded) {
+        if (!slot.plugin) continue;
+        SlotConfig config = configOf(slot);
+        config.sequenceSources.clear();   // its sequences end with the switch
+        config.draining = true;
+        if (oldRack == OldRack::Cut) mute(*config.runtime);
+        draining.push_back(std::move(config));
+    }
+    loaded     = std::move(p.slots);
     name       = rack.name;
     setTempo(rack.tempoBpm);
     if (!setTimeSignature(rack.timeSigNumerator, rack.timeSigDenominator)) setTimeSignature(4, 4);
@@ -403,6 +417,13 @@ bool Session::removeSlot(const std::string& id) {
 }
 
 void Session::flush() {
+    const auto done = std::remove_if(draining.begin(), draining.end(), [](const SlotConfig& c) {
+        return c.runtime->drained.load(std::memory_order_relaxed);
+    });
+    if (done != draining.end()) {
+        draining.erase(done, draining.end());   // the plugin goes when the graph that held it is collected
+        graphDirty = true;
+    }
     if (sequencesDirty) commitSequences();
     if (graphDirty) commitGraph();
 }
@@ -410,6 +431,7 @@ void Session::flush() {
 void Session::unload() {
     engine.commitSequences(nullptr);   // releases any sounding sequence notes
     engine.commit(nullptr);
+    draining.clear();
     graphDirty = sequencesDirty = false;
 }
 
@@ -583,24 +605,27 @@ void Session::commitSequences() {
 
 // --- helpers -----------------------------------------------------------------------
 
+SlotConfig Session::configOf(const Slot& slot) const {
+    SlotConfig config;
+    config.plugin                = slot.plugin;
+    config.runtime               = slot.runtime;
+    config.midiFilter            = slot.saved.filter;
+    config.midiFilter.allSources = slot.saved.source.kind == MidiSourceRef::Kind::All;
+    config.midiFilter.source     = slot.source;   // invalid when unresolved or None: hears no live input
+    for (const SequenceEntry& entry : sequenceList)   // the sequences that play into it
+        if (std::find(entry.sequence.targets.begin(), entry.sequence.targets.end(), slot.saved.id) !=
+            entry.sequence.targets.end())
+            config.sequenceSources.push_back(entry.source);
+    config.notePort              = slot.saved.notePort;
+    config.firstOutput           = slot.saved.firstOutput;
+    return config;
+}
+
 void Session::commitGraph() {
     std::vector<SlotConfig> configs;
-    for (const Slot& slot : loaded) {
-        if (!slot.plugin) continue;
-        SlotConfig config;
-        config.plugin                = slot.plugin;
-        config.runtime               = slot.runtime;
-        config.midiFilter            = slot.saved.filter;
-        config.midiFilter.allSources = slot.saved.source.kind == MidiSourceRef::Kind::All;
-        config.midiFilter.source     = slot.source;   // invalid when unresolved or None: hears no live input
-        for (const SequenceEntry& entry : sequenceList)   // the sequences that play into it
-            if (std::find(entry.sequence.targets.begin(), entry.sequence.targets.end(), slot.saved.id) !=
-                entry.sequence.targets.end())
-                config.sequenceSources.push_back(entry.source);
-        config.notePort              = slot.saved.notePort;
-        config.firstOutput           = slot.saved.firstOutput;
-        configs.push_back(std::move(config));
-    }
+    for (const Slot& slot : loaded)
+        if (slot.plugin) configs.push_back(configOf(slot));
+    configs.insert(configs.end(), draining.begin(), draining.end());   // ringing out after them
     std::vector<BusConfig> buses;
     if (rigLoaded)
         for (std::size_t b = 0; b < kRigBuses; ++b) {

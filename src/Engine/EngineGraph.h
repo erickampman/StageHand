@@ -37,6 +37,12 @@ struct SlotConfig {
     std::vector<MidiSourceHandle> sequenceSources;
     std::uint16_t notePort    = 0;      // plugin note-input port that receives it
     std::uint32_t firstOutput = 0;      // backend output for the plugin's first channel
+    // A slot of the rack switched away from, ringing out (docs/setlists.md,
+    // section 3): no new note-ons reach it, the rest of its MIDI does (a
+    // note-off through the held-note table, a pedal), its gain and sends stay,
+    // and once its output has been quiet for Engine::kQuietSeconds (or after
+    // Engine::kMaxDrainSeconds) it's suspended and SlotRuntime::drained is set.
+    bool          draining    = false;
 };
 
 // One of the rig's effect buses (docs/rig.md): what the slots send to it runs
@@ -89,6 +95,7 @@ private:
         std::uint32_t       cursor        = 0;   // next event to hand out (block splitting)
         std::vector<float>  audio;               // audioChannels * kMaxPluginBlockFrames
         std::vector<float*> channels;            // pointers into `audio`
+        bool                fresh         = false;   // new in this graph: gets the held pedals (set at adoption)
     };
 
     // Audio-thread working state for one bus, sized at construction. The bus

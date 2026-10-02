@@ -113,6 +113,19 @@ bool isPress(const MidiMessage& m) noexcept {
                                                                         : (m.words[0] & 0x7F) >= 64;
 }
 
+// Sustain, sostenuto or soft pedal (CC 64, 66, 67), in either protocol.
+bool isPedal(const MidiMessage& m) noexcept {
+    if (!ump::isChannelVoice(m) || ump::status(m) != ump::Status::ControlChange) return false;
+    const std::uint32_t controller = (m.words[0] >> 8) & 0x7F;
+    return controller == 64 || controller == 66 || controller == 67;
+}
+
+// Do two pedal messages address the same pedal (group, channel, controller)?
+bool samePedal(const MidiMessage& a, const MidiMessage& b) noexcept {
+    return ump::group(a) == ump::group(b) && ump::channel(a) == ump::channel(b) &&
+           ((a.words[0] >> 8) & 0x7F) == ((b.words[0] >> 8) & 0x7F);
+}
+
 } // namespace
 
 Engine::Engine() = default;
@@ -494,6 +507,11 @@ void Engine::adoptPendingGraph() noexcept {
     EngineGraph* const next = pendingGraph.exchange(nullptr, std::memory_order_acq_rel);
     if (next == nullptr) return;
 
+    for (std::size_t i = 0; i < next->configs.size(); ++i) {   // new slots learn which pedals are down
+        const SlotConfig& slot = next->configs[i];
+        next->states[i].fresh  = slot.plugin && !slot.draining &&
+                                (currentGraph == nullptr || !currentGraph->contains(slot.plugin.get()));
+    }
     if (currentGraph != nullptr) {
         for (const SlotConfig& slot : currentGraph->configs)
             if (slot.plugin && !next->contains(slot.plugin.get())) slot.plugin->stopProcessing();
@@ -578,6 +596,7 @@ void Engine::routeMidi(std::uint32_t frames) noexcept {
     if (currentGraph == nullptr) return;
     for (EngineGraph::SlotState& state : currentGraph->states) state.eventCount = 0;
     applyMutes();
+    sendHeldPedals();
 
     std::size_t nextSequenceEvent = 0;
     auto routeSequencesUpTo = [&](std::uint32_t offset) {
@@ -604,8 +623,11 @@ void Engine::applyMutes() noexcept {
         const SlotConfig& config  = currentGraph->configs[i];
         SlotRuntime&      runtime = *config.runtime;
         if (!runtime.muted.load(std::memory_order_relaxed)) {
-            runtime.muteApplied = runtime.suspended = false;
-            runtime.quietFrames = runtime.mutedFrames = 0;
+            runtime.muteApplied = false;
+            if (!config.draining) {   // resumed; a draining slot keeps counting toward its end
+                runtime.suspended   = false;
+                runtime.quietFrames = runtime.mutedFrames = 0;
+            }
             continue;
         }
         if (runtime.muteApplied) continue;
@@ -631,8 +653,47 @@ void Engine::applyMutes() noexcept {
     }
 }
 
+void Engine::trackPedal(MidiSourceHandle source, const MidiMessage& m) noexcept {
+    HeldPedal* entry = nullptr;
+    HeldPedal* free  = nullptr;
+    for (HeldPedal& p : heldPedals) {
+        if (p.used && p.source == source && samePedal(p.message, m)) entry = &p;
+        if (!p.used && free == nullptr) free = &p;
+    }
+    if (!isPress(m)) {   // up
+        if (entry != nullptr) entry->used = false;
+        return;
+    }
+    if (entry == nullptr) entry = free;
+    if (entry == nullptr) return;   // full: that pedal isn't passed on at a switch
+    entry->used    = true;
+    entry->source  = source;
+    entry->message = m;
+}
+
+// At the block a graph is adopted: each pedal held down, to each new slot that
+// hears its input, before anything else this block.
+void Engine::sendHeldPedals() noexcept {
+    for (std::size_t i = 0; i < currentGraph->configs.size(); ++i) {
+        EngineGraph::SlotState& state = currentGraph->states[i];
+        if (!state.fresh) continue;
+        state.fresh = false;
+        if (state.dialects == 0) continue;
+        for (const HeldPedal& pedal : heldPedals) {
+            if (!pedal.used || !accepts(currentGraph->configs[i], pedal.source, pedal.message)) continue;
+            MidiMessage         upconverted[ump::kMaxTranslatedMessages];
+            std::size_t         upconvertedCount = 0;
+            ump::UpconvertState plain;   // a controller needs no stream state
+            if (ump::messageType(pedal.message) == ump::MessageType::Midi1ChannelVoice)
+                upconvertedCount = ump::upconvert(pedal.message, plain, upconverted, ump::kMaxTranslatedMessages);
+            deliver(i, pedal.message, upconverted, upconvertedCount, 0, -1, nullptr);
+        }
+    }
+}
+
 void Engine::route(const QueuedMidi& item, std::uint32_t offset) noexcept {
     const MidiMessage& original = item.message.message;
+    if (!isSequenceSource(item.source) && isPedal(original)) trackPedal(item.source, original);
 
     // Upconvert every MIDI 1.0 message once, whether or not a slot needs it: the
     // state (RPN selection, bank) belongs to the stream and must see it all.
@@ -660,7 +721,7 @@ void Engine::route(const QueuedMidi& item, std::uint32_t offset) noexcept {
         const SlotConfig& config = currentGraph->configs[i];
         if (currentGraph->states[i].dialects == 0 || !accepts(config, item.source, original))
             continue;
-        if (noteOn != nullptr && config.runtime->muteApplied) continue;   // muted: no new notes
+        if (noteOn != nullptr && (config.runtime->muteApplied || config.draining)) continue;   // no new notes
         std::uint8_t deliveredNote = 0;
         if (deliver(i, original, upconverted, upconvertedCount, offset, -1, &deliveredNote) &&
             noteOn != nullptr && noteOn->count < kMaxLayers) {
@@ -802,6 +863,8 @@ void Engine::runSlots(const AudioCallbackContext& ctx) noexcept {
                 }
 
                 SlotRuntime& runtime = *config.runtime;
+                if (config.draining && runtime.suspended)   // muted as well, and gone quiet: done too
+                    runtime.drained.store(true, std::memory_order_relaxed);
                 if (runtime.suspended && state.cursor == first) continue;   // nothing for it: not run, silent
 
                 ProcessContext pc;
@@ -852,15 +915,26 @@ void Engine::runSlots(const AudioCallbackContext& ctx) noexcept {
                                 combined, level);
                 }
 
-                if (runtime.muteApplied && runtime.gain.settledAt(0.0f)) {
-                    float peak = 0.0f;   // its own output, before the (zero) gain
+                auto ownPeak = [&] {   // its own output, before the gain
+                    float peak = 0.0f;
                     for (std::uint32_t c = 0; c < state.audioChannels; ++c)
                         for (std::uint32_t f = 0; f < chunk; ++f) peak = std::max(peak, std::fabs(state.channels[c][f]));
-                    runtime.quietFrames = peak < kQuietLevel ? runtime.quietFrames + chunk : 0;
+                    return peak;
+                };
+                if (runtime.muteApplied && runtime.gain.settledAt(0.0f)) {
+                    runtime.quietFrames = ownPeak() < kQuietLevel ? runtime.quietFrames + chunk : 0;
                     runtime.mutedFrames += chunk;
                     if (runtime.quietFrames >= kQuietSeconds * rate || runtime.mutedFrames >= kMaxMutedSeconds * rate) {
                         runtime.suspended = true;
                         config.plugin->stopProcessing();
+                    }
+                } else if (config.draining && !runtime.muteApplied) {   // ringing out at its own gain
+                    runtime.quietFrames = ownPeak() < kQuietLevel ? runtime.quietFrames + chunk : 0;
+                    runtime.drainFrames += chunk;
+                    if (runtime.quietFrames >= kQuietSeconds * rate || runtime.drainFrames >= kMaxDrainSeconds * rate) {
+                        runtime.suspended = true;
+                        config.plugin->stopProcessing();
+                        runtime.drained.store(true, std::memory_order_relaxed);
                     }
                 }
             }

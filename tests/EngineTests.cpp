@@ -407,6 +407,98 @@ void testMute() {
     engine->collect();
 }
 
+// Draining (docs/setlists.md, section 3): a slot of the rack switched away
+// from hears no new note-ons, but a held key's note-off and the pedal still
+// reach it; its gain stays; it's finished once quiet (0.2 s) or after 8 s. A
+// slot new in a graph is sent the pedals held down (edge case 2).
+void testDraining() {
+    auto engine = std::make_unique<Engine>();
+    auto loud   = std::make_shared<FakePlugin>(2, NoteDialect::Midi, 1.0f);    // never quiet
+    auto quiet  = std::make_shared<FakePlugin>(2, NoteDialect::Midi, 0.0f);
+    auto next   = std::make_shared<FakePlugin>(2, NoteDialect::Midi2, 0.5f);   // the next song: MIDI 2.0
+    SlotConfig a = slotFor(loud), b = slotFor(quiet), c = slotFor(next);
+    a.runtime    = std::make_shared<SlotRuntime>(1.0f);
+    b.runtime    = std::make_shared<SlotRuntime>(1.0f);
+    c.runtime    = std::make_shared<SlotRuntime>(1.0f);
+    engine->commit(graphOf({a, b}));
+    std::vector<float> last(2);
+    auto block = [&] {
+        Block blk(64, 48000.0, T);
+        engine->process(blk.ctx);
+        last = {blk.samples[0].back(), blk.samples[1].back()};
+    };
+    auto cc = [](std::uint8_t controller, std::uint8_t value) {
+        TimedMidiMessage m;
+        m.captureTime       = T - 5 * ms;
+        m.message.words[0]  = 0x20B00000u | (std::uint32_t{controller} << 8) | value;
+        m.message.wordCount = 1;
+        return m;
+    };
+
+    engine->onMidi(1, note(T - 5 * ms, 60));   // held across the switch
+    engine->onMidi(1, cc(64, 127));            // sustain down
+    engine->onMidi(1, cc(1, 90));              // the mod wheel: not a pedal
+    block();
+
+    // The switch: one graph with the next song's slot and the old ones draining.
+    a.draining = b.draining = true;
+    engine->commit(graphOf({c, a, b}));
+    loud->calls.clear();
+    engine->onMidi(1, note(T - 5 * ms, 62));   // a new note: the next song's only
+    block();
+    CHECK(next->calls.size() == 1 && next->calls[0].events.size() == 2);
+    if (next->calls.size() == 1 && next->calls[0].events.size() == 2) {
+        const MidiMessage& pedal = next->calls[0].events[0].midi;   // first, at the block's start
+        CHECK(ump::messageType(pedal) == ump::MessageType::Midi2ChannelVoice &&
+              ump::status(pedal) == ump::Status::ControlChange && ((pedal.words[0] >> 8) & 0x7F) == 64);
+        CHECK(next->calls[0].events[0].sampleOffset == 0 && ump::isNoteOn(next->calls[0].events[1].midi));
+    }
+    CHECK(loud->calls.size() == 1 && loud->calls[0].events.empty());
+    CHECK(last[0] == 1.5f);   // its gain kept: the old slot rings at full level
+
+    // The held key's note-off and the pedal-up reach the old patch; the
+    // pedal-up reaches the new one too, which only learns of the pedal once.
+    loud->calls.clear();
+    next->calls.clear();
+    TimedMidiMessage off = note(T - 5 * ms, 60);
+    off.message.words[0] = 0x20803C00u;
+    engine->onMidi(1, off);
+    engine->onMidi(1, cc(64, 0));
+    block();
+    CHECK(loud->calls.size() == 1 && loud->calls[0].events.size() == 2);
+    if (loud->calls.size() == 1 && loud->calls[0].events.size() == 2) {
+        CHECK(ump::isNoteOff(loud->calls[0].events[0].midi) && ump::noteNumber(loud->calls[0].events[0].midi) == 60);
+        CHECK(ump::status(loud->calls[0].events[1].midi) == ump::Status::ControlChange);
+    }
+    CHECK(next->calls.size() == 1 && next->calls[0].events.size() == 1);   // the pedal-up only
+
+    // The quiet one finishes after 0.2 s; the loud one only at the 8 s cap.
+    for (int i = 0; i < 48000 * 3 / 10 / 64; ++i) block();   // 0.3 s
+    CHECK(b.runtime->drained.load() && quiet->stops == 1 && !quiet->processing);
+    CHECK(!a.runtime->drained.load() && loud->stops == 0);
+    for (int i = 0; i < 48000 * 8 / 64; ++i) block();
+    CHECK(a.runtime->drained.load() && loud->stops == 1);
+    loud->calls.clear();
+    block();
+    CHECK(loud->calls.empty());   // not run any more
+
+    // A draining slot muted (a further switch) finishes through the mute path.
+    auto other = std::make_shared<FakePlugin>(2, NoteDialect::Midi, 0.0f);
+    SlotConfig d = slotFor(other);
+    d.runtime    = std::make_shared<SlotRuntime>(1.0f);
+    d.draining   = true;
+    engine->commit(graphOf({c, d}));
+    block();
+    d.runtime->targetGain.store(0.0f);
+    d.runtime->muted.store(true);
+    for (int i = 0; i < 48000 * 3 / 10 / 64; ++i) block();
+    CHECK(d.runtime->drained.load() && other->stops == 1);
+
+    engine->commit(nullptr);
+    block();
+    engine->collect();
+}
+
 // The rig's buses (docs/rig.md): post-fader sends, effects in series (an empty
 // slot passes audio on), the return level and output pair, the master, and
 // bus plugins kept across commits. A slot outputs a constant, so after the
@@ -756,6 +848,7 @@ int main() {
     testGainRamp();
     testSlotMeters();
     testMute();
+    testDraining();
     testBuses();
     testTransport();
     testGraphLifecycle();

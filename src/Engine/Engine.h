@@ -196,6 +196,9 @@ public:
     static constexpr float  kQuietLevel      = 1e-5f;
     static constexpr double kQuietSeconds    = 0.2;
     static constexpr double kMaxMutedSeconds = 5.0;
+    // A draining slot (SlotConfig::draining) finishes once quiet as above, or
+    // after this long whatever it does.
+    static constexpr double kMaxDrainSeconds = 8.0;
 
     // --- audio thread ---
     void process(const AudioCallbackContext& ctx) noexcept override;
@@ -226,6 +229,16 @@ private:
         std::uint8_t        deliveredNotes[kMaxLayers] = {};
     };
 
+    // A pedal held down on a live input (sustain, sostenuto, soft: CC 64, 66,
+    // 67), as its last message. A slot new in a graph (the next song's, at a
+    // switch) is sent the ones held, so it knows the pedal is down
+    // (docs/setlists.md, edge case 2). Audio thread only.
+    struct HeldPedal {
+        bool             used   = false;
+        MidiSourceHandle source = kInvalidMidiSource;
+        MidiMessage      message;
+    };
+
     // MIDI 1.0 -> 2.0 translation state belongs to the incoming stream.
     struct SourceState {
         MidiSourceHandle    source = kInvalidMidiSource;   // invalid = free
@@ -239,6 +252,8 @@ private:
     void generateAuditions(const AudioCallbackContext& ctx) noexcept;
     void routeMidi(std::uint32_t frames) noexcept;
     void applyMutes() noexcept;
+    void trackPedal(MidiSourceHandle source, const MidiMessage& m) noexcept;
+    void sendHeldPedals() noexcept;   // to the graph's fresh slots
     void route(const QueuedMidi& item, std::uint32_t offset) noexcept;
     bool deliver(std::size_t slot, const MidiMessage& original, const MidiMessage* upconverted,
                  std::size_t upconvertedCount, std::uint32_t offset, int noteOverride,
@@ -267,6 +282,7 @@ private:
     void                 runBuses(const AudioCallbackContext& ctx, std::uint32_t chunkStart, std::uint32_t chunk) noexcept;
 
     HeldNote    heldNotes[256];     // audio thread only
+    HeldPedal   heldPedals[64];     // audio thread only
     SourceState sourceStates[16];   // audio thread only
 
     SpscQueue<QueuedMidi, 4096>   midiQueue;                // MIDI thread -> audio

@@ -591,7 +591,12 @@ void testPrepare() {
     runBlock(*engine);
     engine->collect();
     CHECK(pad != nullptr && pad->calls.size() == 1);
-    CHECK(oldRef.expired());   // the old rack's plugin: stopped, retired, destroyed
+    CHECK(!oldRef.expired() && session.drainingSlots().size() == 1);   // the old rack rings out
+    session.drainingSlots()[0].runtime->drained.store(true);           // until done
+    session.flush();
+    runBlock(*engine);
+    engine->collect();
+    CHECK(oldRef.expired());   // then stopped, retired, destroyed
     CHECK(session.rig().effects[0][0].plugin.get() == fx && fx->stops == 0);
 
     // activate() finishes a rack prepared only partly; one dropped is simply destroyed.
@@ -602,6 +607,63 @@ void testPrepare() {
     CHECK(session.prepareStep(*dropped));
     dropped.reset();   // never ran
     session.unload();
+    runBlock(*engine);
+    engine->collect();
+}
+
+// The switch's old rack (docs/setlists.md, section 3): its slots stay in the
+// graph, draining, until done; a further switch mutes the rack still draining;
+// Cut mutes at once. Each drained slot leaves at the next flush().
+void testDraining() {
+    FakeFactory factory;
+    factory.installed = {installedPlugin("synth", "/clap/Synth.clap")};
+    FakeMidiInput midi;
+    NullHost      host;
+    auto          engine = std::make_unique<Engine>();
+    Session       session(factory, host, midi, *engine);
+    auto rackOf = [](const std::string& id) {
+        Rack rack;
+        rack.slots = {slot(id, "synth", "/clap/Synth.clap"), slot(id + "-gone", "not.installed")};
+        return rack;
+    };
+    Session::LoadReport report;
+    CHECK(session.load(rackOf("a"), 48000.0, report) && session.drainingSlots().empty());
+    const std::shared_ptr<SlotRuntime> aRuntime = session.slot("a")->runtime;
+    const std::weak_ptr<HostedPlugin>  aPlugin  = session.slot("a")->plugin;
+
+    const std::uint64_t commits = engine->graphCommits();
+    CHECK(session.activate(session.prepare(rackOf("b"), 48000.0), report));
+    CHECK(engine->graphCommits() == commits + 1);
+    CHECK(session.drainingSlots().size() == 1);   // a's plugin; not the placeholder
+    if (session.drainingSlots().size() != 1) return;
+    const SlotConfig& drainingA = session.drainingSlots()[0];
+    CHECK(drainingA.draining && drainingA.runtime == aRuntime && !aRuntime->muted.load());
+    runBlock(*engine);
+    CHECK(session.slot("a") == nullptr && session.slot("b") != nullptr && !aPlugin.expired());
+
+    // Another switch while a drains: a fades out now (muted), b drains.
+    const std::shared_ptr<SlotRuntime> bRuntime = session.slot("b")->runtime;
+    CHECK(session.activate(session.prepare(rackOf("c"), 48000.0), report));
+    CHECK(session.drainingSlots().size() == 2 && aRuntime->muted.load() && aRuntime->targetGain.load() == 0.0f);
+    CHECK(!bRuntime->muted.load());
+
+    // Done (as the audio thread says): left out at the next flush, then freed.
+    aRuntime->drained.store(true);
+    session.flush();
+    CHECK(session.drainingSlots().size() == 1 && engine->graphCommits() == commits + 3);
+    session.flush();
+    CHECK(engine->graphCommits() == commits + 3);   // nothing more to do
+    runBlock(*engine);
+    engine->collect();
+    CHECK(aPlugin.expired());
+
+    // Cut: the old rack is muted at the switch (its notes released, faded).
+    const std::shared_ptr<SlotRuntime> cRuntime = session.slot("c")->runtime;
+    CHECK(session.activate(session.prepare(rackOf("d"), 48000.0), report, Session::OldRack::Cut));
+    CHECK(cRuntime->muted.load() && cRuntime->targetGain.load() == 0.0f && session.drainingSlots().size() == 2);
+
+    session.unload();
+    CHECK(session.drainingSlots().empty());
     runBlock(*engine);
     engine->collect();
 }
@@ -617,5 +679,6 @@ int main() {
     testSequenceTriggers();
     testRig();
     testPrepare();
+    testDraining();
     return test::finish("Session");
 }
