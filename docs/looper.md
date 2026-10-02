@@ -2,8 +2,8 @@
 
 Proposed 2026-10-02; nothing built yet. A looper records what's played into a
 loop, live, and plays it back in time, with overdubs. It's a cousin of a
-sequence (docs/sequences.md) but it isn't one: it's made on stage, isn't saved,
-and is driven by a footswitch. Builds on:
+sequence (docs/sequences.md) but it isn't one: what it records is made on
+stage and isn't saved, and it's driven by a footswitch. Builds on:
 - sequences.md: a sequence is a MIDI source the rack owns that plays into its
   target rows, locked to the beat clock. A loop plays back the same way.
 - sequences.md, section 4 and setlists.md, section 4: MIDI learn and triggers.
@@ -34,9 +34,17 @@ and is driven by a footswitch. Builds on:
 12. **As many loopers as you like.** One is the current looper: the one the
     footswitch drives, shown in its row.
 13. **What's played still sounds** as usual while it's recorded.
-14. **At a song switch** loopers are kept, stopped.
-15. **Not saved** in the rack or the setlist. Converting to a sequence is one
-    click; nothing warns at a switch or at quit (at most a flash).
+14. **At a song switch** (revised 2026-10-02, with 15): the old song's
+    loopers stop, and their recordings stay in memory with that rack until
+    quit, one copy per rack path, as its unsaved edits do (setlists.md,
+    section 6): back on that song, the loop is still there. The new song
+    brings its own loopers.
+15. **A looper is saved in its rack; what it records isn't** (revised
+    2026-10-02). Its existence and its settings (input, targets, quantize,
+    start at beat or bar, length) are saved in rack.json, since a performer
+    knows in advance which songs loop; its notes never are. Converting to a
+    sequence is one click; nothing warns at a switch or at quit (at most a
+    flash).
 16. **Convert to sequence** (a button or menu item in its row) makes a normal
     sequence in the current rack, unsaved until Ctrl-S, and the normal rules
     apply from then on.
@@ -70,19 +78,18 @@ presses.
 - **Hold needs a momentary switch** (press and release). A latching pedal
   gives taps only: no overdub.
 - **The transport stopping** stops every looper and returns it to its start.
-- **After a song switch,** a stopped looper keeps its targets by row id: they
-  work again if the new rack has rows with those ids, and otherwise it plays
-  nowhere until its targets are changed. Converting it then makes a sequence
-  in the current rack.
+- **Its targets are its own rack's rows,** so a song switch never leaves a
+  looper pointing at rows that aren't there. A row removed leaves its
+  targets, as for a sequence.
 
-Proposed (to confirm):
-- **A fixed length (N)** goes to play at N, with overdubs always a hold.
-  (Decided earlier: it ran on into overdub, and the next press played.)
-- **Undo** goes back pass by pass, to the first recording.
+Also decided (2026-10-02):
+- **A fixed length (N)** goes to play at N; overdubs are always a hold.
+- **Undo** goes back pass by pass, to the first recording (a stack).
 - **An overdub crossing the loop's end** carries on around the loop; a key
   still held at release is cut there.
 - **Stop is immediate,** ending the loop's notes, not quantized.
-- **Deleting a looper:** the red X in its row, without asking (it isn't saved).
+- **Deleting a looper:** the red X at the right of its row, without asking
+  (what it recorded isn't saved).
 
 ## Engine
 
@@ -100,13 +107,29 @@ Proposed (to confirm):
 - The footswitch is matched on the audio thread, like the setlist's triggers,
   so a press acts within the block; its release ends a hold.
 
+## In the rack file
+
+An additive `"loopers"` list in rack.json (rack-format.md), its settings only:
+
+```json
+"loopers": [
+  { "id": "loop", "name": "Loop 1", "source": "device:<id>", "channels": [1],
+    "targets": ["keys"], "quantize": "1/2", "start": "bar",
+    "length": { "bars": 4 } }
+]
+```
+
+`"length"`: `{ "bars": N }` or `{ "beats": N }` for a fixed length; absent:
+ended by a press (rounded up to the bar, or the beat, as `"start"`).
+
 ## Milestones (proposed)
 
 1. **Engine:** record into a loop (start at beat or bar, end by press or N,
    quantize, cut at the end), play it, overdub and undo, the cap. Tests with
    the fake plugin: in time, rounding, quantize, overdub and undo, the cap.
 2. **Controller and UI:** making a looper (input, targets, quantize, start at
-   beat or bar, length), its row (state, length, progress, fill), the current
+   beat or bar, length) and saving it in the rack (its settings, not its
+   notes), its recordings kept in memory per rack across song switches, its row (state, length, progress, fill), the current
    looper, the footswitch learned with its tap and hold, clear and undo, and
    transport and song-switch behaviour.
 3. **Convert to sequence.**
@@ -114,4 +137,5 @@ Proposed (to confirm):
 
 ## Open questions
 
-- The proposals at the end of "Controls".
+None at the moment (answered 2026-10-02: one button, tap to record, play,
+stop, hold to overdub; loopers saved in the rack without their notes).
