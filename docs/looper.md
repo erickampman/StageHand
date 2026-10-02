@@ -35,10 +35,9 @@ stage and isn't saved, and it's driven by a footswitch. Builds on:
     footswitch drives, shown in its row.
 13. **What's played still sounds** as usual while it's recorded.
 14. **At a song switch** (revised 2026-10-02, with 15): the old song's
-    loopers stop, and their recordings stay in memory with that rack until
-    quit, one copy per rack path, as its unsaved edits do (setlists.md,
-    section 6): back on that song, the loop is still there. The new song
-    brings its own loopers.
+    loopers stop and what they recorded is discarded; the new song brings its
+    own loopers, empty. Back on a song, its loopers are empty again: each
+    performance starts fresh. (Convert a loop to a sequence to keep it.)
 15. **A looper is saved in its rack; what it records isn't** (revised
     2026-10-02). Its existence and its settings (input, targets, quantize,
     start at beat or bar, length) are saved in rack.json, since a performer
@@ -128,8 +127,8 @@ ended by a press (rounded up to the bar, or the beat, as `"start"`).
    quantize, cut at the end), play it, overdub and undo, the cap. Tests with
    the fake plugin: in time, rounding, quantize, overdub and undo, the cap.
 2. **Controller and UI:** making a looper (input, targets, quantize, start at
-   beat or bar, length) and saving it in the rack (its settings, not its
-   notes), its recordings kept in memory per rack across song switches, its row (state, length, progress, fill), the current
+   beat or bar, length) and saving it in the rack (the container: its
+   settings, never its notes), its notes discarded at a song switch, its row (state, length, progress, fill), the current
    looper, the footswitch learned with its tap and hold, clear and undo, and
    transport and song-switch behaviour.
 3. **Convert to sequence.**
@@ -138,4 +137,5 @@ ended by a press (rounded up to the bar, or the beat, as `"start"`).
 ## Open questions
 
 None at the moment (answered 2026-10-02: one button, tap to record, play,
-stop, hold to overdub; loopers saved in the rack without their notes).
+stop, hold to overdub; a looper saved in the rack as a container, its notes
+never saved, and discarded at a song switch).
