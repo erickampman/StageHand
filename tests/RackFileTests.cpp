@@ -349,6 +349,7 @@ void testLoopers(const fs::path& dir) {
     loop.atBar       = false;
     loop.fixedLength = 4;
     loop.fixedInBars = true;
+    loop.cleanup     = false;
     LooperSetup free;   // the defaults, but quantize off
     free.id       = "free";
     free.name     = "Free";
@@ -359,6 +360,7 @@ void testLoopers(const fs::path& dir) {
     const std::string text = readText(dir / "Loops.rack/rack.json");
     CHECK(text.find("\"quantize\": \"1/2\"") != std::string::npos && text.find("\"bars\": 4") != std::string::npos);
     CHECK(text.find("\"quantize\": \"off\"") != std::string::npos);
+    CHECK(text.find("\"cleanup\": false") != std::string::npos && text.find("\"cleanup\": true") == std::string::npos);
     Rack back;
     CHECK(loadRack(path, back).ok && back.loopers == rack.loopers);
 

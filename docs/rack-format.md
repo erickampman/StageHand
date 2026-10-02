@@ -275,6 +275,7 @@ additive field, so the format version doesn't change.
 | `quantize` | `"1/4"` (a sixteenth: a quarter of a beat) | Beats, as `"1/4"`, `"1"`, `"2"`..., or `"off"` |
 | `start` | `"bar"` | `"bar"` or `"beat"`: where it starts, ends and stops |
 | `length` | none: ended by a press | `{"bars": N}` or `{"beats": N}` |
+| `cleanup` | `true` | Fat fingers' slips left out (docs/looper.md, 7c); written only when `false` |
 
 ## Transport
 

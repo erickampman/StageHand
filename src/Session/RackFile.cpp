@@ -148,6 +148,10 @@ LooperSetup parseLooper(const Json& j) {
         l.fixedInBars = length.contains("bars");
         l.fixedLength = static_cast<std::uint32_t>(intIn(length, l.fixedInBars ? "bars" : "beats", 1, 1, 1024));
     }
+    if (j.contains("cleanup")) {
+        if (!j.at("cleanup").is_boolean()) fail("cleanup is true or false");
+        l.cleanup = j.at("cleanup").get<bool>();
+    }
     return l;
 }
 
@@ -166,6 +170,7 @@ Json looperJson(const LooperSetup& l) {
     j["quantize"] = quantizeText(l.quantize);
     j["start"]    = l.atBar ? "bar" : "beat";
     if (l.fixedLength > 0) j["length"] = Json{{l.fixedInBars ? "bars" : "beats", l.fixedLength}};
+    if (!l.cleanup) j["cleanup"] = false;
     return j;
 }
 

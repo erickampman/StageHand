@@ -210,6 +210,7 @@ struct LooperRowModel {
     bool                     atBar       = true;
     std::uint32_t            fixedLength = 0;     // 0 = ended by a press
     bool                     fixedInBars = true;
+    bool                     cleanup     = true;  // fat fingers' slips left out
 
     bool operator==(const LooperRowModel&) const = default;
 };

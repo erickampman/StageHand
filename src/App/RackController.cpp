@@ -368,6 +368,7 @@ void RackController::buildLoopers() {
         row.atBar       = setup.atBar;
         row.fixedLength = setup.fixedLength;
         row.fixedInBars = setup.fixedInBars;
+        row.cleanup     = setup.cleanup;
         model.loopers.push_back(std::move(row));
     }
     const auto& looperSwitch = session.rig().saved.looperSwitch;
@@ -453,6 +454,10 @@ void RackController::setLooperLength(const std::string& id, std::uint32_t count,
     });
 }
 
+void RackController::setLooperCleanup(const std::string& id, bool on) {
+    editLooper(id, [on](LooperSetup& s) { s.cleanup = on; });
+}
+
 void RackController::tapLooper(const std::string& id) {
     session.looperCommand(id, LooperCommand::Press);
     session.looperCommand(id, LooperCommand::Release);
@@ -485,7 +490,7 @@ void RackController::takeKeptLoops() {
             if (loop.length <= 0.0) {
                 notice(setup.name + ": nothing to keep yet (record a loop first)");
             } else {
-                Sequence seq = loopToSequence(loop, setup.quantize, setup.atBar);
+                Sequence seq = loopToSequence(loop, setup.quantize, setup.atBar, setup.cleanup);
                 seq.id       = session.addSequence(seq.protocol);
                 seq.name     = setup.name;
                 seq.targets  = setup.targets;

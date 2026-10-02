@@ -77,6 +77,25 @@ void releaseSounding(LooperRuntime& rt, double at, std::uint32_t fromIndex = 0) 
         if (s.used && s.index >= fromIndex) s.offBeat = std::min(s.offBeat, at);
 }
 
+// A note just finished: is it, or a neighbour, a fat finger's slip? Only
+// notes of the same pass are compared (an overdub against the loop is music).
+void markFatFingers(LooperRuntime& rt, std::uint32_t index) noexcept {
+    Note&           n     = rt.notes[index];
+    const int       pitch = ump::noteNumber(n.onMessage);
+    const double    len   = n.off - n.on;
+    for (std::size_t j = 0; j < rt.notes.size(); ++j) {
+        Note& o = rt.notes[j];
+        // A key still held is compared when it's released.
+        if (j == index || o.off < 0.0 || o.pass != n.pass || std::fabs(o.on - n.on) > LooperRuntime::kFatWindow)
+            continue;
+        const int apart = std::abs(ump::noteNumber(o.onMessage) - pitch);
+        if (apart < 1 || apart > 2) continue;
+        const double other = o.off - o.on;
+        if (len <= 0.5 * other) n.fatFinger = true;
+        else if (other <= 0.5 * len) o.fatFinger = true;
+    }
+}
+
 // Keys still held while recording: cut at `loopBeat` (a beat into the loop).
 void closeOpen(LooperRuntime& rt, double loopBeat) noexcept {
     for (LooperRuntime::Open& o : rt.open) {
@@ -84,6 +103,7 @@ void closeOpen(LooperRuntime& rt, double loopBeat) noexcept {
         Note& n = rt.notes[o.index];
         n.off   = std::max(loopBeat, n.on);
         o.used  = false;
+        markFatFingers(rt, o.index);
     }
 }
 
@@ -127,6 +147,7 @@ void endOverdub(LooperRuntime& rt, double now) noexcept {
             const std::int64_t cycle = static_cast<std::int64_t>(std::floor((now - rt.anchorBeat) / rt.loopLength));
             n.off  = cycle > o.cycle ? rt.loopLength : std::max(into, n.on);
             o.used = false;
+            markFatFingers(rt, o.index);
         }
     }
     rt.provisional = false;
@@ -174,7 +195,7 @@ bool LooperRuntime::takeSnapshot(Snapshot& out) {
     return true;
 }
 
-Sequence loopToSequence(const LooperRuntime::Snapshot& loop, double quantize, bool atBar) {
+Sequence loopToSequence(const LooperRuntime::Snapshot& loop, double quantize, bool atBar, bool cleanup) {
     Sequence seq;
     seq.repeat = true;
     seq.launch = atBar ? LaunchQuantize::Bar : LaunchQuantize::Beat;
@@ -201,6 +222,7 @@ Sequence loopToSequence(const LooperRuntime::Snapshot& loop, double quantize, bo
     seq.edo           = 12;
     seq.referenceNote = 60;
     for (const LooperRuntime::Note& n : loop.notes) {
+        if (cleanup && n.fatFinger) continue;
         SequenceNote note;
         const auto start = std::lround(n.on * unitsPerBeat);
         if (start < 0 || start >= static_cast<long>(seq.length)) continue;
@@ -271,7 +293,7 @@ bool SequenceSet::looperCommand(MidiSourceHandle source, LooperCommand command, 
                     case LooperState::Overdubbing: endOverdub(rt, b.beat); break;   // (a missed release)
                     case LooperState::Stopped:   // play from the start, at the next beat or bar
                         rt.anchorBeat = nextLine(l, b);
-                        for (Note& n : rt.notes) n.firstCycle = 0;
+                        for (Note& n : rt.notes) n.firstCycle = 0, n.playedCycle = -1;   // cycles count afresh
                         rt.current = LooperState::Playing;
                         break;
                 }
@@ -386,7 +408,8 @@ void SequenceSet::recordLoops(MidiSourceHandle source, const MidiMessage& m, con
                 continue;
             }
             Note n;
-            n.on = loopBeat;   // as played: quantize applies as it plays
+            n.on   = loopBeat;   // as played: quantize applies as it plays
+            n.pass = static_cast<std::uint16_t>(first ? 0 : std::max<std::size_t>(rt.passStarts.size(), 1));
             if (overdub) n.firstCycle = cycle + 1;   // not again in the pass that's recording it
             n.onMessage  = m;
             n.offMessage = offFor(m);
@@ -404,6 +427,7 @@ void SequenceSet::recordLoops(MidiSourceHandle source, const MidiMessage& m, con
                 n.off        = std::max(end, n.on);
                 n.offMessage = m;
                 o.used       = false;
+                markFatFingers(rt, o.index);
                 break;
             }
         }
@@ -428,14 +452,40 @@ std::size_t SequenceSet::generateLoops(const Block& b, SequenceEvent* out, std::
             const double L      = rt.loopLength;
             const double from   = std::max(b.beat, rt.anchorBeat);
             const double until  = std::min(end, rt.stopBeat);
+            // Quantize changed: a note now just behind the playhead (a grid
+            // step at most) and not yet played this cycle plays now, not never.
+            if (rt.lastQuantize >= 0.0 && rt.lastQuantize != l.quantize && from < until - kEps) {
+                const double step = std::max(l.quantize, rt.lastQuantize);
+                const auto   k    = static_cast<std::int64_t>(std::floor((from - rt.anchorBeat) / L + kEps));
+                for (std::size_t i = 0; i < rt.notes.size(); ++i) {
+                    Note& n = rt.notes[i];
+                    if (k < n.firstCycle || n.off < 0.0 || n.playedCycle >= k || (l.cleanup && n.fatFinger)) continue;
+                    const double beat = rt.anchorBeat + static_cast<double>(k) * L + playedAt(l, n, L);
+                    if (beat >= from - kEps || from - beat > step + kEps) continue;
+                    Sounding* slot = nullptr;
+                    for (Sounding& s : rt.sounding)
+                        if (!s.used) {
+                            slot = &s;
+                            break;
+                        }
+                    if (slot == nullptr) continue;
+                    put(out, capacity, count, 0, 1, l.source, n.onMessage);
+                    *slot = Sounding{true, static_cast<std::uint32_t>(i), std::max(from + (n.off - n.on), from + beatsPerMs),
+                                     n.offMessage};
+                    n.playedCycle = k;
+                }
+            }
+            rt.lastQuantize = l.quantize;
             if (from < until - kEps) {
                 const auto k0 = static_cast<std::int64_t>(std::floor((from - rt.anchorBeat) / L + kEps));
                 const auto k1 = static_cast<std::int64_t>(std::floor((until - rt.anchorBeat) / L));
                 for (std::int64_t k = k0; k <= k1; ++k) {
                     const double cycleStart = rt.anchorBeat + static_cast<double>(k) * L;
                     for (std::size_t i = 0; i < rt.notes.size(); ++i) {
-                        const Note& n = rt.notes[i];
+                        Note& n = rt.notes[i];
                         if (k < n.firstCycle || n.off < 0.0) continue;   // not yet, or a key still held
+                        if (n.playedCycle >= k) continue;                // once a cycle, even if quantize moved it
+                        if (l.cleanup && n.fatFinger) continue;          // a fat finger's slip
                         const double at   = playedAt(l, n, L);
                         const double beat = cycleStart + at;
                         if (beat < from - kEps || beat >= until - kEps) continue;
@@ -451,6 +501,7 @@ std::size_t SequenceSet::generateLoops(const Block& b, SequenceEvent* out, std::
                         put(out, capacity, count, frameAt(b, beat), 1, l.source, n.onMessage);
                         *slot = Sounding{true, static_cast<std::uint32_t>(i),
                                          std::max(beat + (n.off - n.on), beat + beatsPerMs), n.offMessage};
+                        n.playedCycle = k;
                     }
                 }
             }

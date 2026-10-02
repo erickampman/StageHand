@@ -63,8 +63,15 @@ struct LooperRuntime {
         double        on  = 0.0;    // beats into the loop, as played (quantized as it plays)
         double        off = -1.0;   // beats into the loop; < 0 while the key is held
         std::int64_t  firstCycle = 0;   // plays from this cycle on (not in the pass that recorded it)
+        std::int64_t  playedCycle = -1; // the cycle it last played in: once a cycle, whatever quantize does
+        std::uint16_t pass = 0;         // the recording (0) or the overdub it came in
+        bool          fatFinger = false; // the short slip of a fat finger (CompiledLooper::cleanup)
         MidiMessage   onMessage, offMessage;
     };
+    // A fat finger (docs/looper.md, 7c): two notes starting within kFatWindow beats
+    // of each other, a semitone or two apart, in the same pass, one at most
+    // half as long as the other: the shorter is the slip.
+    static constexpr double kFatWindow = 0.1;
     struct Open {   // a key held while recording
         bool          used = false;
         std::uint8_t  group = 0, channel = 0, note = 0;
@@ -95,6 +102,7 @@ struct LooperRuntime {
     Open                       open[kMaxOpen];
     Sounding                   sounding[kMaxSounding];
     std::uint32_t              droppedCount = 0;
+    double                     lastQuantize = -1.0;   // the quantize last played with: a change is noticed
 
     // --- a copy of the loop for the main thread (LooperCommand::Snapshot):
     // the audio thread fills it (preallocated) and sets snapshotReady.
@@ -113,7 +121,8 @@ struct LooperRuntime {
 // first note, MIDI 2.0 as 12-EDO from middle C. It repeats, launching at the
 // bar or beat as the looper starts; plays into nothing yet (the caller sets
 // the targets, id and name).
-Sequence loopToSequence(const LooperRuntime::Snapshot& loop, double quantize, bool atBar);
+// With `cleanup`, fat fingers' slips are left out.
+Sequence loopToSequence(const LooperRuntime::Snapshot& loop, double quantize, bool atBar, bool cleanup = true);
 
 struct CompiledLooper {
     MidiSourceHandle               source = kInvalidMidiSource;   // its own, in the sequences' range
@@ -124,6 +133,7 @@ struct CompiledLooper {
     bool                           atBar       = true;    // start, end and stop at a bar (else a beat)
     std::uint32_t                  fixedLength = 0;       // 0: ended by a press
     bool                           fixedInBars = true;
+    bool                           cleanup     = true;    // fat fingers' slips not played (nor kept)
 };
 
 } // namespace stagehand

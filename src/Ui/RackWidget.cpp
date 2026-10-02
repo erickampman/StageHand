@@ -1380,6 +1380,11 @@ void RackWidget::drawLooperRow(const LooperRowModel& l, float y) {
         openMenu(std::move(m));
     });
     x += 82.0f;
+    // Clean: a fat finger's slip (the short note beside the right one) isn't played.
+    button(x, y + 10.0f, 50.0f, 24.0f, "Clean", l.cleanup, true, kAccent);
+    region(x, y + 10.0f, 50.0f, 24.0f,
+           [this, id = l.id, on = l.cleanup](const Press&) { controller.setLooperCleanup(id, !on); });
+    x += 56.0f;
 
     // Remove: the red X at the right, without asking (what it recorded isn't saved).
     const float rx = std::max(x + 8.0f, width() - kPad - kRemoveSize), ry = y + (kSeqRowH - kRemoveSize) / 2;

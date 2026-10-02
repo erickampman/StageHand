@@ -205,6 +205,7 @@ public:
     void        setLooperQuantize(const std::string& id, double beats);   // 0 = off
     void        setLooperStart(const std::string& id, bool atBar);        // and its end and stop
     void        setLooperLength(const std::string& id, std::uint32_t count, bool inBars);   // 0 = ended by a press
+    void        setLooperCleanup(const std::string& id, bool on);   // fat fingers' slips left out
     // Its row's button: a tap of the looper switch (record, end and play, stop, play).
     void        tapLooper(const std::string& id);
     void        clearLooper(const std::string& id);
