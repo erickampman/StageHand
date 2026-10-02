@@ -246,6 +246,7 @@ public:
     bool moveSong(std::size_t index, int delta);               // -1 up, +1 down
     bool renameSong(std::size_t index, const std::string& name);   // "" = the rack's own name
     bool removeSong(std::size_t index);                        // the rack stays on disk
+    bool relinkSong(std::size_t index, const std::string& chosen);   // point a (missing) song at another rack
 
 private:
     // A meter's display state between ticks.

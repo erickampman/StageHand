@@ -830,7 +830,12 @@ void testSetlist() {
     tick();
     CHECK(view.setlist.songs[2].missing && view.setlist.next == 1);
     CHECK(controller.nextSong() && !controller.nextSong() && !controller.goToSong(2));
+    // Found again: pointed at where it went. A missing song can also be removed.
+    CHECK(!controller.relinkSong(2, (dir / "Nothing").string()));
+    CHECK(controller.relinkSong(2, (dir / "Racks/C-away.rack").string()) && controller.goToSong(2));
+    CHECK(controller.goToSong(1));
     fs::rename((dir / "Racks/C-away.rack").string(), c);
+    CHECK(controller.relinkSong(2, c));
 
     // Save As while on a song points the song at the new bundle.
     CHECK(controller.saveAs((dir / "Racks/A2").string()) == RackController::SaveAsResult::Saved);

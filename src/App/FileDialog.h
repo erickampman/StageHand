@@ -14,6 +14,7 @@ class FileDialog {
 public:
     enum class Mode {
         OpenFolder,   // choose an existing folder (a .rack bundle)
+        OpenFile,     // choose an existing file (a .setlist); `name` is a pattern to show, "*.setlist"
         Save,         // choose a new path; the tool doesn't ask about replacing
     };
 
@@ -26,7 +27,8 @@ public:
     // Which tool would run ("zenity", "kdialog"), or "" if neither is installed.
     static std::string tool();
 
-    // Show the chooser, starting in `folder` (Save: with `name` filled in).
+    // Show the chooser, starting in `folder` (Save: with `name` filled in;
+    // OpenFile: showing only files matching `name`, if it's given).
     // False, with `problem` set, if one is already open or no tool is found.
     bool start(Mode mode, const std::string& title, const std::string& folder, const std::string& name,
                std::string& problem);

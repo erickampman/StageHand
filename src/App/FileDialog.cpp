@@ -70,12 +70,16 @@ bool FileDialog::start(Mode mode, const std::string& title, const std::string& f
     std::vector<std::string> args{program};
     if (program == "zenity") {
         args.push_back("--file-selection");
-        args.push_back(mode == Mode::Save ? "--save" : "--directory");
+        if (mode != Mode::OpenFile) args.push_back(mode == Mode::Save ? "--save" : "--directory");
         args.push_back("--title=" + title);
         args.push_back("--filename=" + start);
+        if (mode == Mode::OpenFile && !name.empty()) args.push_back("--file-filter=" + name);
     } else {
-        args.push_back(mode == Mode::Save ? "--getsavefilename" : "--getexistingdirectory");
+        args.push_back(mode == Mode::Save       ? "--getsavefilename"
+                       : mode == Mode::OpenFile ? "--getopenfilename"
+                                                : "--getexistingdirectory");
         args.push_back(start);
+        if (mode == Mode::OpenFile && !name.empty()) args.push_back(name);
         args.push_back("--title");
         args.push_back(title);
     }

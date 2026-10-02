@@ -59,6 +59,13 @@ void testDialog() {
     std::string   open((std::istreambuf_iterator<char>(args2)), std::istreambuf_iterator<char>());
     CHECK(open.find("--directory\n") != std::string::npos && open.find("--filename=/home/me/Racks/\n") != std::string::npos);
 
+    // A file to open, with only matching files shown.
+    CHECK(dialog.start(FileDialog::Mode::OpenFile, "Open a setlist", "/home/me/Sets", "*.setlist", problem));
+    CHECK(wait(dialog) == "/home/me/Racks/Live.rack");
+    std::ifstream args3(dir / "args");
+    std::string   file((std::istreambuf_iterator<char>(args3)), std::istreambuf_iterator<char>());
+    CHECK(file == "--file-selection\n--title=Open a setlist\n--filename=/home/me/Sets/\n--file-filter=*.setlist\n");
+
     ::setenv("PATH", "/nonexistent", 1);
     CHECK(FileDialog::tool().empty());
     CHECK(!dialog.start(FileDialog::Mode::Save, "x", "/tmp", "x", problem) && problem.find("zenity") != std::string::npos);

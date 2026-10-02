@@ -101,8 +101,9 @@ void printUsage() {
         "  Ctrl-Q               quit StageHand (saving, unless --no-save-rack)\n"
         "  Ctrl-Shift-S         save the rack now\n"
         "In the rack window also: Space starts or stops the transport; Ctrl-S saves,\n"
-        "Ctrl-N makes a new rack, Ctrl-O opens one, and the File menu has Save As. An\n"
-        "untitled rack with changes asks before they're lost.\n"
+        "Ctrl-N makes a new rack, Ctrl-O opens one (in a setlist: adds one to the set),\n"
+        "and the File menu has Save As and the setlist commands. An untitled rack with\n"
+        "changes asks before they're lost.\n"
         "Closing the rack window quits the same way. Closing an editor window closes\n"
         "that editor only; StageHand keeps playing.\n"
         "In the terminal, Ctrl-C quits the same way as Ctrl-Q.\n"
@@ -768,6 +769,13 @@ void restartUnderPwJackIfNeeded(int argc, char** argv) {
 } // namespace
 
 int main(int argc, char** argv) {
+    // No vsync for any GL window in this process (ours and the plugin editors'):
+    // they all draw on the one main-loop thread, where a swap that waits for
+    // vblank stalls every other window and makes editor drags jerky. Before any
+    // GL context exists; set either variable in the environment to override.
+    setenv("vblank_mode", "0", 0);            // Mesa
+    setenv("__GL_SYNC_TO_VBLANK", "0", 0);    // NVIDIA
+
     Options options;
     if (const int result = parseArguments(argc, argv, options); result != 0)
         return result < 0 ? 0 : result;

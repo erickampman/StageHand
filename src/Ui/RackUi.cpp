@@ -98,6 +98,10 @@ struct RackUi::Impl {
     std::map<std::string, Editor> editors;  // by sequence id
     std::uint64_t                 generation = 0;   // the controller's rackGeneration() they belong to
     std::string                   shownName;        // in the title
+    // What the rack window last drew, so refresh() repaints only on a change.
+    RackViewModel                 drawnView;
+    std::uint32_t                 drawnLook = 0;
+    bool                          drawnValid = false;
 
     // The file chooser, and what to do with its answer.
     FileDialog                                   dialog;
@@ -145,10 +149,13 @@ std::unique_ptr<RackUi> RackUi::open(RackController& controller) {
         impl->widget = std::make_unique<RackWidget>(impl->window, controller);
     }
     impl->widget->openSequenceEditor = [raw](const std::string& id) { raw->openEditor(id); };
-    impl->widget->chooseFile = [raw](bool save, const std::string& title, const std::string& folder,
+    impl->widget->chooseFile = [raw](RackWidget::Choose what, const std::string& title, const std::string& folder,
                                      const std::string& name, std::function<void(const std::string&)> chosen) {
         std::string problem;
-        if (!raw->dialog.start(save ? FileDialog::Mode::Save : FileDialog::Mode::OpenFolder, title, folder, name,
+        const FileDialog::Mode mode = what == RackWidget::Choose::Save      ? FileDialog::Mode::Save
+                                      : what == RackWidget::Choose::Setlist ? FileDialog::Mode::OpenFile
+                                                                            : FileDialog::Mode::OpenFolder;
+        if (!raw->dialog.start(mode, title, folder, what == RackWidget::Choose::Setlist ? "*.setlist" : name,
                                problem)) {
             raw->widget->showNotice("Can't show a file dialog: " + problem, ui::nowSeconds());
             return;
@@ -216,7 +223,18 @@ void RackUi::idle() {
 
 void RackUi::refresh() {
     impl->followRack();
-    if (impl->window.isVisible()) impl->widget->repaint();
+    // Only when something visible changed: every swap may wait for vsync, on
+    // the thread that also runs the plugin editors.
+    if (impl->window.isVisible()) {
+        const RackViewModel& view = impl->controller.view();
+        const std::uint32_t  look = impl->widget->timedLook(ui::nowSeconds());
+        if (!impl->drawnValid || look != impl->drawnLook || !(view == impl->drawnView)) {
+            impl->drawnView  = view;
+            impl->drawnLook  = look;
+            impl->drawnValid = true;
+            impl->widget->repaint();
+        }
+    }
     for (auto& [id, e] : impl->editors) {
         if (const Sequence* seq = impl->controller.sequence(id); seq != nullptr && seq->name != e.name) {
             e.name                  = seq->name;   // renamed in the dock

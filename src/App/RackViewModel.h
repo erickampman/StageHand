@@ -15,7 +15,8 @@ namespace stagehand {
 
 // What the rack view draws (docs/rack-view.md, section 4): plain values, rebuilt
 // by RackController each tick, with no pointers into the Session. Widgets read
-// it and send intents back to the controller; they never edit it.
+// it and send intents back to the controller; they never edit it. Comparable, so
+// the rack window repaints only when it changes.
 
 enum class RowState {
     Running,       // loaded, in the engine (muted or not)
@@ -55,6 +56,8 @@ struct RowModel {
     float         meterDb[2]  = {-60.0f, -60.0f};   // with ballistics; -60 = floor
     float         peakHoldDb[2] = {-60.0f, -60.0f};
     bool          clipped     = false;       // latched until cleared
+
+    bool operator==(const RowModel&) const = default;
 };
 
 struct SourceChoice {
@@ -62,6 +65,8 @@ struct SourceChoice {
     MidiSourceRef  ref;
     SourceProtocol protocol = SourceProtocol::Mixed;
     bool           hardware = false;
+
+    bool operator==(const SourceChoice&) const = default;
 };
 
 struct StatusModel {
@@ -75,6 +80,8 @@ struct StatusModel {
     std::string   noSaveReason;        // shown instead, when saveTarget is empty
     float         outputDb[2]   = {-60.0f, -60.0f};   // master meter, with ballistics
     bool          outputClipped = false;
+
+    bool operator==(const StatusModel&) const = default;
 };
 
 // The host transport (docs/sequences.md, section 1). Beats are quarter notes.
@@ -103,6 +110,8 @@ struct TransportModel {
     bool                     clickConnected = false;   // to it, now
     std::vector<std::string> playbackDevices;          // as of refreshPlaybackDevices()
     std::string              mainDevice;               // where the main outputs go ("" if unknown)
+
+    bool operator==(const TransportModel&) const = default;
 };
 
 // One sequence in the sources dock (docs/sequences.md, section 4).
@@ -129,6 +138,8 @@ struct SequenceRowModel {
     std::vector<std::string> triggers;
     bool                     learning = false;
     SequenceTrigger::Action  learningAction = SequenceTrigger::Action::Toggle;
+
+    bool operator==(const SequenceRowModel&) const = default;
 };
 
 // One open MIDI input in the dock's inputs row.
@@ -137,6 +148,8 @@ struct InputChipModel {
     bool           isVirtual = false;
     SourceProtocol protocol  = SourceProtocol::Mixed;
     bool           active    = false;   // messages arrived a moment ago
+
+    bool operator==(const InputChipModel&) const = default;
 };
 
 // The open setlist (docs/setlists.md), for the setlist row and its song list.
@@ -144,6 +157,8 @@ struct SongModel {
     std::string name;      // the song's name in the set, else its rack's
     std::string rackName;  // the rack bundle's name
     bool        missing = false;   // no rack at its path: skipped by Next and Previous
+
+    bool operator==(const SongModel&) const = default;
 };
 struct SetlistModel {
     bool                   open = false;
@@ -154,6 +169,8 @@ struct SetlistModel {
     int                    current = -1;
     int                    next     = -1;  // where Next goes (missing songs skipped), or -1
     int                    previous = -1;  // where Previous goes, or -1
+
+    bool operator==(const SetlistModel&) const = default;
 };
 
 struct RackViewModel {
@@ -166,6 +183,8 @@ struct RackViewModel {
     std::vector<SequenceRowModel> sequences;   // the dock's sequence rows
     StatusModel               status;
     SetlistModel              setlist;
+
+    bool operator==(const RackViewModel&) const = default;
 };
 
 } // namespace stagehand

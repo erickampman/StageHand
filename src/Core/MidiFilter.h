@@ -29,6 +29,8 @@ struct MidiFilter {
     std::uint16_t velocityHigh = 0xFFFF;
 
     std::int8_t transpose = 0;            // semitones; pitch-attribute-aware
+
+    bool operator==(const MidiFilter&) const = default;
 };
 
 } // namespace stagehand

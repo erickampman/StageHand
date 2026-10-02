@@ -180,31 +180,42 @@ All of this is in the app; a setlist never has to be written by hand.
 - **Starting one from a rack:** File → "New setlist with this rack...". A
   Save dialog (zenity / kdialog, as for racks) asks where the `.setlist`
   goes. The setlist opens with the current rack as song 1, and the setlist
-  row appears. An untitled rack is saved first (Save As...), because a song
-  must refer to a rack on disk.
+  row appears. An untitled rack is saved first, because a song must refer to
+  a rack on disk; that dialog says so ("First, save this rack: it becomes
+  song 1"), so it isn't taken for the setlist's own name.
 - **Starting an empty one:** File → "New setlist...". The row shows "No
-  songs: add a rack" until one is added.
-- **Adding songs** (the song list's menu, inserted after the current song):
-  - "Add a rack..." opens a rack with the Open dialog and adds it.
-  - "Add a new rack..." starts an untitled rack, saves it (Save As..., in
-    the setlist's `Racks/` folder by default), and adds it. It's the way to
-    build a set from scratch: add, set up, add the next.
-  - "Add this rack again" is for a song that recurs in a set (a reprise).
-- **Changing songs** (the song list's menu, for the current song; reordering
-  is Move up / Move down for now, drag and drop is deferred):
+  songs yet" until one is added.
+- **In a setlist, a rack is a song in it** (decided 2026-10-01). File's New
+  and Open add to the set rather than leave it, so a rack never escapes the
+  set by accident:
+  - File → "New rack in this set..." (Ctrl-N) asks where to save a new,
+    empty rack (the setlist's `Racks/` folder by default), adds it after the
+    current song, and plays it. It's the way to build a set from scratch:
+    add, set up, add the next.
+  - File → "Add a rack to this set..." (Ctrl-O) adds an existing rack after
+    the current song, without switching to it.
+  - Save and Save As... work on the current song's rack as always (Save As
+    points the song at the new bundle).
+- **Changing songs** (the song list's menu, under "This song": the current
+  song's own edits; reordering is Move up / Move down for now, drag and drop
+  is deferred):
+  - "Add this rack again", for a song that recurs in a set (a reprise),
+    added after it.
   - "Move up" and "Move down".
   - "Rename in setlist..." (the inline text field, as for sequences). It
     sets the song's `name`; the rack keeps its own name.
   - "Remove from setlist", after a confirmation. The rack bundle stays on
     disk: removing a song never deletes a rack.
+- **A missing song** (its rack moved or deleted) can't be played, but a
+  click on it in the song list opens its own menu: "Find its rack..." points
+  the song at a rack you choose, and "Remove from setlist..." removes it.
 - **Saving the setlist:** setlist edits are saved at once (it's a small file,
   written atomically), so a setlist has no unsaved state of its own. A rack's
   own edits are saved as they are today (section 6 covers saving during a
   set).
-- **Closing it:** File → "Close setlist" keeps the current rack open on its
-  own, and the setlist row goes away.
-- **Opening a rack while in a setlist** (File → Open) leaves the setlist
-  first. To add the rack to the set instead, use "Add a rack...".
+- **Closing it:** File → "Close setlist" is the only way out of a set. It
+  keeps the current rack open on its own, and the setlist row goes away.
+  Opening another setlist replaces this one.
 
 ## 2. Preparing racks ahead of time
 
@@ -451,15 +462,16 @@ data model or the engine); the rest can come with later milestones.
 
 Milestones 2 and 3 are what make it safe for a gig.
 
-**Progress on milestone 1 (2026-10-01):** done: the model and file
+**Milestone 1 implemented (2026-10-01):** the model and file
 (`Session/Setlist.h`, `Session/SetlistFile.cpp`), the controller's setlist
 state and intents, `--setlist` and reopening the last setlist (playing is now
-the default mode), and the setlist row with Previous / Next and the song list
-(going to a song). Switching asks first if an untitled rack's changes would
-be lost, as New and Open do. Still to do: the File menu items (New setlist
-with this rack..., New setlist..., Open setlist..., Close setlist) and the
-song list's editing items. Edge cases 10 to 12 are
-checks and measurements to do along the way, not features.
+the default mode), the setlist row with Previous / Next and the song list, its
+editing items, File's New and Open adding to the set while one is open, and
+File > New setlist with this rack..., New setlist...,
+Open setlist... (a file chooser showing `*.setlist`) and Close setlist.
+Switching asks first if an untitled rack's changes would be lost, as New and
+Open do. Tests: `tests/SetlistFileTests.cpp`, `testSetlist` in
+`tests/RackControllerTests.cpp`, and the file chooser's arguments.
 
 ## Open questions
 

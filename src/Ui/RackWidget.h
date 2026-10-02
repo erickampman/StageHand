@@ -19,12 +19,17 @@ public:
 
     // A status-bar message for a few seconds.
     void showNotice(const std::string& text, double now);
+    // What the drawing shows that depends on the time rather than the view
+    // model: blink phases (only while something blinks), the notice's
+    // visibility. RackUi repaints when this or the model changes.
+    std::uint32_t timedLook(double now) const;
     // Opens (or raises) a sequence's editor window; set by RackUi.
     std::function<void(const std::string& sequenceId)> openSequenceEditor;
-    // Shows the desktop's file chooser (a folder to open, or a path to save
-    // to, with `name` suggested); `chosen` runs only if a path is chosen. Set
-    // by RackUi.
-    std::function<void(bool save, const std::string& title, const std::string& folder, const std::string& name,
+    // Shows the desktop's file chooser: a rack (a folder) or a setlist (a file)
+    // to open, or a path to save to with `name` suggested. `chosen` runs only
+    // if a path is chosen. Set by RackUi.
+    enum class Choose { Rack, Setlist, Save };
+    std::function<void(Choose what, const std::string& title, const std::string& folder, const std::string& name,
                        std::function<void(const std::string& path)> chosen)>
         chooseFile;
 
@@ -96,6 +101,13 @@ private:
     // Go to another song: if an untitled rack's changes would be lost, ask
     // first (as New and Open do). `go` switches.
     void switchSong(std::function<void()> go);
+    // File > New setlist... (with this rack: an untitled one is saved first).
+    void newSetlist(bool withThisRack);
+    void confirmRemoveSong(std::size_t index, float x, float y);
+    // A missing song: find its rack (it moved), or remove it from the set.
+    void openMissingSongMenu(std::size_t index, float x, float y);
+    std::string setlistFolder() const;   // beside the open setlist, else where racks are
+    std::string setRackFolder() const;   // the setlist's Racks/ folder, if it has one
     // Ask whether to keep an untitled rack's changes, then `then` (unless
     // cancelled). `quitting` words the discard choice for quitting.
     void keepChangesThen(std::function<void()> then, bool quitting);
@@ -103,7 +115,7 @@ private:
     void openTransportMenu(float x, float y);
     void openMetronomeMenu(float x, float y);
     void proceed(FileAction action);
-    void saveAsThen(std::function<void()> then);
+    void saveAsThen(std::function<void()> then, const std::string& title = "Save the rack as");
     std::string startFolder() const;
     const RowModel* rowById(const std::string& id) const;   // the current model's row, at event time
     // Filter edits go through here, so the filter panel shows them before the
@@ -123,6 +135,7 @@ private:
     std::uint32_t lastTempoTime = 0;       // double-click on the tempo...
     bool          tempoClicked  = false;   // ...once there's been a first click
     std::string   renamingId;   // the sequence whose name is being typed
+    float         songNameX = 0;   // where the setlist row's song name is (for renaming it)
     std::string   notice;
     double        noticeUntil = 0;
 };

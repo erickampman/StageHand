@@ -284,6 +284,10 @@ plugin editor windows) and Ctrl-Q.
   starts beside the current rack, else in `~/Racks`, else in your home
   folder. Without zenity or kdialog, the status bar says what to install.
 
+- **Setlists (2026-10-01):** the File menu also has New setlist with this
+  rack..., New setlist..., Open setlist... and, while one is open, Close
+  setlist. See docs/setlists.md.
+
 ## Review decisions (2026-09-28)
 
 1. Add and remove are in v1, with a plain list of scanned plugins.

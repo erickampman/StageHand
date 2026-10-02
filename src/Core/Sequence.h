@@ -31,6 +31,7 @@ struct SequenceRate {
     std::uint16_t numerator   = 4;
     std::uint16_t denominator = 1;
     double unitsPerBeat() const noexcept { return static_cast<double>(numerator) / denominator; }
+    bool operator==(const SequenceRate&) const = default;
 };
 
 enum class LaunchQuantize { Bar, Beat, Immediate };

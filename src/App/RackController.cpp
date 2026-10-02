@@ -1167,6 +1167,18 @@ bool RackController::removeSong(std::size_t index) {
     return writeSetlist();
 }
 
+bool RackController::relinkSong(std::size_t index, const std::string& chosen) {
+    if (!setlistOpen || index >= setlist.songs.size()) return false;
+    const std::string bundle = rackBundleOf(chosen);
+    if (bundle.empty()) {
+        notice("Not changed: " + chosen + " isn't a rack (no rack.json)");
+        return false;
+    }
+    setlist.songs[index].rack = bundle;
+    notice("Song " + std::to_string(index + 1) + " now plays " + bundle);
+    return writeSetlist();
+}
+
 bool RackController::writeSetlist() {
     songCache.clear();   // checked again at the next tick
     const RackFileResult result = saveSetlist(setlistFile, setlist);

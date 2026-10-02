@@ -9,6 +9,7 @@
 
 #include "Core/Ump.h"
 #include "Session/RackFile.h"
+#include "Session/SetlistFile.h"
 
 namespace stagehand {
 
@@ -97,6 +98,21 @@ RackWidget::RackWidget(dgl::Window& window, RackController& rackController)
 void RackWidget::showNotice(const std::string& text, double now) {
     notice      = text;
     noticeUntil = now + 4.0;
+}
+
+// The same phases the drawing uses: the MIDI and Play/Stop blinks (0.5 s) and
+// the text caret (1 s).
+std::uint32_t RackWidget::timedLook(double now) const {
+    const RackViewModel& v = controller.view();
+    bool blinking          = v.transport.learning;
+    for (const SequenceRowModel& seq : v.sequences)
+        blinking = blinking || seq.learning || seq.state == SequenceState::Starting ||
+                   seq.state == SequenceState::Stopping;
+    std::uint32_t look = 0;
+    if (blinking && std::fmod(now, 0.5) < 0.25) look |= 1u;
+    if (editingText() && std::fmod(now, 1.0) < 0.6) look |= 2u;
+    if (!notice.empty() && now < noticeUntil) look |= 4u;
+    return look;
 }
 
 // --- geometry ------------------------------------------------------------------------
@@ -232,6 +248,7 @@ void RackWidget::drawSetlistRow() {
                                                : "-/" + std::to_string(count);
     label(x, kSetlistH / 2, where, 13.0f, kDim);
     const float nameX = x + std::max(44.0f, labelWidth(where, 13.0f) + 10.0f);
+    songNameX         = nameX;
     std::string song;
     UiColor     songColor = kText;
     if (set.songs.empty()) {
@@ -282,12 +299,109 @@ void RackWidget::openSongMenu(float x, float y) {
         const std::string text = std::to_string(i + 1) + "   " + s.name + (s.missing ? "   (rack missing)" : "");
         m.items.push_back(MenuItem{
             text,
-            s.missing ? std::function<void()>{}
-                      : [this, i] { switchSong([this, i] { controller.goToSong(i); }); },
+            s.missing ? std::function<void()>{[this, i, x, y] { openMissingSongMenu(i, x, y); }}
+                      : std::function<void()>{[this, i] { switchSong([this, i] { controller.goToSong(i); }); }},
             static_cast<int>(i) == set.current});
     }
     if (set.songs.empty()) m.items.push_back(MenuItem{"No songs yet", {}});
+
+    // The current song's own edits (adding songs is File > New / Add a rack).
+    const int current = set.current;
+    if (current >= 0) {
+        const auto        i    = static_cast<std::size_t>(current);
+        const std::string name = set.songs[i].name;
+        m.items.push_back(MenuItem{"This song (" + name + "):", {}});
+        m.items.push_back(MenuItem{"   Add this rack again", [this] { controller.addThisRackAgain(); }});
+        m.items.push_back(MenuItem{"   Move up", current > 0 ? std::function<void()>{[this, i] { controller.moveSong(i, -1); }}
+                                                             : std::function<void()>{}});
+        m.items.push_back(MenuItem{"   Move down", i + 1 < set.songs.size()
+                                                       ? std::function<void()>{[this, i] { controller.moveSong(i, 1); }}
+                                                       : std::function<void()>{}});
+        m.items.push_back(MenuItem{"   Rename in setlist...", [this, i, name] {
+                                       editText(songNameX - 6.0f, 6.0f, 320.0f, 28.0f, name, RackController::kMaxNameBytes,
+                                                [this, i](const std::string& text) { controller.renameSong(i, text); });
+                                   }});
+        m.items.push_back(MenuItem{"   Remove from setlist...", [this, i, x, y] { confirmRemoveSong(i, x, y); }, false,
+                                   true});
+    }
     openMenu(std::move(m));
+}
+
+void RackWidget::openMissingSongMenu(std::size_t index, float x, float y) {
+    const SetlistModel& set = controller.view().setlist;
+    if (index >= set.songs.size()) return;
+    Menu m;
+    m.x     = x;
+    m.y     = y;
+    m.w     = 360.0f;
+    m.title = set.songs[index].name + ": its rack is missing";
+    m.items.push_back(MenuItem{"Find its rack...", [this, index] {
+                                   if (chooseFile)
+                                       chooseFile(Choose::Rack, "Find the rack for this song (choose its .rack folder)",
+                                                  setRackFolder(), "", [this, index](const std::string& path) {
+                                                      controller.relinkSong(index, path);
+                                                  });
+                               }});
+    m.items.push_back(MenuItem{"Remove from setlist...", [this, index, x, y] { confirmRemoveSong(index, x, y); }, false,
+                               true});
+    m.items.push_back(MenuItem{"Cancel", [] {}});
+    openMenu(std::move(m));
+}
+
+void RackWidget::confirmRemoveSong(std::size_t index, float x, float y) {
+    const SetlistModel& set = controller.view().setlist;
+    if (index >= set.songs.size()) return;
+    Menu m;
+    m.x     = x;
+    m.y     = y;
+    m.w     = 360.0f;
+    m.title = "Remove " + set.songs[index].name + " from the set?";
+    m.items.push_back(MenuItem{"Remove it (the rack stays on disk)", [this, index] { controller.removeSong(index); },
+                               false, true});
+    m.items.push_back(MenuItem{"Cancel", [] {}});
+    openMenu(std::move(m));
+}
+
+// New setlist: where to save it, then (with this rack) the running rack is
+// its first song. An untitled rack is saved first; an existing setlist is
+// replaced only after asking.
+void RackWidget::newSetlist(bool withThisRack) {
+    auto create = [this, withThisRack] {
+        if (!chooseFile) return;
+        chooseFile(Choose::Save, withThisRack ? "New setlist with this rack" : "New setlist", setlistFolder(),
+                   "Setlist.setlist", [this, withThisRack](const std::string& path) {
+                       if (controller.newSetlist(path, withThisRack) != RackController::NewSetlistResult::NeedsReplace)
+                           return;
+                       Menu m;
+                       m.x     = width() / 2 - 170.0f;
+                       m.y     = topH() + 20.0f;
+                       m.w     = 340.0f;
+                       m.title = "Replace the existing setlist " +
+                                 std::filesystem::path(setlistPathOf(path)).filename().string() + "?";
+                       m.items.push_back(MenuItem{"Replace it", [this, path, withThisRack] {
+                                                      controller.newSetlist(path, withThisRack, true);
+                                                  },
+                                                  false, true});
+                       m.items.push_back(MenuItem{"Cancel", [] {}});
+                       openMenu(std::move(m));
+                   });
+    };
+    if (withThisRack && controller.rackPath().empty())   // a song must be a rack on disk
+        saveAsThen(create, "First, save this rack: it becomes song 1 (the setlist is named next)");
+    else
+        create();
+}
+
+std::string RackWidget::setlistFolder() const {
+    if (controller.hasSetlist()) return std::filesystem::path(controller.setlistPath()).parent_path().string();
+    return startFolder();
+}
+
+std::string RackWidget::setRackFolder() const {
+    std::error_code   ec;
+    const std::string folder = setlistFolder();
+    const auto        racks  = std::filesystem::path(folder) / "Racks";
+    return std::filesystem::is_directory(racks, ec) ? racks.string() : folder;
 }
 
 void RackWidget::switchSong(std::function<void()> go) {
@@ -314,7 +428,7 @@ void RackWidget::drawToolbar() {
 
     const float fileX = width() - kPad - 70.0f;
     button(fileX, 8.0f, 70.0f, 28.0f, "File", false, true, kAccent);
-    region(fileX, 8.0f, 70.0f, 28.0f, [this, fileX](const Press&) { openFileMenu(fileX - 150.0f, topH()); });
+    region(fileX, 8.0f, 70.0f, 28.0f, [this, fileX](const Press&) { openFileMenu(fileX - 190.0f, topH()); });
 
     const float addX = fileX - 10.0f - 118.0f;
     button(addX, 8.0f, 118.0f, 28.0f, "+ Add plugin", false, true, kAccent);
@@ -903,18 +1017,35 @@ void RackWidget::openFileMenu(float x, float y) {
     Menu       m;
     m.x     = x;
     m.y     = y;
-    m.w     = 220.0f;
+    m.w     = 260.0f;
     m.title = controller.rackPath().empty() ? "Untitled rack" : controller.rackPath();
-    m.items.push_back(MenuItem{"New rack          Ctrl-N", [this] { fileAction(FileAction::New); }});
-    m.items.push_back(MenuItem{"Open...           Ctrl-O", [this] { fileAction(FileAction::Open); }});
+    // In a setlist, a rack is a song in it: New and Open add to the set rather
+    // than leave it. Only Close setlist leaves it.
+    const bool inSet = controller.hasSetlist();
+    m.items.push_back(MenuItem{inSet ? "New rack in this set...     Ctrl-N" : "New rack          Ctrl-N",
+                               [this] { fileAction(FileAction::New); }});
+    m.items.push_back(MenuItem{inSet ? "Add a rack to this set...  Ctrl-O" : "Open...           Ctrl-O",
+                               [this] { fileAction(FileAction::Open); }});
     m.items.push_back(MenuItem{"Save              Ctrl-S",
                                savingOff ? std::function<void()>{} : [this] { fileAction(FileAction::Save); }});
     m.items.push_back(MenuItem{"Save As...",
                                savingOff ? std::function<void()>{} : [this] { fileAction(FileAction::SaveAs); }});
+    // Setlists (docs/setlists.md, section 1).
+    m.items.push_back(MenuItem{"New setlist with this rack...", [this] { newSetlist(true); }});
+    m.items.push_back(MenuItem{"New setlist...", [this] { newSetlist(false); }});
+    m.items.push_back(MenuItem{"Open setlist...", [this] {
+                                   if (chooseFile)
+                                       chooseFile(Choose::Setlist, "Open a setlist", setlistFolder(), "",
+                                                  [this](const std::string& path) {
+                                                      switchSong([this, path] { controller.openSetlist(path); });
+                                                  });
+                               }});
+    if (inSet) m.items.push_back(MenuItem{"Close setlist", [this] { controller.closeSetlist(); }});
     openMenu(std::move(m));
 }
 
-// New, Open and Quit would lose an untitled rack's changes: ask first.
+// New, Open and Quit would lose an untitled rack's changes: ask first. In a
+// setlist, New and Open add a song instead (docs/setlists.md, section 1).
 void RackWidget::fileAction(FileAction action) {
     closeMenu();
     if (action == FileAction::Save && !controller.rackPath().empty()) {
@@ -923,6 +1054,20 @@ void RackWidget::fileAction(FileAction action) {
     }
     if (action == FileAction::Save || action == FileAction::SaveAs) {
         saveAsThen({});
+        return;
+    }
+    if (controller.hasSetlist() && action == FileAction::New) {   // a new song, after the current one
+        if (chooseFile)
+            chooseFile(Choose::Save, "New rack in this set", setRackFolder(), "New song.rack",
+                       [this](const std::string& path) {
+                           switchSong([this, path] { controller.addNewRackToSetlist(path); });
+                       });
+        return;
+    }
+    if (controller.hasSetlist() && action == FileAction::Open) {   // added after the current song; no switch
+        if (chooseFile)
+            chooseFile(Choose::Rack, "Add a rack to this set (choose its .rack folder)", setRackFolder(), "",
+                       [this](const std::string& path) { controller.addRackToSetlist(path); });
         return;
     }
     if (!controller.unsavedUntitled()) {
@@ -949,7 +1094,7 @@ void RackWidget::proceed(FileAction action) {
         case FileAction::New: controller.newRack(); break;
         case FileAction::Open:
             if (chooseFile)
-                chooseFile(false, "Open a rack (choose its .rack folder)", startFolder(), "",
+                chooseFile(Choose::Rack, "Open a rack (choose its .rack folder)", startFolder(), "",
                            [this](const std::string& path) { controller.openRack(path); });
             break;
         case FileAction::Quit: controller.quit(); break;
@@ -960,10 +1105,10 @@ void RackWidget::proceed(FileAction action) {
 
 // Save As, then `then` once it's saved. An existing rack is replaced only
 // after asking.
-void RackWidget::saveAsThen(std::function<void()> then) {
+void RackWidget::saveAsThen(std::function<void()> then, const std::string& title) {
     if (!chooseFile) return;
     const std::string name = (controller.view().rackName.empty() ? std::string("Untitled") : controller.view().rackName) + ".rack";
-    chooseFile(true, "Save the rack as", startFolder(), name, [this, then](const std::string& path) {
+    chooseFile(Choose::Save, title, startFolder(), name, [this, then](const std::string& path) {
         const RackController::SaveAsResult result = controller.saveAs(path);
         if (result == RackController::SaveAsResult::Saved) {
             if (then) then();
