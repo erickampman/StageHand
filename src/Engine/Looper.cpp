@@ -63,6 +63,14 @@ double quantized(const CompiledLooper& l, double beats) noexcept {
     return l.quantize > 0.0 ? std::round(beats / l.quantize) * l.quantize : beats;
 }
 
+// Where a note plays in the loop: its played start, quantized as the looper
+// is set now (so a new setting re-quantizes the loop, and off restores the
+// played timing). Rounded onto the loop's end, it plays at the next start.
+double playedAt(const CompiledLooper& l, const Note& n, double length) noexcept {
+    const double at = std::max(0.0, quantized(l, n.on));
+    return at >= length - kEps ? at - length : at;
+}
+
 // Every note the loop is sounding ends at `at` (a beat in this block, or its start).
 void releaseSounding(LooperRuntime& rt, double at, std::uint32_t fromIndex = 0) noexcept {
     for (Sounding& s : rt.sounding)
@@ -378,11 +386,8 @@ void SequenceSet::recordLoops(MidiSourceHandle source, const MidiMessage& m, con
                 continue;
             }
             Note n;
-            n.on = quantized(l, loopBeat);
-            if (overdub) {
-                if (n.on >= rt.loopLength - kEps) n.on -= rt.loopLength;   // rounded onto the next cycle's start
-                n.firstCycle = cycle + 1;   // not again in the pass that's recording it
-            }
+            n.on = loopBeat;   // as played: quantize applies as it plays
+            if (overdub) n.firstCycle = cycle + 1;   // not again in the pass that's recording it
             n.onMessage  = m;
             n.offMessage = offFor(m);
             rt.notes.push_back(n);
@@ -392,7 +397,7 @@ void SequenceSet::recordLoops(MidiSourceHandle source, const MidiMessage& m, con
             for (LooperRuntime::Open& o : rt.open) {
                 if (!o.used || o.group != group || o.channel != channel || o.note != number) continue;
                 Note& n = rt.notes[o.index];
-                // As long as it was played, from its (quantized) start; cut at the loop's end.
+                // As long as it was played; cut at the loop's end.
                 double end = n.on + (beat - o.onBeat);
                 if (rt.loopLength > 0.0) end = std::min(end, rt.loopLength);
                 if (overdub && cycle > o.cycle) end = rt.loopLength;   // held across the loop's end: cut there
@@ -431,7 +436,8 @@ std::size_t SequenceSet::generateLoops(const Block& b, SequenceEvent* out, std::
                     for (std::size_t i = 0; i < rt.notes.size(); ++i) {
                         const Note& n = rt.notes[i];
                         if (k < n.firstCycle || n.off < 0.0) continue;   // not yet, or a key still held
-                        const double beat = cycleStart + n.on;
+                        const double at   = playedAt(l, n, L);
+                        const double beat = cycleStart + at;
                         if (beat < from - kEps || beat >= until - kEps) continue;
                         Sounding* slot = nullptr;
                         for (Sounding& s : rt.sounding) {
@@ -444,7 +450,7 @@ std::size_t SequenceSet::generateLoops(const Block& b, SequenceEvent* out, std::
                         if (slot == nullptr) continue;   // 64 notes sounding at once: this one is skipped
                         put(out, capacity, count, frameAt(b, beat), 1, l.source, n.onMessage);
                         *slot = Sounding{true, static_cast<std::uint32_t>(i),
-                                         std::max(cycleStart + n.off, beat + beatsPerMs), n.offMessage};
+                                         std::max(beat + (n.off - n.on), beat + beatsPerMs), n.offMessage};
                     }
                 }
             }

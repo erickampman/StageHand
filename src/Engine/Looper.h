@@ -60,7 +60,7 @@ struct LooperRuntime {
 
     // --- audio thread only
     struct Note {
-        double        on  = 0.0;    // beats into the loop
+        double        on  = 0.0;    // beats into the loop, as played (quantized as it plays)
         double        off = -1.0;   // beats into the loop; < 0 while the key is held
         std::int64_t  firstCycle = 0;   // plays from this cycle on (not in the pass that recorded it)
         MidiMessage   onMessage, offMessage;
