@@ -22,7 +22,10 @@ stage and isn't saved, and it's driven by a footswitch. Builds on:
    it's made. Applied as the loop plays (revised 2026-10-02): the notes keep
    their played timing, so changing it re-quantizes the loop from its next
    pass, and off brings the played timing back. Notes played just before the
-   start (7a) are on the start, whatever the setting.
+   start (7a) are on the start, whatever the setting. A change mid-pass acts at
+   once, every note still exactly once a pass (added 2026-10-02): one already
+   played this pass isn't played again where quantize moved it, and one moved
+   just behind the playhead (a grid step at most) plays at once.
 6. **It always stays in time.** Recording starts at the next beat or the next
    bar after the start press (a setting); a length ended by a press is rounded
    up to the next beat or bar the same way.
@@ -32,6 +35,14 @@ stage and isn't saved, and it's driven by a footswitch. Builds on:
     beat) before recording starts is recorded on the start, not lost.
 7b. **No automatic stop** (2026-10-02): a loop plays until it's stopped
     (no "stop after N bars or repeats").
+7c. **Fat fingers cleaned up** (added 2026-10-02). A finger that catches the
+    key beside the one it meant leaves a short wrong note with the right one:
+    two notes starting within a tenth of a beat, a semitone or two apart, in
+    the same pass, the shorter at most half as long as the other. The shorter
+    isn't played, nor kept as a sequence. It's still recorded (the setting
+    can be turned off, and it plays again): Clean, in the looper's row, on
+    by default, saved with the rack. A chord of equal notes, a note alone and
+    an overdub's notes against the loop's are never touched.
 8. **Transport stopped:** the start press starts it, unless the transport has
    a start of its own (a learned trigger, or start on first note); then it
    waits for that.
@@ -198,6 +209,16 @@ units), in the protocol, channel and group of its first note (one channel per
 sequence: notes on others join it), MIDI 2.0 as 12-EDO from middle C, launched
 at the bar or beat as the looper starts, repeating. Tests:
 `testLoopToSequence` (looper), `testKeepLoop` (controller).
+
+**Exactly once and fat fingers (2026-10-02):** each note remembers the cycle
+it last played in (`LooperRuntime::Note::playedCycle`), and a quantize change
+plays at the block's start the notes it pulled just behind the playhead
+(`LooperRuntime::lastQuantize`). A note is marked a fat finger's slip
+(`Note::fatFinger`) as it, or its neighbour, ends; `CompiledLooper::cleanup`
+(`LooperSetup::cleanup`, rack.json's `"cleanup"`) leaves the marked out, and
+Keep leaves them out of the sequence when it's on. Tests: `testExactlyOnce`,
+`testFatFingers` (looper), the setting in `testLoopers` (controller) and the
+rack file tests.
 
 ## Open questions
 

@@ -672,6 +672,7 @@ std::unique_ptr<SequenceSet> Session::buildSequences() const {
         l.atBar       = entry.setup.atBar;
         l.fixedLength = entry.setup.fixedLength;
         l.fixedInBars = entry.setup.fixedInBars;
+        l.cleanup     = entry.setup.cleanup;
         loopers.push_back(std::move(l));
     }
     return std::make_unique<SequenceSet>(std::move(compiled), std::move(transport), std::move(loopers));

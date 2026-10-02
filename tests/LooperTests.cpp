@@ -372,6 +372,71 @@ void testRequantize() {
     CHECK(rig.heardAt(true, 55, 9.0) && rig.heardAt(true, 55, 13.0) && rig.heardAt(true, 55, 17.0));   // always the start
 }
 
+// Every note exactly once a pass, whatever quantize does mid-pass: a note
+// moved later after it played doesn't play again; one moved just behind the
+// playhead (a grid step at most) plays at once rather than not at all.
+void testExactlyOnce() {
+    CompiledLooper settings;
+    settings.atBar       = false;
+    settings.quantize    = 0.0;
+    settings.fixedLength = 4;
+    settings.fixedInBars = false;
+    Rig rig(settings);
+    rig.command(LooperCommand::Press, 0.5);   // beats 1-5; cycles from 5, 9...
+    rig.play(60, 1.3, 1.5);    // 0.3 in
+    rig.play(62, 3.4, 3.6);    // 2.4 in
+    rig.runTo(5.4);            // 60 played at 5.3
+    settings.quantize = 0.5;   // 60 -> 0.5 (5.5, ahead): not again; 62 -> 2.5
+    rig.set(settings);
+    rig.runTo(7.3);
+    settings.quantize = 1.0;   // 62 -> 2.0 (7.0, just behind): now
+    rig.set(settings);
+    rig.runTo(11.5);
+    CHECK(rig.heardAt(true, 60, 5.3) && !rig.heardAt(true, 60, 5.5));
+    CHECK(rig.heardAt(true, 62, 7.3) && !rig.heardAt(true, 62, 7.5));
+    CHECK(rig.heardOns(5.0, 9.0) == 2);
+    CHECK(rig.heardAt(true, 60, 9.0) && rig.heardAt(true, 62, 11.0));   // then on the new grid
+}
+
+// Fat fingers: two keys a semitone or two apart, starting together, one at
+// most half as long as the other: the short one isn't played, nor kept as a
+// sequence. A chord of equal notes and a lone short note are kept. Cleanup
+// off plays everything.
+void testFatFingers() {
+    CompiledLooper settings;
+    settings.atBar       = false;
+    settings.quantize    = 0.25;
+    settings.fixedLength = 4;
+    settings.fixedInBars = false;
+    Rig rig(settings);
+    rig.command(LooperCommand::Press, 0.5);   // beats 1-5; cycles from 5, 9...
+    rig.key(true, 60, 1.0);
+    rig.key(true, 61, 1.03);    // the slip: 0.12 long
+    rig.key(false, 61, 1.15);
+    rig.key(false, 60, 2.0);
+    rig.key(true, 64, 3.0);     // a chord, a tone apart, as long as each other
+    rig.key(true, 66, 3.02);
+    rig.key(false, 64, 3.5);
+    rig.key(false, 66, 3.5);
+    rig.play(70, 4.0, 4.1);     // short, but alone
+    rig.runTo(9.0);
+    CHECK(rig.heardAt(true, 60, 5.0) && rig.heardAt(true, 64, 7.0) && rig.heardAt(true, 66, 7.0) &&
+          rig.heardAt(true, 70, 8.0));
+    CHECK(rig.heardOns(5.0, 9.0) == 4);   // not 61
+
+    rig.command(LooperCommand::Snapshot, 9.0);
+    rig.block();
+    LooperRuntime::Snapshot copy;
+    CHECK(rig.rt->takeSnapshot(copy) && copy.notes.size() == 5);
+    CHECK(loopToSequence(copy, 0.25, false).notes.size() == 4 &&
+          loopToSequence(copy, 0.25, false, false).notes.size() == 5);
+
+    settings.cleanup = false;
+    rig.set(settings);
+    rig.runTo(13.5);
+    CHECK(rig.heardAt(true, 61, 13.0) && rig.heardOns(13.0, 13.5) == 2);
+}
+
 } // namespace
 
 int main() {
@@ -384,5 +449,7 @@ int main() {
     testCap();
     testLoopToSequence();
     testRequantize();
+    testExactlyOnce();
+    testFatFingers();
     return test::finish("Looper");
 }

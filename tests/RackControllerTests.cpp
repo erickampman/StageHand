@@ -1411,6 +1411,10 @@ void testLoopers() {
     CHECK(view.loopers[0].inputLabel == "From other apps (MIDI 2.0)" &&
           (view.loopers[0].targetNames == std::vector<std::string>{"keys"}));
     CHECK(view.loopers[0].state == LooperState::Empty && view.loopers[0].capacity == LooperRuntime::kMaxNotes);
+    CHECK(view.loopers[0].cleanup);   // fat fingers cleaned up, by default
+    controller.setLooperCleanup(id, false);
+    tick();
+    CHECK(!view.loopers[0].cleanup);
 
     // Named: trimmed; an empty name refused (a notice), the old one kept.
     controller.renameLooper(id, "  Bass vamp ");
@@ -1461,7 +1465,7 @@ void testLoopers() {
     Rack saved;
     CHECK(loadRack(rackPath, saved).ok && saved.loopers.size() == 1 && saved.loopers[0].fixedLength == 1 &&
           saved.loopers[0].name == "Bass vamp" &&
-          !saved.loopers[0].atBar && saved.loopers[0].quantize == 0.0);
+          !saved.loopers[0].atBar && saved.loopers[0].quantize == 0.0 && !saved.loopers[0].cleanup);
     stagehand::Rig savedRig;
     CHECK(loadRig(config.defaultRigPath, savedRig).ok && savedRig.looperSwitch &&
           savedRig.looperSwitch->number == 82);

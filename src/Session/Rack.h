@@ -73,6 +73,7 @@ struct LooperSetup {
     bool                     atBar       = true;   // start, end and stop at a bar, else a beat
     std::uint32_t            fixedLength = 0;      // 0 = ended by a press
     bool                     fixedInBars = true;
+    bool                     cleanup     = true;   // fat fingers' slips not played (docs/looper.md, 7c)
 
     bool operator==(const LooperSetup&) const = default;
 };
