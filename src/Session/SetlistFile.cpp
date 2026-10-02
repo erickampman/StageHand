@@ -7,35 +7,18 @@
 #include <fstream>
 #include <stdexcept>
 
+#include "Session/BundleFiles.h"
+
 namespace stagehand {
 
 namespace fs = std::filesystem;
 using Json   = nlohmann::ordered_json;
+using namespace bundle;
 
 namespace {
 
 constexpr int         kFormatVersion = 1;
 constexpr const char* kFormatName    = "stagehand-setlist";
-
-[[noreturn]] void fail(const std::string& message) {
-    throw std::runtime_error(message);
-}
-
-std::string homeDir() {
-    const char* home = std::getenv("HOME");
-    return home != nullptr ? home : "";
-}
-
-std::string expandHome(const std::string& path) {
-    if (path == "~" || path.rfind("~/", 0) == 0) return homeDir() + path.substr(1);
-    return path;
-}
-
-std::string abbreviateHome(const std::string& path) {
-    const std::string home = homeDir();
-    if (!home.empty() && path.rfind(home + "/", 0) == 0) return "~" + path.substr(home.size());
-    return path;
-}
 
 // How a rack is written: relative to the setlist's folder if they share more
 // than "/" (e.g. both under the home folder), else absolute.
@@ -71,27 +54,6 @@ const char* nameOf(const std::pair<const char*, Enum> (&values)[N], Enum value) 
     for (const auto& [name, v] : values)
         if (v == value) return name;
     return values[0].first;
-}
-
-bool writeAtomically(const fs::path& path, const std::string& text, std::string& error) {
-    const fs::path  temp = path.string() + ".tmp";
-    std::error_code ec;
-    fs::create_directories(path.parent_path(), ec);
-    {
-        std::ofstream out(temp, std::ios::trunc);
-        out << text;
-        if (!out) {
-            error = "cannot write " + temp.string();
-            return false;
-        }
-    }
-    fs::rename(temp, path, ec);
-    if (ec) {
-        error = "cannot replace " + path.string() + ": " + ec.message();
-        fs::remove(temp, ec);
-        return false;
-    }
-    return true;
 }
 
 } // namespace
@@ -131,6 +93,11 @@ RackFileResult loadSetlist(const std::string& path, Setlist& setlist) {
                 loaded.songs.push_back(std::move(song));
             }
         }
+        if (doc.contains("rig")) {   // relative to the setlist, like its racks
+            const fs::path rig = expandHome(doc.at("rig").get<std::string>());
+            loaded.rig         = (rig.is_absolute() ? rig : folder / rig).lexically_normal().string();
+            if (!loaded.rig.empty() && loaded.rig.back() == '/') loaded.rig.pop_back();
+        }
         if (doc.contains("switching")) {
             const Json& sw = doc.at("switching");
             if (!sw.is_object()) fail("\"switching\" must be an object");
@@ -163,6 +130,7 @@ RackFileResult saveSetlist(const std::string& path, const Setlist& setlist) {
         songs.push_back(s);
     }
     doc["songs"] = songs;
+    if (!setlist.rig.empty()) doc["rig"] = rackPathText(fs::path(setlist.rig).lexically_normal(), folder);
     if (setlist.switching != SwitchSettings{}) {
         Json sw;
         sw["transport"] = nameOf(kTransports, setlist.switching.transport);
@@ -170,7 +138,7 @@ RackFileResult saveSetlist(const std::string& path, const Setlist& setlist) {
         sw["oldRack"]   = nameOf(kOldRacks, setlist.switching.oldRack);
         doc["switching"] = sw;
     }
-    if (!writeAtomically(file, doc.dump(2) + "\n", result.error)) return result;
+    if (!writeTextAtomically(file, doc.dump(2) + "\n", result.error)) return result;
     result.ok = true;
     return result;
 }
@@ -220,7 +188,7 @@ bool saveLastPosition(const std::string& path, const LastPosition& position) {
     doc["setlist"] = position.setlist;
     doc["song"]    = position.song;
     std::string error;
-    return writeAtomically(path, doc.dump(2) + "\n", error);
+    return writeTextAtomically(path, doc.dump(2) + "\n", error);
 }
 
 } // namespace stagehand

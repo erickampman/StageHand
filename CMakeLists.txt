@@ -65,6 +65,7 @@ target_link_libraries(stagehand-engine
 # --- stagehand-session: racks (files) and running them (no platform deps) -------
 add_library(stagehand-session STATIC
     src/Session/RackFile.cpp
+    src/Session/RigFile.cpp
     src/Session/Session.cpp
     src/Session/SetlistFile.cpp)
 target_link_libraries(stagehand-session
@@ -124,6 +125,7 @@ stagehand_add_test(test-engine tests/EngineTests.cpp    stagehand-engine)
 stagehand_add_test(test-sequence tests/SequenceTests.cpp stagehand-engine)
 stagehand_add_test(test-rackfile tests/RackFileTests.cpp stagehand-session)
 stagehand_add_test(test-setlistfile tests/SetlistFileTests.cpp stagehand-session)
+stagehand_add_test(test-rigfile tests/RigFileTests.cpp stagehand-session)
 stagehand_add_test(test-session  tests/SessionTests.cpp  stagehand-session)
 stagehand_add_test(test-rackcontroller tests/RackControllerTests.cpp stagehand-app)
 stagehand_add_test(test-sequenceeditor tests/SequenceEditorTests.cpp stagehand-app)

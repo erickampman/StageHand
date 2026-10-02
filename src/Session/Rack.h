@@ -1,8 +1,10 @@
 #pragma once
 
+#include <array>
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -13,6 +15,9 @@
 #include "Plugin/PluginDescriptor.h"
 
 namespace stagehand {
+
+// The rig's effect buses (docs/rig.md); equal to the engine's kBusCount.
+inline constexpr std::size_t kRigBuses = 2;
 
 // One plugin slot as saved: the plugin's identity, its opaque state, and the
 // host-owned settings (docs/domain-model.md, Save / restore). Found or not, it
@@ -26,6 +31,9 @@ struct RackSlot {
     // all (SlotRuntime::muted). A file's "enabled": false loads as muted.
     bool                   muted       = false;
     float                  gainDb      = 0.0f;
+    // How much goes to each of the rig's effect buses, after the fader: a level
+    // in dB, or none (off). "sends": [dbA, dbB] in the file, null for off.
+    std::array<std::optional<float>, kRigBuses> sendDb;
     std::uint32_t          firstOutput = 0;    // 0-based here, 1-based in the file
     std::uint16_t          notePort    = 0;
     MidiSourceRef          source;

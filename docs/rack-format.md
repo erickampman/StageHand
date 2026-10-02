@@ -132,6 +132,7 @@ get a **layer**.
 | `state` | none | Path of the state blob, relative to the bundle. Absent means the plugin's defaults |
 | `muted` | `false` | Silent: muting and unmuting fade over 10 ms. Muting also ends the plugin's held notes. Once its output has gone quiet (or after 5 s), the plugin isn't run, so it costs no CPU. It's still loaded, so unmuting is instant. This replaced `enabled` on 2026-10-01: `"enabled": false` in an older file loads as muted, and `enabled` isn't written any more. The format version is unchanged |
 | `gainDb` | `0.0` | Level when summed into the outputs |
+| `sends` | both off | Levels sent to the rig's effect buses A and B, after the fader (docs/rig.md): `[dbA, dbB]` in dB, `null` for off. Added 2026-10-02; additive, so the format version is unchanged |
 | `output` | `1` | First output channel (1-based) for the plugin's first channel. A mono plugin feeds two |
 | `midi.source` | `"all"` | See "Sources" |
 | `midi.channels` | `"all"` | `"all"` or a list of channels 1–16 |

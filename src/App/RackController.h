@@ -69,6 +69,11 @@ public:
         // Where the last setlist and song are remembered, for reopening there
         // (docs/setlists.md, "Reopening"); empty = not remembered (tests).
         std::string lastPositionPath;
+
+        // The default rig (docs/rig.md), used by a rack on its own and a setlist
+        // that names none; created empty if it isn't there. Empty = no rig at
+        // all (tests): no buses, and sends go nowhere.
+        std::string defaultRigPath;
     };
 
     RackController(Session& session, Engine& engine, MidiInput& midiInput, PluginFactory& pluginFactory,
@@ -206,7 +211,11 @@ public:
     // close, MIDI learn is cancelled. False (with a notice) if nothing changed.
     bool newRack();
     bool openRack(const std::string& chosen);
-    bool save();   // to rackPath(); false (with a notice) if untitled or saving is off
+    // To rackPath(), and the rig too if it has changes (Ctrl-S saves
+    // everything). False (with a notice) if untitled or saving is off.
+    bool save();
+    // The rig in use: the setlist's, else the default (empty: none).
+    const std::string& rigPath() const noexcept { return rigFile; }
     // Save to a new bundle (".rack" added if missing), which becomes the rack's
     // path and its name. An existing rack there is replaced only with `replace`;
     // anything else there never is.
@@ -286,6 +295,11 @@ private:
     // Open the rack bundle at `bundle` (with replaceRack()); false, with a notice, if it can't.
     bool           loadRackAt(const std::string& bundle);
     bool           writeSetlist();          // to setlistFile; a notice if it fails
+    // Use the rig at `path` ("" = the default): the one in use is saved first
+    // if it has changes, as a rack is when switching. A missing default rig is
+    // created empty. Nothing happens if it's already in use.
+    void           useRig(const std::string& path);
+    bool           saveRigIfModified();     // false (with a notice) if a save failed
     void           rememberPosition();      // config.lastPositionPath
     void           buildSetlist(double now);   // model.setlist
     std::size_t    insertionPoint() const;  // where "after the current song" is
@@ -315,6 +329,7 @@ private:
     std::string                                           learningId;   // the sequence being learned for
     SequenceTrigger::Action                               learningAction = SequenceTrigger::Action::Toggle;
     std::string                                           target;          // the rack's bundle; "" = untitled
+    std::string                                           rigFile;         // the rig in use; "" = none
     std::uint64_t                                         generation = 0;  // rackGeneration()
     std::string                                           clickDevice;     // connected to; "" = nowhere
     bool                                                  clickMissing = false;

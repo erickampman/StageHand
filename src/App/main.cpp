@@ -29,6 +29,7 @@
 #include "Midi/AlsaSeqInput.h"
 #include "Plugin/Clap/ClapPluginFactory.h"
 #include "Session/RackFile.h"
+#include "Session/RigFile.h"
 #include "Session/Session.h"
 #include "Session/SetlistFile.h"
 #include "Ui/RackUi.h"
@@ -631,6 +632,7 @@ int runPlay(const Options& options) {
     config.savingOff          = options.noSaveRack;
     config.clickRouting       = &backend;
     config.lastPositionPath   = defaultLastPositionPath();
+    config.defaultRigPath     = defaultRigPath();
     RackController controller(session, *engine, *input, factory, std::move(config));
     // A setlist: --setlist from its first song, or (no arguments) the last one
     // at its song. Its rack replaces the untitled one loaded above.

@@ -8,6 +8,7 @@
 
 #include "Core/Ump.h"
 #include "Session/RackFile.h"
+#include "Session/RigFile.h"
 #include "Session/SetlistFile.h"
 
 namespace stagehand {
@@ -71,6 +72,7 @@ RackController::RackController(Session& runningSession, Engine& runningEngine, M
     : session(runningSession), engine(runningEngine), midi(midiInput), factory(pluginFactory),
       config(std::move(appConfig)) {
     target = config.saveTarget;
+    useRig({});   // the default rig, until a setlist names another
     routeClick(true);
     refreshSources();
     tick(0.0);
@@ -866,7 +868,7 @@ bool RackController::save() {
     }
     session.markSaved();
     notice("Saved the rack to " + target);
-    return true;
+    return saveRigIfModified();
 }
 
 RackController::SaveAsResult RackController::saveAs(const std::string& chosen, bool replace) {
@@ -897,6 +899,7 @@ RackController::SaveAsResult RackController::saveAs(const std::string& chosen, b
     target = path;
     session.markSaved();
     notice("Saved the rack to " + target);
+    saveRigIfModified();
     if (setlistOpen && onSong && song < setlist.songs.size()) {   // the song now plays the new bundle
         setlist.songs[song].rack = path;
         writeSetlist();
@@ -905,7 +908,47 @@ RackController::SaveAsResult RackController::saveAs(const std::string& chosen, b
 }
 
 bool RackController::saveForQuit() {
-    return config.savingOff || target.empty() || save();
+    if (config.savingOff) return true;
+    return target.empty() ? saveRigIfModified() : save();
+}
+
+// --- the rig (docs/rig.md) -------------------------------------------------------------
+
+void RackController::useRig(const std::string& path) {
+    const std::string wanted = path.empty() ? config.defaultRigPath : path;
+    if (wanted.empty() || wanted == rigFile) return;
+    if (!rigFile.empty()) saveRigIfModified();   // the one in use, as a rack is saved when switching
+
+    Rig                  rig;
+    const RackFileResult result = loadRig(wanted, rig);
+    if (!result.ok) {
+        if (wanted == config.defaultRigPath && rigBundleOf(wanted).empty()) {   // first use: an empty one
+            rig      = Rig{};
+            rig.name = rackNameOf(wanted);
+            if (!config.savingOff && !saveRig(wanted, rig).ok) notice("Couldn't create the default rig at " + wanted);
+        } else {
+            notice("Couldn't open the rig: " + result.error + "; using the default rig");
+            if (wanted != config.defaultRigPath) useRig({});
+            return;
+        }
+    }
+    for (const std::string& warning : result.warnings) notice(warning);
+    Session::LoadReport report;
+    session.loadRig(rig, session.loadedSampleRate(), report);
+    for (const std::string& warning : report.warnings) notice(warning);
+    rigFile = wanted;
+}
+
+bool RackController::saveRigIfModified() {
+    if (config.savingOff || rigFile.empty() || !session.rigModified()) return true;
+    const RackFileResult result = saveRig(rigFile, session.captureRig());
+    if (!result.ok) {
+        notice("Couldn't save the rig: " + result.error);
+        return false;
+    }
+    session.markRigSaved();
+    notice("Saved the rig to " + rigFile);
+    return true;
 }
 
 bool RackController::unsavedUntitled() const {
@@ -1010,6 +1053,7 @@ RackController::NewSetlistResult RackController::newSetlist(const std::string& c
     setlistOpen = true;
     setlist     = std::move(fresh);
     setlistFile = resolveRackPath(path);
+    useRig(setlist.rig);   // a new setlist names no rig: the default
     song        = 0;
     onSong      = withThisRack;
     rememberPosition();
@@ -1029,6 +1073,7 @@ bool RackController::openSetlist(const std::string& chosen, std::size_t start) {
     setlist     = std::move(loaded);
     setlistFile = resolveRackPath(chosen);
     songCache.clear();
+    useRig(setlist.rig);   // its own, else the default
     song        = std::min(start, setlist.songs.size());
     onSong      = false;
     if (setlist.songs.empty()) {
@@ -1050,6 +1095,7 @@ bool RackController::openSetlist(const std::string& chosen, std::size_t start) {
 
 void RackController::closeSetlist() {
     if (!setlistOpen) return;
+    useRig({});   // a rack on its own uses the default rig
     setlistOpen = false;
     setlist     = {};
     setlistFile.clear();

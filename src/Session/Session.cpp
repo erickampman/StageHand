@@ -70,7 +70,7 @@ bool Session::load(const Rack& rack, double rate, LoadReport& report) {
         const std::string where = "slot '" + saved.id + "': ";
 
         std::string                   problem;
-        std::shared_ptr<HostedPlugin> plugin = createPlugin(saved, problem, scanned, haveScan);
+        std::shared_ptr<HostedPlugin> plugin = createPlugin(saved.plugin, problem, scanned, haveScan);
         // State goes in before activation (domain-model.md, save/restore).
         if (plugin && !saved.state.empty() && !plugin->loadState(saved.state.data(), saved.state.size()))
             report.warnings.push_back(where + "the plugin rejected its saved state; it starts from its defaults");
@@ -86,6 +86,7 @@ bool Session::load(const Rack& rack, double rate, LoadReport& report) {
         }
         slot.plugin            = plugin;
         slot.runtime           = std::make_shared<SlotRuntime>(targetGainOf(saved), saved.muted);
+        applySends(slot);
         slot.saved.plugin.path = plugin->descriptor().path;   // where it was actually found
 
         resolveSource(slot);
@@ -163,6 +164,129 @@ bool Session::setMuted(const std::string& id, bool muted) {
     return true;
 }
 
+bool Session::setSendDb(const std::string& id, std::size_t bus, std::optional<float> db) {
+    Slot* s = find(id);
+    if (s == nullptr || bus >= kRigBuses) return false;
+    s->saved.sendDb[bus] = db;
+    if (s->runtime) applySends(*s);
+    dirty = true;
+    return true;
+}
+
+void Session::applySends(const Slot& slot) {
+    for (std::size_t b = 0; b < kRigBuses; ++b) {
+        const std::optional<float>& db = slot.saved.sendDb[b];
+        slot.runtime->targetSend[b].store(db ? dbToGain(*db) : 0.0f, std::memory_order_relaxed);
+    }
+}
+
+// --- the rig (docs/rig.md) -------------------------------------------------------------
+
+std::shared_ptr<HostedPlugin> Session::createEffect(const RigEffect& effect, double rate, std::string& problem) {
+    std::vector<PluginDescriptor> scanned;
+    bool                          haveScan = false;
+    std::shared_ptr<HostedPlugin> plugin   = createPlugin(effect.plugin, problem, scanned, haveScan);
+    if (!plugin) return nullptr;
+    if (!effect.state.empty() && !plugin->loadState(effect.state.data(), effect.state.size()))
+        problem = "it rejected its saved state; it starts from its defaults";   // still usable
+    if (!plugin->activate(rate, kMaxPluginBlockFrames)) {
+        problem = "plugin '" + effect.plugin.id + "' failed to activate";
+        return nullptr;
+    }
+    return plugin;
+}
+
+void Session::loadRig(const Rig& rig, double rate, LoadReport& report) {
+    LoadedRig next;
+    next.saved = rig;
+    for (std::size_t b = 0; b < kRigBuses; ++b) {
+        for (std::size_t e = 0; e < RigBus::kEffects; ++e) {
+            const std::optional<RigEffect>& effect = rig.buses[b].effects[e];
+            if (!effect) continue;
+            std::string problem;
+            next.effects[b][e].plugin = createEffect(*effect, rate, problem);
+            if (!problem.empty()) {
+                next.effects[b][e].problem = problem;
+                report.warnings.push_back(std::string("rig bus ") + static_cast<char>('A' + b) + ", effect " +
+                                          std::to_string(e + 1) + ": " + problem +
+                                          (next.effects[b][e].plugin ? "" : "; its slot passes audio on"));
+            }
+        }
+        next.returns[b] = std::make_shared<SlotRuntime>(0.0f);
+    }
+    rigState  = std::move(next);   // the old effects live on in the old graph until it's collected
+    rigLoaded = true;
+    rigRate   = rate;
+    rigDirty  = false;
+    for (std::size_t b = 0; b < kRigBuses; ++b) applyReturn(b);
+    engine.setMasterGain(dbToGain(rigState.saved.masterDb));
+    commitGraph();
+}
+
+Rig Session::captureRig() const {
+    Rig rig = rigState.saved;
+    for (std::size_t b = 0; b < kRigBuses; ++b)
+        for (std::size_t e = 0; e < RigBus::kEffects; ++e)
+            if (const auto& plugin = rigState.effects[b][e].plugin; plugin && rig.buses[b].effects[e]) {
+                std::vector<std::byte> state;
+                if (plugin->saveState(state)) rig.buses[b].effects[e]->state = std::move(state);
+            }
+    return rig;
+}
+
+void Session::applyReturn(std::size_t bus) {
+    const RigBus& b = rigState.saved.buses[bus];
+    if (rigState.returns[bus])
+        rigState.returns[bus]->targetGain.store(b.muted ? 0.0f : dbToGain(b.returnDb), std::memory_order_relaxed);
+}
+
+bool Session::setReturnDb(std::size_t bus, float db) {
+    if (!rigLoaded || bus >= kRigBuses) return false;
+    rigState.saved.buses[bus].returnDb = db;
+    applyReturn(bus);
+    rigDirty = true;
+    return true;
+}
+
+bool Session::setBusMuted(std::size_t bus, bool muted) {
+    if (!rigLoaded || bus >= kRigBuses) return false;
+    rigState.saved.buses[bus].muted = muted;
+    applyReturn(bus);
+    rigDirty = true;
+    return true;
+}
+
+void Session::setMasterDb(float db) {
+    rigState.saved.masterDb = db;
+    engine.setMasterGain(dbToGain(db));
+    rigDirty = true;
+}
+
+bool Session::setBusEffect(std::size_t bus, std::size_t slot, const PluginDescriptor* plugin, std::string& problem) {
+    if (!rigLoaded || bus >= kRigBuses || slot >= RigBus::kEffects) return false;
+    LoadedRig::Effect        loaded;
+    std::optional<RigEffect> saved;
+    if (plugin != nullptr) {
+        RigEffect effect;
+        effect.plugin = *plugin;
+        loaded.plugin = createEffect(effect, rigRate > 0.0 ? rigRate : sampleRate, problem);
+        if (!loaded.plugin) return false;
+        problem.clear();
+        saved = std::move(effect);
+    }
+    rigState.effects[bus][slot]             = std::move(loaded);   // the old one lives on until its graph is collected
+    rigState.saved.buses[bus].effects[slot] = std::move(saved);
+    graphDirty = rigDirty = true;
+    return true;
+}
+
+bool Session::setBusOutput(std::size_t bus, std::uint32_t firstOutput) {
+    if (!rigLoaded || bus >= kRigBuses) return false;
+    rigState.saved.buses[bus].firstOutput = firstOutput;
+    graphDirty = rigDirty = true;
+    return true;
+}
+
 void Session::setTempo(double bpm) {
     tempo = std::clamp(bpm, Engine::kMinTempo, Engine::kMaxTempo);
     engine.setTempo(tempo);
@@ -230,6 +354,7 @@ std::string Session::addSlot(const PluginDescriptor& plugin, std::size_t index, 
     for (int n = 2; find(slot.saved.id) != nullptr; ++n) slot.saved.id = base + "-" + std::to_string(n);
     slot.plugin  = std::move(created);
     slot.runtime = std::make_shared<SlotRuntime>(targetGainOf(slot.saved), slot.saved.muted);
+    applySends(slot);
     resolveSource(slot);   // "all": nothing to open
 
     const std::string id = slot.saved.id;
@@ -449,7 +574,16 @@ void Session::commitGraph() {
         config.firstOutput           = slot.saved.firstOutput;
         configs.push_back(std::move(config));
     }
-    engine.commit(std::make_unique<EngineGraph>(std::move(configs)));
+    std::vector<BusConfig> buses;
+    if (rigLoaded)
+        for (std::size_t b = 0; b < kRigBuses; ++b) {
+            BusConfig bus;
+            for (std::size_t e = 0; e < RigBus::kEffects; ++e) bus.effects[e] = rigState.effects[b][e].plugin;
+            bus.runtime     = rigState.returns[b];
+            bus.firstOutput = rigState.saved.buses[b].firstOutput;
+            buses.push_back(std::move(bus));
+        }
+    engine.commit(std::make_unique<EngineGraph>(std::move(configs), std::move(buses)));
     graphDirty = false;
 }
 
@@ -464,20 +598,20 @@ void Session::resolveSource(Slot& slot) {
         slot.source = resolve(slot.saved.source, slot.sourceProblem);
 }
 
-std::shared_ptr<HostedPlugin> Session::createPlugin(const RackSlot& saved, std::string& problem,
+std::shared_ptr<HostedPlugin> Session::createPlugin(const PluginDescriptor& wanted, std::string& problem,
                                                     std::vector<PluginDescriptor>& scanned, bool& haveScan) {
-    if (!saved.plugin.path.empty())
-        if (std::unique_ptr<HostedPlugin> plugin = factory.create(saved.plugin, host)) return plugin;
+    if (!wanted.path.empty())
+        if (std::unique_ptr<HostedPlugin> plugin = factory.create(wanted, host)) return plugin;
 
     if (!haveScan) {
         scanned  = factory.scan();
         haveScan = true;
     }
     for (const PluginDescriptor& found : scanned)
-        if (found.format == saved.plugin.format && found.id == saved.plugin.id)
+        if (found.format == wanted.format && found.id == wanted.id)
             if (std::unique_ptr<HostedPlugin> plugin = factory.create(found, host)) return plugin;
 
-    problem = "plugin '" + saved.plugin.id + "' isn't installed or failed to load";
+    problem = "plugin '" + wanted.id + "' isn't installed or failed to load";
     return nullptr;
 }
 

@@ -12,81 +12,25 @@
 #include <utility>
 
 #include "Core/Ump.h"
+#include "Session/BundleFiles.h"
 
 namespace stagehand {
 
 namespace fs = std::filesystem;
 using Json   = nlohmann::ordered_json;   // keeps fields in the order written
 
+using namespace bundle;
+
 namespace {
 
 constexpr int         kFormatVersion = 2;   // 2: sequences' "targets", "none" source
 constexpr const char* kFormatName    = "stagehand-rack";
-
-[[noreturn]] void fail(const std::string& message) {
-    throw std::runtime_error(message);
-}
 
 bool validSlotId(const std::string& id) {
     if (id.empty()) return false;
     for (const char c : id)
         if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '_')) return false;
     return true;
-}
-
-std::string homeDir() {
-    const char* home = std::getenv("HOME");
-    return home != nullptr ? home : "";
-}
-
-std::string expandHome(const std::string& path) {
-    if (path == "~" || path.rfind("~/", 0) == 0) return homeDir() + path.substr(1);
-    return path;
-}
-
-std::string abbreviateHome(const std::string& path) {
-    const std::string home = homeDir();
-    if (!home.empty() && path.rfind(home + "/", 0) == 0) return "~" + path.substr(home.size());
-    return path;
-}
-
-fs::path bundleDirectory(const std::string& bundlePath) {
-    fs::path bundle = fs::path(expandHome(bundlePath)).lexically_normal();
-    if (!bundle.has_filename()) bundle = bundle.parent_path();   // "X.rack/" -> "X.rack"
-    return bundle;
-}
-
-bool readBytes(const fs::path& path, std::vector<std::byte>& out) {
-    std::ifstream in(path, std::ios::binary);
-    if (!in) return false;
-    in.seekg(0, std::ios::end);
-    const std::streamoff size = in.tellg();
-    in.seekg(0, std::ios::beg);
-    out.resize(static_cast<std::size_t>(size));
-    in.read(reinterpret_cast<char*>(out.data()), size);
-    return static_cast<bool>(in);
-}
-
-bool writeBytes(const fs::path& path, const std::vector<std::byte>& data) {
-    std::ofstream out(path, std::ios::binary | std::ios::trunc);
-    out.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size()));
-    return static_cast<bool>(out);
-}
-
-PluginFormat parseFormat(const std::string& text) {
-    if (text == "clap") return PluginFormat::Clap;
-    if (text == "vst3") return PluginFormat::Vst3;
-    if (text == "auv2") return PluginFormat::Auv2;
-    fail("unknown plugin format '" + text + "' (expected \"clap\")");
-}
-
-const char* formatName(PluginFormat format) {
-    switch (format) {
-        case PluginFormat::Clap: return "clap";
-        case PluginFormat::Vst3: return "vst3";
-        case PluginFormat::Auv2: return "auv2";
-    }
-    return "clap";
 }
 
 MidiSourceRef parseSource(const std::string& text) {
@@ -376,6 +320,12 @@ RackSlot parseSlot(const Json& s, const fs::path& bundle, std::vector<std::strin
     // "enabled": false (written until 2026-10-01) means muted now.
     slot.muted   = s.value("muted", false) || !s.value("enabled", true);
     slot.gainDb  = s.value("gainDb", 0.0f);
+    if (s.contains("sends")) {
+        const Json& sends = s.at("sends");
+        if (!sends.is_array() || sends.size() > kRigBuses) fail("sends must be a list of up to 2 levels (dB or null)");
+        for (std::size_t b = 0; b < sends.size(); ++b)
+            if (!sends[b].is_null()) slot.sendDb[b] = sends[b].get<float>();
+    }
     const int output = s.value("output", 1);
     if (output < 1) fail("output must be 1 or more");
     slot.firstOutput = static_cast<std::uint32_t>(output - 1);
@@ -417,6 +367,11 @@ Json slotJson(const RackSlot& slot, bool hasState) {
     if (hasState) s["state"] = "state/" + slot.id + ".bin";
     s["muted"]   = slot.muted;
     s["gainDb"]  = slot.gainDb;
+    if (slot.sendDb[0] || slot.sendDb[1]) {
+        Json sends = Json::array();
+        for (const std::optional<float>& db : slot.sendDb) sends.push_back(db ? Json(*db) : Json(nullptr));
+        s["sends"] = sends;
+    }
     s["output"]  = slot.firstOutput + 1;
 
     Json midi;
@@ -537,7 +492,6 @@ RackFileResult saveRack(const std::string& bundlePath, const Rack& rack) {
     RackFileResult result;
     const fs::path bundle = bundleDirectory(bundlePath);
     const fs::path temp   = bundle.string() + ".tmp";
-    const fs::path old    = bundle.string() + ".old";
     std::error_code ec;
     try {
         fs::remove_all(temp);
@@ -577,12 +531,7 @@ RackFileResult saveRack(const std::string& bundlePath, const Rack& rack) {
             if (!out) fail("cannot write " + (temp / "rack.json").string());
         }
 
-        // Swap in: until the last rename, the old rack is untouched (or, briefly,
-        // renamed to X.rack.old); a crash never leaves a half-written X.rack.
-        fs::remove_all(old);
-        if (fs::exists(bundle)) fs::rename(bundle, old);
-        fs::rename(temp, bundle);
-        fs::remove_all(old);
+        swapInBundle(temp, bundle);   // a crash never leaves a half-written X.rack
     } catch (const std::exception& e) {
         result.error = e.what();
         fs::remove_all(temp, ec);

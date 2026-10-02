@@ -90,11 +90,38 @@ main outputs (dry + returns) ─ master level ─▶ the backend
 ## The rig on disk
 
 A bundle like a rack: `<name>.rig/` with `rig.json` and `state/` for the
-effects' saved state. A setlist refers to its rig by path, relative to the
-setlist like its racks. The default rig's path is an app setting
-(`$XDG_STATE_HOME/stagehand/`, with the last position), created empty on
-first use. A rack's slots gain `"sends": [dbA, dbB]` (off when absent), an
-additive change to the rack format.
+effects' saved state (`state/A1.bin` is bus A's first effect).
+
+```json
+{
+  "format": "stagehand-rig", "version": 1,
+  "name": "Stage",
+  "masterDb": 0.0,
+  "buses": [
+    { "name": "A", "returnDb": 0.0, "muted": false, "output": 1,
+      "effects": [ { "format": "clap", "id": "michaelwillis.dragonfly.hall",
+                     "path": "/usr/lib/clap/DragonflyHallReverb.clap",
+                     "state": "state/A1.bin" }, null ] },
+    { "name": "B", "returnDb": 0.0, "muted": false, "output": 1,
+      "effects": [ null, null ] }
+  ]
+}
+```
+
+- **Effects** are like a rack slot's plugin: format and id identify it, the
+  path is a hint, and `state` is optional (absent: the plugin's defaults). An
+  effect that won't load keeps its slot, saved back unchanged, and the slot
+  passes audio on.
+- **A setlist names its rig** with `"rig"`, relative to the setlist like its
+  racks. No `"rig"`: the default rig.
+- **The default rig** is `$XDG_DATA_HOME/stagehand/Default.rig` (default
+  `~/.local/share/stagehand/Default.rig`), created empty on first use. A rack
+  on its own uses it.
+- **Sends:** a rack's slots gain `"sends": [dbA, dbB]`, `null` for off (absent:
+  both off). An additive change to the rack format (rack-format.md).
+- **Saving:** Ctrl-S saves the rig with the rack when it has changes; so do
+  quitting and switching rigs (opening or leaving a setlist with another rig),
+  unless saving is off (`--no-save-rack`).
 
 ## UI (proposed)
 
@@ -130,8 +157,17 @@ two ramped send levels (`targetSend`), with the ramps factored into
 slots and buffers built ahead (`BusState`); `Engine::runBuses()` and
 `Engine::setMasterGain()`. A graph swap now stops bus effects that leave the
 rig, as it stops slots. Tests: `testBuses` in `tests/EngineTests.cpp`, with a
-`FakeEffect`. Nothing uses buses yet: that's milestone 2 (the rig file and
-Session) and 3 (UI).
+`FakeEffect`. 
+
+**Milestone 2 done (2026-10-02):** `Session/Rig.h` and `Session/RigFile.cpp`
+(the bundle above; shared file helpers moved to `Session/BundleFiles.h`),
+sends in the rack file, `Session` owning the rig (`loadRig`, `captureRig`,
+`setSendDb`, `setReturnDb`, `setBusMuted`, `setMasterDb`, `setBusEffect`,
+`setBusOutput`; the rig's effects outlive rack loads), a setlist's `"rig"`,
+and `RackController` using the default rig or the setlist's and saving it
+with Ctrl-S. Tests: `tests/RigFileTests.cpp`, `testRig` (Session), `testRigs`
+(controller), sends in the rack and setlist file tests. No UI yet
+(milestone 3): to try it, edit `rig.json` and a rack's `"sends"` by hand.
 
 ## Open questions
 

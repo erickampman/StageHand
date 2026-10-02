@@ -433,6 +433,91 @@ void testAddRemove() {
 
 } // namespace
 
+// The rig (docs/rig.md): its effects outlive rack loads (same instances, never
+// stopped), an effect that won't load is kept for saving, sends come from the
+// rack, and the rig's edits mark the rig modified, not the rack.
+void testRig() {
+    FakeFactory factory;
+    factory.installed = {installedPlugin("synth", "/clap/Synth.clap"), installedPlugin("verb", "/clap/Verb.clap")};
+    FakeMidiInput midi;
+    NullHost      host;
+    auto          engine = std::make_unique<Engine>();
+    Session       session(factory, host, midi, *engine);
+
+    Rack     rack;
+    RackSlot a = slot("a", "synth", "/clap/Synth.clap");
+    a.sendDb[0] = -6.0f;
+    rack.slots  = {a};
+    Session::LoadReport report;
+    CHECK(session.load(rack, 48000.0, report));
+    CHECK(!session.hasRig());
+
+    Rig       rig;
+    RigEffect verb;
+    verb.plugin = installedPlugin("verb", "/clap/Verb.clap");
+    verb.state  = bytes("verb-state");
+    rig.buses[0].effects[0] = verb;
+    RigEffect gone;
+    gone.plugin             = installedPlugin("not.installed", "/clap/Gone.clap");
+    gone.state              = bytes("keep-me");
+    rig.buses[1].effects[1] = gone;
+    rig.buses[1].returnDb   = -6.0f;
+    session.loadRig(rig, 48000.0, report);
+    CHECK(session.hasRig() && !session.rigModified() && report.warnings.size() == 1);
+    auto* fx = dynamic_cast<FakePlugin*>(session.rig().effects[0][0].plugin.get());
+    CHECK(fx != nullptr && fx->active && fx->state == bytes("verb-state"));
+    CHECK(!session.rig().effects[1][1].plugin && !session.rig().effects[1][1].problem.empty());
+    CHECK(std::fabs(session.rig().returns[1]->targetGain.load() - 0.501f) < 0.001f);
+    if (fx == nullptr) return;
+    runBlock(*engine);
+    CHECK(!fx->calls.empty());   // it runs, in the graph
+
+    // Sends from the rack.
+    CHECK(std::fabs(session.slot("a")->runtime->targetSend[0].load() - 0.501f) < 0.001f);
+    CHECK(session.slot("a")->runtime->targetSend[1].load() == 0.0f);
+    session.markSaved();
+    CHECK(session.setSendDb("a", 1, -20.0f) && session.modified() && !session.rigModified());
+    CHECK(std::fabs(session.slot("a")->runtime->targetSend[1].load() - 0.1f) < 0.001f);
+    CHECK(session.setSendDb("a", 1, std::nullopt) && session.slot("a")->runtime->targetSend[1].load() == 0.0f);
+
+    // A rack load keeps the rig: the same effect, never stopped.
+    Rack other;
+    other.slots = {slot("b", "synth", "/clap/Synth.clap")};
+    CHECK(session.load(other, 48000.0, report));
+    runBlock(*engine);
+    engine->collect();
+    CHECK(session.rig().effects[0][0].plugin.get() == fx && fx->stops == 0);
+
+    // Rig edits: live ones mark the rig modified; structural ones wait for flush().
+    CHECK(session.setBusMuted(1, true) && session.rigModified() && session.rig().returns[1]->targetGain.load() == 0.0f);
+    session.markRigSaved();
+    session.setMasterDb(-3.0f);
+    CHECK(session.rigModified() && session.rig().saved.masterDb == -3.0f);
+    std::string problem;
+    const PluginDescriptor missing = installedPlugin("nothing", "/clap/Nothing.clap");
+    CHECK(!session.setBusEffect(0, 1, &missing, problem) && !problem.empty());
+    const PluginDescriptor synth = installedPlugin("synth", "/clap/Synth.clap");
+    CHECK(session.setBusEffect(0, 1, &synth, problem) && session.flushPending());
+    session.flush();
+    runBlock(*engine);
+    CHECK(session.setBusEffect(0, 0, nullptr, problem));   // emptied: verb leaves the rig
+    session.flush();
+    runBlock(*engine);
+    engine->collect();
+    CHECK(fx->stops == 1);
+
+    // capture: fresh states; the effect that didn't load kept as it was.
+    const Rig captured = session.captureRig();
+    CHECK(!captured.buses[0].effects[0] && captured.buses[0].effects[1] &&
+          captured.buses[0].effects[1]->plugin.id == "synth");
+    CHECK(captured.buses[1].effects[1] && captured.buses[1].effects[1]->state == bytes("keep-me"));
+    CHECK(captured.buses[1].muted && captured.masterDb == -3.0f && captured.buses[1].returnDb == -6.0f);
+
+    session.unload();
+    runBlock(*engine);
+    engine->collect();
+}
+
 int main() {
     testLoad();
     testNoFallbackToAll();
@@ -442,5 +527,6 @@ int main() {
     testTransport();
     testSequences();
     testSequenceTriggers();
+    testRig();
     return test::finish("Session");
 }

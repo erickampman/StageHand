@@ -33,6 +33,7 @@ struct SwitchSettings {
 struct Setlist {
     std::vector<SetlistSong> songs;
     SwitchSettings           switching;
+    std::string              rig;   // its rig bundle (docs/rig.md), absolute; "" = the default rig
 
     bool operator==(const Setlist&) const = default;
 };

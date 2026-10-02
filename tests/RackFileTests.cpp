@@ -86,6 +86,7 @@ Rack sampleRack() {
     bass.plugin.path         = "/opt/clap/Synth.clap";
     bass.state               = bytes(std::string("\x00\x01binary\xff", 9));
     bass.gainDb              = -3.5f;
+    bass.sendDb[1]           = -12.0f;   // A off, B at -12 dB
     bass.firstOutput         = 2;
     bass.notePort            = 1;
     bass.source.kind         = MidiSourceRef::Kind::Device;
@@ -155,6 +156,7 @@ void testRoundTrip(const fs::path& dir) {
     CHECK(b.plugin.path == "/opt/clap/Synth.clap");
     CHECK(b.state == saved.slots[0].state);                 // opaque bytes, exactly
     CHECK(!b.muted && b.gainDb == -3.5f && b.firstOutput == 2 && b.notePort == 1);
+    CHECK(!b.sendDb[0] && b.sendDb[1] && *b.sendDb[1] == -12.0f);
     CHECK(b.source.kind == MidiSourceRef::Kind::Device && b.source.name == "KeyLab 88:KeyLab 88 MIDI 1");
     CHECK(b.filter.channelMask == 0x0003 && b.filter.groupMask == 0xFFFF);
     CHECK(b.filter.noteLow == 0 && b.filter.noteHigh == 59);

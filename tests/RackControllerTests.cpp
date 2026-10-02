@@ -15,6 +15,7 @@
 #include "FakePlugin.h"
 #include "SessionFakes.h"
 #include "Session/RackFile.h"
+#include "Session/RigFile.h"
 #include "Session/SetlistFile.h"
 
 using namespace stagehand;
@@ -865,6 +866,63 @@ void testSetlist() {
     fs::remove_all(dir);
 }
 
+// Rigs (docs/rig.md): the default one created on first use, a setlist's own
+// used while it's open (and the default after), and Ctrl-S saving the rig
+// with the rack. Switching rigs saves the one in use if it has changes.
+// (`Rig` here is the test harness; the rig model is stagehand::Rig.)
+void testRigs() {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / "stagehand-rigs-test";
+    fs::remove_all(dir);
+    Rack song;
+    song.name  = "Song";
+    song.slots = {slot("keys", "synth", "/clap/Synth.clap")};
+    const std::string songPath = (dir / "Song.rack").string();
+    CHECK(saveRack(songPath, song).ok);
+    stagehand::Rig stage;
+    stage.buses[0].returnDb     = -3.0f;
+    const std::string stagePath = (dir / "Stage.rig").string();
+    CHECK(saveRig(stagePath, stage).ok);
+    Setlist set;
+    set.songs = {SetlistSong{songPath, ""}};
+    set.rig   = stagePath;
+    const std::string setPath = (dir / "Gig.setlist").string();
+    CHECK(saveSetlist(setPath, set).ok);
+
+    Rig                 rig;
+    Session::LoadReport report;
+    Rack                untitled;
+    untitled.name = "Untitled";
+    rig.session->load(untitled, 48000.0, report);
+    RackController::Config config = rig.config();
+    config.defaultRigPath         = (dir / "data" / "Default.rig").string();
+    RackController controller(*rig.session, *rig.engine, rig.midi, rig.factory, config);
+
+    // Started on its own: the default rig, created empty where the app keeps it.
+    CHECK(controller.rigPath() == config.defaultRigPath && rig.session->hasRig());
+    CHECK(!rigBundleOf(config.defaultRigPath).empty());
+
+    // A setlist's own rig while it's open.
+    CHECK(controller.openSetlist(setPath));
+    CHECK(controller.rigPath() == stagePath && rig.session->rig().saved.buses[0].returnDb == -3.0f);
+
+    // Ctrl-S saves the rig with the rack.
+    CHECK(rig.session->setReturnDb(0, -10.0f) && rig.session->rigModified());
+    CHECK(controller.save() && !rig.session->rigModified());
+    stagehand::Rig onDisk;
+    CHECK(loadRig(stagePath, onDisk).ok && onDisk.buses[0].returnDb == -10.0f);
+
+    // Leaving the set: the default rig again, the setlist's saved first.
+    CHECK(rig.session->setReturnDb(0, -12.0f));
+    controller.closeSetlist();
+    CHECK(controller.rigPath() == config.defaultRigPath && rig.session->rig().saved.buses[0].returnDb == 0.0f);
+    CHECK(loadRig(stagePath, onDisk).ok && onDisk.buses[0].returnDb == -12.0f);
+
+    runBlock(*rig.engine);
+    rig.engine->collect();
+    fs::remove_all(dir);
+}
+
 } // namespace
 
 int main() {
@@ -882,5 +940,6 @@ int main() {
     testClickRouting();
     testRenameSequence();
     testSetlist();
+    testRigs();
     return test::finish("RackController");
 }

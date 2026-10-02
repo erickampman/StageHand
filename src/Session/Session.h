@@ -1,9 +1,11 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -13,6 +15,7 @@
 #include "Plugin/HostServices.h"
 #include "Plugin/PluginFactory.h"
 #include "Session/Rack.h"
+#include "Session/Rig.h"
 
 namespace stagehand {
 
@@ -86,6 +89,42 @@ public:
     // No graph commit, no allocation.
     bool setGainDb(const std::string& id, float db);
     bool setMuted(const std::string& id, bool muted);
+    // A row's send to rig bus `bus` (docs/rig.md), after its fader; none = off.
+    bool setSendDb(const std::string& id, std::size_t bus, std::optional<float> db);
+
+    // --- the rig (docs/rig.md): what every song shares. It outlives load():
+    // a rack load keeps the rig's effects running, so their tails ring on.
+    // Its edits mark rigModified(), not modified(); without a rig loaded, the
+    // graph has no buses and sends go nowhere.
+    struct LoadedRig {
+        Rig saved;   // settings as edited; effect state as of load
+        struct Effect {
+            std::shared_ptr<HostedPlugin> plugin;    // null: an empty slot, or one that didn't load
+            std::string                   problem;   // why it didn't load, if it didn't
+        };
+        std::array<std::array<Effect, RigBus::kEffects>, kRigBuses> effects;
+        std::array<std::shared_ptr<SlotRuntime>, kRigBuses>         returns;   // return level, meter
+    };
+    // Replace the rig: its effects are created, restored and activated at
+    // `sampleRate`, and the graph is committed with them. An effect that can't
+    // load leaves its slot empty but kept (saved back unchanged), with a
+    // warning. Clears rigModified().
+    void              loadRig(const Rig& rig, double sampleRate, LoadReport& report);
+    bool              hasRig() const noexcept { return rigLoaded; }
+    const LoadedRig&  rig() const noexcept { return rigState; }
+    Rig               captureRig() const;   // as edited, each effect's state freshly saved
+    bool              rigModified() const noexcept { return rigDirty; }
+    void              markRigModified() noexcept { rigDirty = true; }
+    void              markRigSaved() noexcept { rigDirty = false; }
+    // Live (ramped; no commit).
+    bool              setReturnDb(std::size_t bus, float db);
+    bool              setBusMuted(std::size_t bus, bool muted);
+    void              setMasterDb(float db);
+    // Structural (at the next flush()): `plugin` null empties the slot. False,
+    // with `problem` set, if the plugin can't be created; the slot is unchanged.
+    bool              setBusEffect(std::size_t bus, std::size_t slot, const PluginDescriptor* plugin,
+                                   std::string& problem);
+    bool              setBusOutput(std::size_t bus, std::uint32_t firstOutput);
 
     // The rack's transport: applied to the engine at once (it's read per block)
     // and saved with the rack. setTempo clamps; setTimeSignature returns false
@@ -188,8 +227,12 @@ public:
 private:
     Slot* find(const std::string& id) noexcept;
     // The saved path first (a hint), then a scan (done at most once per load).
-    std::shared_ptr<HostedPlugin> createPlugin(const RackSlot& saved, std::string& problem,
+    std::shared_ptr<HostedPlugin> createPlugin(const PluginDescriptor& wanted, std::string& problem,
                                                std::vector<PluginDescriptor>& scanned, bool& haveScan);
+    // Created, restored and activated at `rate`; null, with `problem`, if not.
+    std::shared_ptr<HostedPlugin> createEffect(const RigEffect& effect, double rate, std::string& problem);
+    void             applySends(const Slot& slot);
+    void             applyReturn(std::size_t bus);
     // An open input's handle, opening a named device if needed; invalid (with
     // `problem` set) if it can't be found.
     MidiSourceHandle resolve(const MidiSourceRef& ref, std::string& problem);
@@ -228,6 +271,10 @@ private:
     MidiSourceHandle                        startOnNoteHandle = kInvalidMidiSource;
     std::string                             startOnNoteProblem;
     bool                                    dirty      = false;
+    bool                                    rigLoaded  = false;
+    bool                                    rigDirty   = false;
+    double                                  rigRate    = 0.0;   // the rig's effects' sample rate
+    LoadedRig                               rigState;
 };
 
 } // namespace stagehand

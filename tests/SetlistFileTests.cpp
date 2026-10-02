@@ -51,6 +51,7 @@ void testRoundTrip(const fs::path& dir) {
                  {(dir / "Racks/So what.rack").string(), "So what (fast)"},
                  {(dir / "Racks/Autumn leaves.rack").string(), ""}};   // a reprise
     set.switching.when = SwitchSettings::When::NextBar;
+    set.rig            = (dir / "Stage.rig").string();
     const fs::path file = sets / "Friday.setlist";
     CHECK(saveSetlist(file.string(), set).ok);
     CHECK(!fs::exists(file.string() + ".tmp"));
@@ -59,6 +60,7 @@ void testRoundTrip(const fs::path& dir) {
     const std::string text = readText(file);
     CHECK(text.find("\"../Racks/So what.rack\"") != std::string::npos);
     CHECK(text.find("\"nextBar\"") != std::string::npos && text.find("\"ringOut\"") != std::string::npos);
+    CHECK(text.find("\"rig\": \"../Stage.rig\"") != std::string::npos);   // relative, like the racks
 
     Setlist loaded;
     const RackFileResult result = loadSetlist(file.string(), loaded);
