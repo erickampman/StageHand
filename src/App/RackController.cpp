@@ -15,8 +15,9 @@ namespace stagehand {
 
 namespace {
 
-// learningId while learning the transport's trigger: no sequence id can look like it.
+// learningId while learning the transport's or the setlist's trigger: no sequence id can look like these.
 const std::string kTransportLearn = "\x01transport";
+const std::string kSetlistLearn   = "\x01setlist";
 
 SourceProtocol toSourceProtocol(MidiProtocol p) {
     return p == MidiProtocol::Midi2 ? SourceProtocol::Midi2 : SourceProtocol::Midi1;
@@ -96,6 +97,7 @@ void RackController::tick(double now) {
     ticking = true;
     if (Engine::Learned learned; !learningId.empty() && engine.takeLearned(learned)) finishLearn(learned);
     refreshSongs(now);
+    takeSetlistRequests();
     prepareAhead();   // before flush(): a switch commits the new rack's graph, and nothing else is pending
     session.flush();
 
@@ -817,13 +819,34 @@ void RackController::removeTrigger(const std::string& id, std::size_t index) {
 void RackController::finishLearn(const Engine::Learned& learned) {
     const std::string id        = std::exchange(learningId, {});
     const bool        transport = id == kTransportLearn;
-    const Session::SequenceEntry* entry = transport ? nullptr : session.sequence(id);
-    if (!transport && entry == nullptr) return;   // removed meanwhile
-    const std::string who = transport ? std::string("Transport") : entry->sequence.name;
+    const bool        forSet    = id == kSetlistLearn;
+    const Session::SequenceEntry* entry = transport || forSet ? nullptr : session.sequence(id);
+    if (forSet ? !setlistOpen : !transport && entry == nullptr) return;   // closed or removed meanwhile
+    const std::string who = forSet ? std::string("Setlist") : transport ? std::string("Transport") : entry->sequence.name;
     const auto input = std::find_if(session.openInputs().begin(), session.openInputs().end(),
                                     [&](const Session::OpenInput& in) { return in.handle == learned.source; });
     if (input == session.openInputs().end()) {
         notice(who + ": couldn't tell which input that came from; try again");
+        return;
+    }
+    if (forSet) {
+        SetlistTrigger t;
+        t.action  = setlistLearnAction;
+        t.source  = input->ref;
+        t.control = ump::isNoteOn(learned.message) ? SequenceTrigger::Control::Note : SequenceTrigger::Control::Controller;
+        t.group   = ump::group(learned.message);
+        t.channel = ump::channel(learned.message);
+        if (t.action != SetlistTrigger::Action::Song)
+            t.number = static_cast<std::uint8_t>((learned.message.words[0] >> 8) & 0x7F);   // note or controller
+        std::erase_if(setlist.triggers, [&t](const SetlistTrigger& old) { return old.action == t.action || old.sameControl(t); });
+        setlist.triggers.push_back(t);
+        writeSetlist();
+        applySetlistTriggers();
+        notice(who + ": " + setlistTriggerText(t));
+        std::vector<const Sequence*> sequences;
+        for (const Session::SequenceEntry& e : session.sequences()) sequences.push_back(&e.sequence);
+        for (const std::string& warning : triggerConflicts(session.rackName(), session.transportSettings(), sequences))
+            notice(warning);
         return;
     }
     SequenceTrigger t;
@@ -845,6 +868,22 @@ void RackController::finishLearn(const Engine::Learned& learned) {
         editSequence(id, [&replace](Sequence& seq) { replace(seq.triggers); });
     }
     notice(who + ": " + triggerText(t));
+}
+
+std::string RackController::setlistTriggerText(const SetlistTrigger& t) const {
+    if (t.action == SetlistTrigger::Action::Song) {
+        std::string text = "Program Change: " + sourceLabel(t.source) + ", ch " + std::to_string(t.channel + 1);
+        if (t.group != 0) text += " g" + std::to_string(t.group + 1);
+        return text + " (program n: song n)";
+    }
+    SequenceTrigger as;   // the same words as a sequence's, after the action
+    as.source  = t.source;
+    as.control = t.control;
+    as.group   = t.group;
+    as.channel = t.channel;
+    as.number  = t.number;
+    const std::string text = triggerText(as);
+    return (t.action == SetlistTrigger::Action::Next ? "Next: " : "Previous: ") + text.substr(text.find(": ") + 2);
 }
 
 std::string RackController::triggerText(const SequenceTrigger& t) const {
@@ -1084,6 +1123,7 @@ RackController::NewSetlistResult RackController::newSetlist(const std::string& c
     unpreparable.clear();
     waitingSong.reset();
     useRig(setlist.rig);   // a new setlist names no rig: the default
+    applySetlistTriggers();
     song        = 0;
     onSong      = withThisRack;
     rememberPosition();
@@ -1107,6 +1147,7 @@ bool RackController::openSetlist(const std::string& chosen, std::size_t start) {
     unpreparable.clear();
     waitingSong.reset();
     useRig(setlist.rig);   // its own, else the default
+    applySetlistTriggers();
     song        = std::min(start, setlist.songs.size());
     onSong      = false;
     if (setlist.songs.empty()) {
@@ -1138,6 +1179,8 @@ void RackController::closeSetlist() {
     unpreparable.clear();
     waitingSong.reset();
     preparingText.clear();
+    if (learningId == kSetlistLearn) cancelLearn();
+    applySetlistTriggers();   // none any more
     rememberPosition();
 }
 
@@ -1201,7 +1244,11 @@ bool RackController::startPreparing(const std::string& bundle, bool report) {
         return false;
     }
     unpreparable.erase(bundle);
-    prepared[bundle] = Ahead{session.prepare(rack, session.loadedSampleRate()), result.warnings};
+    std::vector<std::string>     warnings = result.warnings;   // shown at the switch
+    std::vector<const Sequence*> sequences;
+    for (const Sequence& seq : rack.sequences) sequences.push_back(&seq);
+    for (std::string& warning : triggerConflicts(rack.name, rack.transport, sequences)) warnings.push_back(std::move(warning));
+    prepared[bundle] = Ahead{session.prepare(rack, session.loadedSampleRate()), std::move(warnings)};
     return true;
 }
 
@@ -1256,16 +1303,86 @@ void RackController::prepareAhead() {
     }
 }
 
+// From the song a switch waits for, if one does: pressing Next while it's
+// prepared goes on from there.
 bool RackController::nextSong() {
     if (!setlistOpen) return false;
-    const int to = nextPlayable(onSong ? song + 1 : song, 1);
+    const int to = stepFrom(waitingSong.value_or(song), waitingSong || onSong, 1);
     return to >= 0 && goToSong(static_cast<std::size_t>(to));
 }
 
 bool RackController::previousSong() {
-    if (!setlistOpen || song == 0) return false;
-    const int to = nextPlayable(song - 1, -1);
+    if (!setlistOpen) return false;
+    const int to = stepFrom(waitingSong.value_or(song), waitingSong || onSong, -1);
     return to >= 0 && goToSong(static_cast<std::size_t>(to));
+}
+
+int RackController::stepFrom(std::size_t from, bool atSong, int step) const {
+    if (step > 0) return nextPlayable(atSong ? from + 1 : from, 1);
+    return from == 0 ? -1 : nextPlayable(from - 1, -1);
+}
+
+void RackController::takeSetlistRequests() {
+    Engine::SetlistRequest     request;
+    std::optional<std::size_t> to;
+    while (engine.takeSetlistRequest(request)) {
+        if (!setlistOpen) continue;
+        const std::size_t from   = to ? *to : waitingSong.value_or(song);
+        const bool        atSong = to || waitingSong || onSong;
+        int               found  = -1;
+        switch (request.action) {
+            case SetlistTrigger::Action::Next:     found = stepFrom(from, atSong, 1); break;
+            case SetlistTrigger::Action::Previous: found = stepFrom(from, atSong, -1); break;
+            case SetlistTrigger::Action::Song:
+                if (request.program < setlist.songs.size())
+                    found = request.program;
+                else
+                    notice("Program Change " + std::to_string(request.program + 1) + ": the set has only " +
+                           std::to_string(setlist.songs.size()) + " songs");
+                break;
+        }
+        if (found >= 0) to = static_cast<std::size_t>(found);
+    }
+    if (to && (*to != song || !onSong || waitingSong)) goToSong(*to);
+}
+
+void RackController::learnSetlistTrigger(SetlistTrigger::Action action) {
+    if (!setlistOpen) return;
+    learningId         = kSetlistLearn;
+    setlistLearnAction = action;
+    engine.armLearn(action == SetlistTrigger::Action::Song);
+}
+
+void RackController::removeSetlistTrigger(std::size_t index) {
+    if (!setlistOpen || index >= setlist.triggers.size()) return;
+    setlist.triggers.erase(setlist.triggers.begin() + static_cast<std::ptrdiff_t>(index));
+    writeSetlist();
+    applySetlistTriggers();
+}
+
+void RackController::applySetlistTriggers() {
+    for (const std::string& problem : session.setSetlistTriggers(setlistOpen ? setlist.triggers
+                                                                             : std::vector<SetlistTrigger>{}))
+        notice("Setlist: a MIDI trigger won't act: " + problem);
+}
+
+std::vector<std::string> RackController::triggerConflicts(const std::string& rackName,
+                                                          const TransportSettings& transport,
+                                                          const std::vector<const Sequence*>& sequences) const {
+    std::vector<std::string> warnings;
+    if (!setlistOpen) return warnings;
+    auto check = [&](const std::string& who, const std::vector<SequenceTrigger>& triggers) {
+        for (const SequenceTrigger& t : triggers)
+            for (const SetlistTrigger& s : setlist.triggers)
+                if (s.sameControl(t)) {
+                    const std::string text = setlistTriggerText(s);
+                    warnings.push_back(rackName + ": " + who + "'s " + triggerText(t) + " is also the setlist's " +
+                                       text.substr(0, text.find(':')) + "; the setlist's wins");
+                }
+    };
+    check("the transport", transport.triggers);
+    for (const Sequence* seq : sequences) check("sequence '" + seq->name + "'", seq->triggers);
+    return warnings;
 }
 
 // The first song from `from` on (step 1) or back (step -1) whose rack is there.
@@ -1426,6 +1543,16 @@ void RackController::buildSetlist() {
     m.next     = neighbour(1);
     m.previous = neighbour(-1);
     m.waiting  = waitingSong ? static_cast<int>(*waitingSong) : -1;
+    const auto& handles = session.setlistTriggerHandles();
+    for (std::size_t i = 0; i < setlist.triggers.size(); ++i) {
+        std::string text = setlistTriggerText(setlist.triggers[i]);
+        if (i < handles.size() && handles[i] == kInvalidMidiSource &&
+            setlist.triggers[i].source.kind != MidiSourceRef::Kind::All)
+            text += " (not connected)";
+        m.triggers.push_back(std::move(text));
+    }
+    m.learning       = learningId == kSetlistLearn;
+    m.learningAction = setlistLearnAction;
 }
 
 } // namespace stagehand

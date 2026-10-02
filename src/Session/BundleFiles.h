@@ -12,6 +12,7 @@
 #include <string>
 #include <vector>
 
+#include "Core/MidiSourceRef.h"
 #include "Plugin/PluginDescriptor.h"
 
 namespace stagehand::bundle {
@@ -21,6 +22,43 @@ namespace fs = std::filesystem;
 // A file's structural problem: caught by the loader, which reports it.
 [[noreturn]] inline void fail(const std::string& message) {
     throw std::runtime_error(message);
+}
+
+// A MIDI source as files write it: "all", "none", "device:<id>", "virtual:<name>".
+inline MidiSourceRef parseSource(const std::string& text) {
+    MidiSourceRef ref;
+    if (text == "all") return ref;
+    if (text == "none") {
+        ref.kind = MidiSourceRef::Kind::None;
+        return ref;
+    }
+    if (text.rfind("device:", 0) == 0 && text.size() > 7) {
+        ref.kind = MidiSourceRef::Kind::Device;
+        ref.name = text.substr(7);
+        return ref;
+    }
+    if (text.rfind("virtual:", 0) == 0 && text.size() > 8) {
+        ref.kind = MidiSourceRef::Kind::Virtual;
+        ref.name = text.substr(8);
+        return ref;
+    }
+    if (text.rfind("sequence:", 0) == 0 && text.size() > 9) {
+        ref.kind = MidiSourceRef::Kind::Sequence;
+        ref.name = text.substr(9);
+        return ref;
+    }
+    fail("midi.source '" + text + "' should be \"all\", \"none\", \"device:<id>\" or \"virtual:<name>\"");
+}
+
+inline std::string sourceText(const MidiSourceRef& ref) {
+    switch (ref.kind) {
+        case MidiSourceRef::Kind::All:     return "all";
+        case MidiSourceRef::Kind::Device:  return "device:" + ref.name;
+        case MidiSourceRef::Kind::Virtual: return "virtual:" + ref.name;
+        case MidiSourceRef::Kind::Sequence: return "sequence:" + ref.name;   // never saved (converted on load)
+        case MidiSourceRef::Kind::None:    return "none";
+    }
+    return "all";
 }
 
 inline std::string homeDir() {

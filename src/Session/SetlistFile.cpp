@@ -49,11 +49,53 @@ Enum choice(const Json& j, const char* field, const std::pair<const char*, Enum>
     fail(std::string("unknown \"") + field + "\": \"" + text + "\"");
 }
 
+constexpr std::pair<const char*, SetlistTrigger::Action> kTriggerActions[] = {
+    {"next", SetlistTrigger::Action::Next}, {"previous", SetlistTrigger::Action::Previous},
+    {"song", SetlistTrigger::Action::Song}};
+
+int numberIn(const Json& j, const char* field, int fallback, int low, int high) {
+    const int value = j.value(field, fallback);
+    if (value < low || value > high)
+        fail(std::string(field) + " must be within " + std::to_string(low) + "-" + std::to_string(high));
+    return value;
+}
+
 template <typename Enum, std::size_t N>
 const char* nameOf(const std::pair<const char*, Enum> (&values)[N], Enum value) {
     for (const auto& [name, v] : values)
         if (v == value) return name;
     return values[0].first;
+}
+
+// {"action": "next", "source": "device:<id>", "controller": 80, "channel": 1,
+// "group": 1}, or "note" instead of "controller"; "song" (a Program Change)
+// has neither.
+SetlistTrigger parseTrigger(const Json& j) {
+    if (!j.is_object()) fail("each trigger is an object");
+    SetlistTrigger t;
+    t.action = choice(j, "action", kTriggerActions);
+    t.source = parseSource(j.value("source", std::string("all")));
+    if (t.source.kind == MidiSourceRef::Kind::Sequence || t.source.kind == MidiSourceRef::Kind::None)
+        fail("a trigger's source must be an input");
+    if (t.action != SetlistTrigger::Action::Song) {
+        if (j.contains("note") == j.contains("controller")) fail("a Next or Previous trigger has a \"note\" or a \"controller\"");
+        t.control = j.contains("note") ? SequenceTrigger::Control::Note : SequenceTrigger::Control::Controller;
+        t.number  = static_cast<std::uint8_t>(numberIn(j, j.contains("note") ? "note" : "controller", 0, 0, 127));
+    }
+    t.channel = static_cast<std::uint8_t>(numberIn(j, "channel", 1, 1, 16) - 1);
+    t.group   = static_cast<std::uint8_t>(numberIn(j, "group", 1, 1, 16) - 1);
+    return t;
+}
+
+Json triggerJson(const SetlistTrigger& t) {
+    Json j;
+    j["action"] = nameOf(kTriggerActions, t.action);
+    j["source"] = sourceText(t.source);
+    if (t.action != SetlistTrigger::Action::Song)
+        j[t.control == SequenceTrigger::Control::Note ? "note" : "controller"] = t.number;
+    j["channel"] = t.channel + 1;
+    j["group"]   = t.group + 1;
+    return j;
 }
 
 } // namespace
@@ -105,6 +147,10 @@ RackFileResult loadSetlist(const std::string& path, Setlist& setlist) {
             loaded.switching.when      = choice(sw, "at", kWhens);
             loaded.switching.oldRack   = choice(sw, "oldRack", kOldRacks);
         }
+        if (doc.contains("triggers")) {
+            if (!doc.at("triggers").is_array()) fail("\"triggers\" must be a list");
+            for (const Json& t : doc.at("triggers")) loaded.triggers.push_back(parseTrigger(t));
+        }
     } catch (const std::exception& e) {
         result.error = file.string() + ": " + e.what();
         return result;
@@ -137,6 +183,11 @@ RackFileResult saveSetlist(const std::string& path, const Setlist& setlist) {
         sw["at"]        = nameOf(kWhens, setlist.switching.when);
         sw["oldRack"]   = nameOf(kOldRacks, setlist.switching.oldRack);
         doc["switching"] = sw;
+    }
+    if (!setlist.triggers.empty()) {
+        Json triggers = Json::array();
+        for (const SetlistTrigger& t : setlist.triggers) triggers.push_back(triggerJson(t));
+        doc["triggers"] = triggers;
     }
     if (!writeTextAtomically(file, doc.dump(2) + "\n", result.error)) return result;
     result.ok = true;

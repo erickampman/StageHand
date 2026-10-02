@@ -172,6 +172,11 @@ std::size_t SequenceSet::adoptFrom(const SequenceSet* previous, const Block& b, 
                 if (o.source == t.source && o.control == t.control && o.group == t.group && o.channel == t.channel &&
                     o.number == t.number)
                     t.high = o.high;
+        for (CompiledSetlistTrigger& t : transport.setlist)   // nor a setlist pedal
+            for (const CompiledSetlistTrigger& o : previous->transport.setlist)
+                if (o.source == t.source && o.control == t.control && o.group == t.group && o.channel == t.channel &&
+                    o.number == t.number)
+                    t.high = o.high;
         for (const CompiledSequence& old : previous->all) {
             if (find(all, old.source) != nullptr) continue;
             releaseAll(old, out, capacity, count);   // removed: its notes end now
@@ -280,6 +285,46 @@ std::size_t SequenceSet::matchTriggers(MidiSourceHandle source, const MidiMessag
     for (CompiledSequence& s : all)
         for (CompiledSequence::Trigger& t : s.triggers) check(t, s.source);
     return count;
+}
+
+bool SequenceSet::matchSetlist(MidiSourceHandle source, const MidiMessage& m, SetlistHit& hit, bool& fired) noexcept {
+    fired = false;
+    if (transport.setlist.empty() || !ump::isChannelVoice(m) || isSequenceSource(source)) return false;
+    const ump::Status  status = ump::status(m);
+    const std::uint8_t group = ump::group(m), channel = ump::channel(m);
+    if (status == ump::Status::ProgramChange) {
+        for (const CompiledSetlistTrigger& t : transport.setlist) {
+            if (t.action != SetlistTrigger::Action::Song || (t.source != kInvalidMidiSource && t.source != source) ||
+                t.group != group || t.channel != channel)
+                continue;
+            hit.action  = SetlistTrigger::Action::Song;
+            hit.program = static_cast<std::uint8_t>(ump::messageType(m) == ump::MessageType::Midi2ChannelVoice
+                                                        ? (m.words[1] >> 24) & 0x7F
+                                                        : (m.words[0] >> 8) & 0x7F);
+            fired       = true;
+            return true;
+        }
+        return false;
+    }
+    const bool note = status == ump::Status::NoteOn || status == ump::Status::NoteOff;
+    if (!note && status != ump::Status::ControlChange) return false;
+    const std::uint8_t number = static_cast<std::uint8_t>((m.words[0] >> 8) & 0x7F);
+    const bool         high   = ump::messageType(m) == ump::MessageType::Midi2ChannelVoice
+                                    ? m.words[1] >= 0x80000000u
+                                    : (m.words[0] & 0x7F) >= 64;
+    for (CompiledSetlistTrigger& t : transport.setlist) {
+        if (t.action == SetlistTrigger::Action::Song) continue;
+        CompiledSequence::Trigger as{t.source, SequenceTrigger::Action::Toggle, t.control, t.group, t.channel, t.number, t.high};
+        bool fires = false;
+        if (!matchOne(as, source, note, group, channel, number, high, ump::isNoteOn(m), fires)) continue;
+        t.high = as.high;
+        if (fires) {
+            hit.action = t.action;
+            fired      = true;
+        }
+        return true;
+    }
+    return false;
 }
 
 bool SequenceSet::wouldStart(MidiSourceHandle sequence, SequenceCommand command) const noexcept {

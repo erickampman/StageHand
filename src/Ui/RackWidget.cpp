@@ -104,7 +104,7 @@ void RackWidget::showNotice(const std::string& text, double now) {
 // the text caret (1 s).
 std::uint32_t RackWidget::timedLook(double now) const {
     const RackViewModel& v = controller.view();
-    bool blinking          = v.transport.learning;
+    bool blinking          = v.transport.learning || v.setlist.learning;
     for (const SequenceRowModel& seq : v.sequences)
         blinking = blinking || seq.learning || seq.state == SequenceState::Starting ||
                    seq.state == SequenceState::Stopping;
@@ -288,13 +288,42 @@ void RackWidget::drawSetlistRow() {
         next = "next: " + to.name;
     }
     const std::string name = set.name;
-    const float       nameRight = width() - kPad;
+    // The setlist's MIDI control (section 4) at the right, before its name:
+    // lit when it has triggers, blinking amber while learning.
+    const float midiX     = width() - kPad - 50.0f;
+    const bool  blinkOn   = std::fmod(ui::nowSeconds(), 0.5) < 0.25;
+    button(midiX, y, 50.0f, h, "MIDI", set.learning ? blinkOn : !set.triggers.empty(), true,
+           set.learning ? kAmber : kAccent);
+    region(midiX, y, 50.0f, h, [this, midiX](const Press&) { openSetlistMidiMenu(midiX, kSetlistH); });
+    const float       nameRight = midiX - 10.0f;
     const float       setW      = labelWidth(name, 13.0f);
     save();
     scissor(x, 0, std::max(0.0f, nameRight - setW - 16.0f - x), kSetlistH);
     label(x, kSetlistH / 2, next, 13.0f, set.waiting >= 0 ? kAmber : kDim);
     restore();
     label(nameRight, kSetlistH / 2, name, 13.0f, kDim, ALIGN_RIGHT | ALIGN_MIDDLE);
+}
+
+// The setlist's triggers: learn Next, Previous or Program Change, or remove one.
+void RackWidget::openSetlistMidiMenu(float x, float y) {
+    const SetlistModel& set = controller.view().setlist;
+    Menu                m;
+    m.w     = 380.0f;
+    m.x     = std::max(0.0f, x + 50.0f - m.w);   // under the button, kept on screen
+    m.y     = y;
+    m.title = set.learning ? (set.learningAction == SetlistTrigger::Action::Song ? "Send a Program Change..."
+                                                                                  : "Press a pad, key or pedal...")
+                           : "Setlist: MIDI control (wins over a rack's)";
+    if (set.learning) m.items.push_back(MenuItem{"Stop learning", [this] { controller.cancelLearn(); }});
+    for (const auto [action, text] : {std::pair{SetlistTrigger::Action::Next, "Learn Next"},
+                                      {SetlistTrigger::Action::Previous, "Learn Previous"},
+                                      {SetlistTrigger::Action::Song, "Learn Program Change (program n: song n)"}})
+        m.items.push_back(MenuItem{text, [this, a = action] { controller.learnSetlistTrigger(a); },
+                                   set.learning && set.learningAction == action});
+    for (std::size_t i = 0; i < set.triggers.size(); ++i)
+        m.items.push_back(MenuItem{"Remove " + set.triggers[i], [this, i] { controller.removeSetlistTrigger(i); },
+                                   false, true});
+    openMenu(std::move(m));
 }
 
 // Every song: its number and name, the playing one ticked, a missing rack

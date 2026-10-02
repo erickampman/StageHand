@@ -59,6 +59,34 @@ struct SequenceTrigger {
     bool operator==(const SequenceTrigger&) const = default;
 };
 
+// One of a setlist's MIDI triggers (docs/setlists.md, section 4). Next and
+// Previous are a note or a controller, as a sequence's trigger is. Song is a
+// Program Change on its input, group and channel: program n (0-based, as sent)
+// goes to song n + 1. Matched before every rack trigger; what matches goes
+// nowhere else.
+struct SetlistTrigger {
+    enum class Action : std::uint8_t { Next, Previous, Song };
+
+    Action                   action  = Action::Next;
+    MidiSourceRef            source;                    // Device or Virtual; All = any input
+    SequenceTrigger::Control control = SequenceTrigger::Control::Note;   // Next and Previous only
+    std::uint8_t             group   = 0;               // 0-based
+    std::uint8_t             channel = 0;               // 0-based
+    std::uint8_t             number  = 0;               // note or controller (Next and Previous)
+
+    // Would this and a rack's trigger answer the same message?
+    bool sameControl(const SequenceTrigger& o) const noexcept {
+        return action != Action::Song && source == o.source && control == o.control && group == o.group &&
+               channel == o.channel && number == o.number;
+    }
+    bool sameControl(const SetlistTrigger& o) const noexcept {
+        if ((action == Action::Song) != (o.action == Action::Song)) return false;
+        return source == o.source && group == o.group && channel == o.channel &&
+               (action == Action::Song || (control == o.control && number == o.number));
+    }
+    bool operator==(const SetlistTrigger&) const = default;
+};
+
 struct Sequence {
     std::string  id;     // unique in the rack; rows play it by being in `targets`
     std::string  name;

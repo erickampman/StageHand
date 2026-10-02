@@ -267,6 +267,14 @@ public:
     bool renameSong(std::size_t index, const std::string& name);   // "" = the rack's own name
     bool removeSong(std::size_t index);                        // the rack stays on disk
     bool relinkSong(std::size_t index, const std::string& chosen);   // point a (missing) song at another rack
+    // Its MIDI triggers (section 4), saved to the setlist at once. Learned as
+    // the transport's are: Next and Previous from the next note-on or
+    // controller press, Song from the next Program Change (program n then goes
+    // to song n + 1). A new one replaces the trigger for its action and any
+    // other use of its control. They win over a rack's triggers on the same
+    // control; a rack that has one gets a warning when it's switched to.
+    void learnSetlistTrigger(SetlistTrigger::Action action);
+    void removeSetlistTrigger(std::size_t index);   // index into the setlist's triggers
 
 private:
     // A meter's display state between ticks.
@@ -337,6 +345,17 @@ private:
     void           routeClick(bool report);
     void           buildDock(double now);
     void           finishLearn(const Engine::Learned& learned);
+    // The setlist's triggers that fired since the last tick, all at once
+    // (pressing Next three times goes three songs on), then one switch.
+    void           takeSetlistRequests();
+    // Where Next (1) or Previous (-1) goes from `from` (a song if `atSong`,
+    // else the gap where a removed song was), skipping missing racks; -1: none.
+    int            stepFrom(std::size_t from, bool atSong, int step) const;
+    void           applySetlistTriggers();   // to the Session; notices for inputs that aren't there
+    // The rack's triggers that the setlist's override (edge case 6), as warnings.
+    std::vector<std::string> triggerConflicts(const std::string& rackName, const TransportSettings& transport,
+                                              const std::vector<const Sequence*>& sequences) const;
+    std::string    setlistTriggerText(const SetlistTrigger& trigger) const;
     std::string    triggerText(const SequenceTrigger& trigger) const;
 
     Session&       session;
@@ -355,6 +374,7 @@ private:
     std::map<MidiSourceHandle, std::pair<std::uint32_t, double>> inputActivity;   // last count, lit until
     std::string                                           learningId;   // the sequence being learned for
     SequenceTrigger::Action                               learningAction = SequenceTrigger::Action::Toggle;
+    SetlistTrigger::Action                                setlistLearnAction = SetlistTrigger::Action::Next;
     std::string                                           target;          // the rack's bundle; "" = untitled
     std::string                                           rigFile;         // the rig in use; "" = none
     std::uint64_t                                         generation = 0;  // rackGeneration()

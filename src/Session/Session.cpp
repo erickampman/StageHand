@@ -596,11 +596,34 @@ void Session::commitSequences() {
     }
     TransportControl transport;
     compileTriggers(transportSetup.triggers, transportTriggerSources, transport.triggers);
+    for (std::size_t i = 0; i < setlistControls.size() && i < setlistSources.size(); ++i) {
+        const SetlistTrigger& t = setlistControls[i];
+        if (setlistSources[i] == kInvalidMidiSource && t.source.kind != MidiSourceRef::Kind::All) continue;
+        transport.setlist.push_back(CompiledSetlistTrigger{setlistSources[i], t.action, t.control, t.group, t.channel,
+                                                           t.number});
+    }
     // An input that isn't connected: start on first note waits for nothing.
     transport.startOnNote       = transportSetup.startOnNote && startOnNoteProblem.empty();
     transport.startOnNoteSource = startOnNoteHandle;
     engine.commitSequences(std::make_unique<SequenceSet>(std::move(compiled), std::move(transport)));
     sequencesDirty = false;
+}
+
+std::vector<std::string> Session::setSetlistTriggers(const std::vector<SetlistTrigger>& triggers) {
+    std::vector<std::string> problems;
+    setlistControls = triggers;
+    setlistSources.clear();
+    for (const SetlistTrigger& t : triggers) {
+        MidiSourceHandle handle = kInvalidMidiSource;   // All: any input
+        if (t.source.kind != MidiSourceRef::Kind::All) {
+            std::string problem;
+            handle = resolve(t.source, problem);
+            if (handle == kInvalidMidiSource) problems.push_back(problem);
+        }
+        setlistSources.push_back(handle);
+    }
+    sequencesDirty = true;
+    return problems;
 }
 
 // --- helpers -----------------------------------------------------------------------

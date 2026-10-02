@@ -52,6 +52,14 @@ void testRoundTrip(const fs::path& dir) {
                  {(dir / "Racks/Autumn leaves.rack").string(), ""}};   // a reprise
     set.switching.when = SwitchSettings::When::NextBar;
     set.rig            = (dir / "Stage.rig").string();
+    SetlistTrigger next;   // a pedal on a device
+    next.source  = MidiSourceRef{MidiSourceRef::Kind::Device, "FCB1010:FCB1010 MIDI 1"};
+    next.control = SequenceTrigger::Control::Controller;
+    next.number  = 80;
+    SetlistTrigger song;   // Program Change, any input, channel 16
+    song.action   = SetlistTrigger::Action::Song;
+    song.channel  = 15;
+    set.triggers  = {next, song};
     const fs::path file = sets / "Friday.setlist";
     CHECK(saveSetlist(file.string(), set).ok);
     CHECK(!fs::exists(file.string() + ".tmp"));
@@ -61,6 +69,7 @@ void testRoundTrip(const fs::path& dir) {
     CHECK(text.find("\"../Racks/So what.rack\"") != std::string::npos);
     CHECK(text.find("\"nextBar\"") != std::string::npos && text.find("\"ringOut\"") != std::string::npos);
     CHECK(text.find("\"rig\": \"../Stage.rig\"") != std::string::npos);   // relative, like the racks
+    CHECK(text.find("\"action\": \"song\"") != std::string::npos && text.find("\"controller\": 80") != std::string::npos);
 
     Setlist loaded;
     const RackFileResult result = loadSetlist(file.string(), loaded);
@@ -109,6 +118,9 @@ void testFailures(const fs::path& dir) {
     writeText(dir / "Odd.setlist",
               R"({ "format": "stagehand-setlist", "version": 1, "switching": { "at": "whenever" } })");
     CHECK(!loadSetlist((dir / "Odd.setlist").string(), set).ok);
+    writeText(dir / "Trigger.setlist",   // Next needs a note or a controller
+              R"({ "format": "stagehand-setlist", "version": 1, "triggers": [ { "action": "next" } ] })");
+    CHECK(!loadSetlist((dir / "Trigger.setlist").string(), set).ok);
 }
 
 void testPaths(const fs::path& dir) {

@@ -1030,6 +1030,114 @@ void testPreparedRacks() {
     fs::remove_all(dir);
 }
 
+// The setlist's MIDI triggers (docs/setlists.md, section 4): learned and saved
+// with the setlist, Next / Previous from a pedal, Program Change to a song,
+// presses in one tick taken together, and a rack's own trigger on the same
+// pedal reported when it's switched to.
+void testSetlistTriggers() {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / "stagehand-setlist-triggers-test";
+    fs::remove_all(dir);
+    std::vector<std::string> racks;
+    for (const char* name : {"A", "B", "C", "D"}) {
+        Rack rack;
+        rack.name = name;
+        if (std::string(name) == "C") {   // a pedal the setlist will take
+            SequenceTrigger start;
+            start.action  = SequenceTrigger::Action::Start;
+            start.source  = MidiSourceRef{MidiSourceRef::Kind::Virtual, "MIDI 2.0 In"};
+            start.control = SequenceTrigger::Control::Controller;
+            start.number  = 80;
+            rack.transport.triggers = {start};
+        }
+        racks.push_back((dir / "Racks" / (std::string(name) + ".rack")).string());
+        CHECK(saveRack(racks.back(), rack).ok);
+    }
+    Setlist set;
+    for (const std::string& r : racks) set.songs.push_back(SetlistSong{r, ""});
+    const std::string file = (dir / "Gig.setlist").string();
+    CHECK(saveSetlist(file, set).ok);
+
+    Rig rig;
+    rig.session->addOpenSource(MidiSourceRef{MidiSourceRef::Kind::Virtual, "MIDI 2.0 In"}, 7);
+    Session::LoadReport report;
+    Rack                untitled;
+    rig.session->load(untitled, 48000.0, report);
+    RackController       controller(*rig.session, *rig.engine, rig.midi, rig.factory, rig.config());
+    const RackViewModel& view = controller.view();
+    double               now  = 0.0;
+    auto tick = [&] { controller.tick(now += 2.0); };
+    auto send = [&](std::uint32_t word) {
+        TimedMidiMessage m;
+        m.captureTime       = 1'000'000'000 - 1'000'000;
+        m.message.words[0]  = word;
+        m.message.wordCount = 1;
+        rig.engine->onMidi(7, m);
+        runBlock(*rig.engine);
+    };
+    CHECK(controller.openSetlist(file, 0) && controller.rackPath() == racks[0]);
+
+    // Learn Next on CC 80, and Program Change on channel 1; saved at once.
+    controller.learnSetlistTrigger(SetlistTrigger::Action::Next);
+    tick();
+    CHECK(view.setlist.learning && view.setlist.learningAction == SetlistTrigger::Action::Next);
+    send(0x20B0507Fu);
+    tick();
+    send(0x20B05000u);
+    controller.learnSetlistTrigger(SetlistTrigger::Action::Song);
+    send(0x20B0517Fu);   // a press (CC 81) isn't a Program Change: still learning
+    tick();
+    CHECK(view.setlist.learning);
+    send(0x20B05100u);
+    send(0x20C00000u);
+    tick();
+    CHECK(!view.setlist.learning);
+    CHECK((view.setlist.triggers == std::vector<std::string>{"Next: From other apps (MIDI 2.0), CC 80, ch 1",
+                                                             "Program Change: From other apps (MIDI 2.0), ch 1 (program n: song n)"}));
+    Setlist saved;
+    CHECK(loadSetlist(file, saved).ok && saved.triggers.size() == 2 &&
+          saved.triggers[0].action == SetlistTrigger::Action::Next && saved.triggers[0].number == 80);
+    controller.takeNotices();
+
+    // The pedal goes to the next song (B is prepared by now).
+    send(0x20B0507Fu);
+    send(0x20B05000u);
+    tick();
+    CHECK(controller.rackPath() == racks[1] && view.setlist.current == 1);
+
+    // Two presses in one tick: two songs on, in one switch. C's own Start on
+    // the same pedal is reported, and the setlist's wins.
+    controller.takeNotices();
+    const std::uint64_t generation = controller.rackGeneration();
+    send(0x20B0507Fu);
+    send(0x20B05000u);
+    send(0x20B0507Fu);
+    send(0x20B05000u);
+    for (int i = 0; i < 4 && (controller.switchPending() || controller.rackPath() == racks[1]); ++i) tick();
+    CHECK(controller.rackPath() == racks[3] && controller.rackGeneration() == generation + 1);
+    send(0x20C00200u);   // Program Change 2: the third song, C
+    for (int i = 0; i < 4 && controller.rackPath() != racks[2]; ++i) tick();
+    CHECK(controller.rackPath() == racks[2] && !rig.engine->transport().running);
+    bool reported = false;
+    for (const std::string& text : controller.takeNotices())
+        reported = reported || text.find("is also the setlist's Next; the setlist's wins") != std::string::npos;
+    CHECK(reported);
+    send(0x20C00900u);   // past the end: a notice, no switch
+    tick();
+    CHECK(controller.rackPath() == racks[2] && !controller.takeNotices().empty());
+
+    // Removed: the pedal no longer acts. Closing the set removes them all.
+    controller.removeSetlistTrigger(0);
+    tick();
+    CHECK(view.setlist.triggers.size() == 1 && rig.session->setlistTriggers().size() == 1);
+    controller.closeSetlist();
+    CHECK(rig.session->setlistTriggers().empty());
+
+    runBlock(*rig.engine);
+    rig.engine->collect();
+    fs::remove_all(dir);
+}
+
 } // namespace
 
 int main() {
@@ -1049,5 +1157,6 @@ int main() {
     testSetlist();
     testRigs();
     testPreparedRacks();
+    testSetlistTriggers();
     return test::finish("RackController");
 }

@@ -1,6 +1,6 @@
 # StageHand — Setlists and rack switching (design)
 
-Proposed 2026-10-01; milestones 1 to 3 built (notes under "Proposed
+Proposed 2026-10-01; milestones 1 to 4 built (notes under "Proposed
 milestones"). A setlist is an ordered list of racks
 to step through on stage. It builds on decisions already recorded:
 - domain-model.md, "Presets vs Racks": "A setlist is an ordered list of
@@ -129,8 +129,9 @@ A setlist is one file that refers to racks; it doesn't contain them.
     { "rack": "Racks/So what.rack" }
   ],
   "switching": { "transport": "keep", "at": "now", "oldRack": "ringOut" },
-  "triggers": [ { "action": "next", "input": "FCB1010", "control": "cc",
-                  "channel": 1, "number": 80 } ]
+  "triggers": [ { "action": "next", "source": "device:FCB1010:FCB1010 MIDI 1",
+                  "controller": 80, "channel": 1 },
+                { "action": "song", "source": "all", "channel": 16 } ]
 }
 ```
 
@@ -518,6 +519,22 @@ sequences end with note-offs when the new sequence set is adopted. Open and
 New ring out too. `OldRack::Cut` (mute instead of draining) is there for the
 switch settings; the controller uses ring out until milestone 5. Tests:
 `testDraining` in the engine and Session tests.
+
+**Milestone 4 implemented (2026-10-02):** `SetlistTrigger` (Next and Previous
+on a note or a controller, Song on a Program Change: program n, as sent from
+0, goes to song n + 1; per-song program numbers aren't there) and the
+setlist's `"triggers"` (above). The Session keeps the setlist's triggers
+through rack loads and publishes them with each rack's sequences
+(`TransportControl::setlist`); `Engine::takeMidi()` matches them before any
+rack trigger, and what matches goes nowhere else. The audio thread passes each
+press on (`Engine::takeSetlistRequest()`); the controller takes a tick's
+presses together, from the song a switch waits for if there is one, so
+pressing Next three times goes three songs on with one switch (edge case 3).
+Learn is the transport's, plus `armLearn(true)` for a Program Change. A rack
+with a trigger on one of the setlist's controls gets a warning when it's
+switched to (edge case 6). UI: the setlist row's MIDI button. Tests:
+`testSetlistTriggers` (engine and controller), triggers in the setlist file
+tests.
 
 ## Open questions
 

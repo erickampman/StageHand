@@ -111,12 +111,25 @@ struct AuditionMessages {
 };
 AuditionMessages auditionMessages(const Sequence& sequence, const SequenceNote& note) noexcept;
 
+// A setlist trigger with its input resolved, as for a sequence's triggers.
+struct CompiledSetlistTrigger {
+    MidiSourceHandle         source  = kInvalidMidiSource;   // invalid: any input
+    SetlistTrigger::Action   action  = SetlistTrigger::Action::Next;
+    SequenceTrigger::Control control = SequenceTrigger::Control::Note;
+    std::uint8_t             group = 0, channel = 0, number = 0;
+    bool                     high  = false;   // audio thread: a controller's last value was >= 64
+};
+
 // The transport's own MIDI control (docs/sequences.md, section 7), published
 // with the sequences. Its triggers' actions start and stop the transport.
 struct TransportControl {
     std::vector<CompiledSequence::Trigger> triggers;
     bool             startOnNote       = false;
     MidiSourceHandle startOnNoteSource = kInvalidMidiSource;   // invalid: any input
+
+    // The setlist's triggers (docs/setlists.md, section 4), published with
+    // every rack's sequences and matched before all of them.
+    std::vector<CompiledSetlistTrigger> setlist;
 };
 
 class SequenceSet {
@@ -161,6 +174,14 @@ public:
     };
     std::size_t matchTriggers(MidiSourceHandle source, const MidiMessage& message, TriggerHit* hits,
                               std::size_t capacity, bool& matched) noexcept;
+    // The same for the setlist's triggers, which come first: true if `message`
+    // is theirs (it goes nowhere else). `fired`: a Next or Previous press, or
+    // a Program Change (`program` set), to pass to the main thread.
+    struct SetlistHit {
+        SetlistTrigger::Action action  = SetlistTrigger::Action::Next;
+        std::uint8_t           program = 0;
+    };
+    bool matchSetlist(MidiSourceHandle source, const MidiMessage& message, SetlistHit& hit, bool& fired) noexcept;
     // Would `command` start this sequence (Start, or Toggle while it's stopped)?
     bool wouldStart(MidiSourceHandle sequence, SequenceCommand command) const noexcept;
     // A note-on that start-on-note accepts (from its input, or any).

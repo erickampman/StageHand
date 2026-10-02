@@ -3,6 +3,8 @@
 #include <string>
 #include <vector>
 
+#include "Core/Sequence.h"
+
 namespace stagehand {
 
 // A setlist (docs/setlists.md): the order of a set and how to move through it.
@@ -34,6 +36,7 @@ struct Setlist {
     std::vector<SetlistSong> songs;
     SwitchSettings           switching;
     std::string              rig;   // its rig bundle (docs/rig.md), absolute; "" = the default rig
+    std::vector<SetlistTrigger> triggers;   // section 4: Next, Previous, Program Change
 
     bool operator==(const Setlist&) const = default;
 };

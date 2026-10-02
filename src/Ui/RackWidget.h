@@ -66,6 +66,7 @@ private:
 
     // --- parts
     void meterBars(float x0, float x1, float y, const float db[2], const float hold[2]);
+    void openSetlistMidiMenu(float x, float y);
     void drawSetlistRow();
     void drawToolbar();
     void drawTransport(float x);
