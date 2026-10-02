@@ -1,6 +1,6 @@
 # StageHand — Setlists and rack switching (design)
 
-Proposed 2026-10-01; milestones 1 to 4 built (notes under "Proposed
+Proposed 2026-10-01; milestones 1 to 5 built (notes under "Proposed
 milestones"). A setlist is an ordered list of racks
 to step through on stage. It builds on decisions already recorded:
 - domain-model.md, "Presets vs Racks": "A setlist is an ordered list of
@@ -535,6 +535,22 @@ with a trigger on one of the setlist's controls gets a warning when it's
 switched to (edge case 6). UI: the setlist row's MIDI button. Tests:
 `testSetlistTriggers` (engine and controller), triggers in the setlist file
 tests.
+
+**Milestone 5 implemented (2026-10-02):** `Engine::commitSwitch()` takes a
+song switch as one: the new rack's graph and sequences, adopted together with
+its tempo and signature, at the next block or, at the next bar while the
+transport runs, at the block holding the bar line (the new signature counts
+from that line). Commits made meanwhile wait with it, and a tempo or
+signature set meanwhile is the new rack's, applied at the switch. The switch
+then stops the transport, or keeps it running with the new rack's At Start
+sequences from the next bar (`SequenceSet::transportStarted()` at that beat).
+`Session::activate()` takes `SwitchOptions` (old rack rung out or cut, at the
+next bar, transport stopped); the controller uses the setlist's settings for
+song switches, while opening a setlist, Open and New stop the transport and
+switch at once, as before. File > Setlist settings... sets them (saved at
+once). Switching at a bar is block-accurate: the block holding the line, so a
+downbeat played on time goes to the new song. Tests: `testSongSwitch`
+(engine), `testSwitchSettings` (controller).
 
 ## Open questions
 

@@ -1221,6 +1221,76 @@ void testRigControls() {
     fs::remove_all(dir);
 }
 
+// The setlist's switch settings (docs/setlists.md, section 5): saved at once;
+// by default the transport runs on through a switch with the new song's tempo
+// and its At Start sequences; Stop stops it; Cut mutes the old song.
+void testSwitchSettings() {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / "stagehand-switch-settings-test";
+    fs::remove_all(dir);
+    std::vector<std::string> racks;
+    for (const auto [name, bpm] : {std::pair{"A", 100.0}, {"B", 140.0}, {"C", 80.0}}) {
+        Rack rack;
+        rack.name     = name;
+        rack.tempoBpm = bpm;
+        rack.slots    = {slot("keys", "synth", "/clap/Synth.clap")};
+        if (std::string(name) == "B") {
+            Sequence intro;
+            intro.id      = "intro";
+            intro.atStart = true;
+            intro.targets = {"keys"};
+            rack.sequences = {intro};
+        }
+        racks.push_back((dir / "Racks" / (std::string(name) + ".rack")).string());
+        CHECK(saveRack(racks.back(), rack).ok);
+    }
+    Setlist set;
+    for (const std::string& r : racks) set.songs.push_back(SetlistSong{r, ""});
+    const std::string file = (dir / "Gig.setlist").string();
+    CHECK(saveSetlist(file, set).ok);
+
+    Rig                 rig;
+    Session::LoadReport report;
+    rig.session->load(Rack{}, 48000.0, report);
+    RackController       controller(*rig.session, *rig.engine, rig.midi, rig.factory, rig.config());
+    const RackViewModel& view = controller.view();
+    double               now  = 0.0;
+    auto tick = [&] { controller.tick(now += 2.0); };
+    CHECK(controller.openSetlist(file, 0));
+    tick();
+    tick();   // B prepared
+    CHECK(view.setlist.switching == SwitchSettings{});
+
+    // Keep running (the default): the new tempo, and B's At Start waiting for the next bar.
+    controller.startTransport();
+    for (int i = 0; i < 4; ++i) runBlock(*rig.engine);
+    CHECK(controller.nextSong() && controller.rackPath() == racks[1]);
+    runBlock(*rig.engine);
+    CHECK(rig.engine->transport().running && rig.engine->transport().tempoBpm == 140.0);
+    CHECK(rig.session->sequenceState("intro") == SequenceState::Starting);
+
+    // Stop, and Cut: saved at once; the next switch stops the transport and mutes the old song.
+    SwitchSettings settings;
+    settings.transport = SwitchSettings::Transport::Stop;
+    settings.oldRack   = SwitchSettings::OldRack::Cut;
+    controller.setSwitchSettings(settings);
+    Setlist saved;
+    CHECK(loadSetlist(file, saved).ok && saved.switching == settings);
+    tick();
+    CHECK(view.setlist.switching == settings);
+    tick();   // C prepared
+    const std::shared_ptr<SlotRuntime> old = rig.session->slot("keys")->runtime;
+    CHECK(controller.nextSong() && controller.rackPath() == racks[2]);
+    runBlock(*rig.engine);
+    runBlock(*rig.engine);
+    CHECK(!rig.engine->transport().running && rig.engine->transport().tempoBpm == 80.0);
+    CHECK(old->muted.load() && rig.session->drainingSlots().size() >= 1);
+
+    runBlock(*rig.engine);
+    rig.engine->collect();
+    fs::remove_all(dir);
+}
+
 } // namespace
 
 int main() {
@@ -1242,5 +1312,6 @@ int main() {
     testPreparedRacks();
     testSetlistTriggers();
     testRigControls();
+    testSwitchSettings();
     return test::finish("RackController");
 }

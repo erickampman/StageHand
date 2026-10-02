@@ -290,6 +290,10 @@ public:
     // other use of its control. They win over a rack's triggers on the same
     // control; a rack that has one gets a warning when it's switched to.
     void learnSetlistTrigger(SetlistTrigger::Action action);
+    // How switching behaves (section 5), saved at once: the transport kept
+    // running or stopped, at once or at the next bar (while it runs), the old
+    // rack rung out or cut.
+    void setSwitchSettings(const SwitchSettings& settings);
     void removeSetlistTrigger(std::size_t index);   // index into the setlist's triggers
 
 private:
@@ -330,8 +334,10 @@ private:
     // Save the running rack as quitting would, close what belongs to it, and
     // make `next` the running rack (one graph commit). `next` is taken only on
     // success; false (nothing changed) if the save failed.
+    // `how`: the setlist's switch settings for a song; Open and New (not live
+    // actions) stop the transport and switch at once.
     bool           switchRack(std::unique_ptr<PreparedRack>& next, const std::string& path,
-                              const std::vector<std::string>& warnings);
+                              const std::vector<std::string>& warnings, const Session::SwitchOptions& how);
     bool           saveCaptured(const Rack& captured);   // to target, as save() does
     // goToSong(); `now`: finish preparing it at once rather than over ticks.
     bool           goTo(std::size_t index, bool now);

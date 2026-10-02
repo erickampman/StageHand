@@ -240,6 +240,7 @@ void testTransport() {
     Session::LoadReport report;
     session.load(rack, 48000.0, report);
     CHECK(!session.modified());
+    runBlock(*engine);   // the rack's tempo and signature come with its switch
     CHECK(engine->transport().tempoBpm == 90.0 && engine->transport().numerator == 6);
 
     session.setTempo(133.3);
@@ -659,7 +660,7 @@ void testDraining() {
 
     // Cut: the old rack is muted at the switch (its notes released, faded).
     const std::shared_ptr<SlotRuntime> cRuntime = session.slot("c")->runtime;
-    CHECK(session.activate(session.prepare(rackOf("d"), 48000.0), report, Session::OldRack::Cut));
+    CHECK(session.activate(session.prepare(rackOf("d"), 48000.0), report, {Session::OldRack::Cut}));
     CHECK(cRuntime->muted.load() && cRuntime->targetGain.load() == 0.0f && session.drainingSlots().size() == 2);
 
     session.unload();

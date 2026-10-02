@@ -92,7 +92,11 @@ bool Session::prepareStep(PreparedRack& prepared) {
     return prepared.ready();
 }
 
-bool Session::activate(std::unique_ptr<PreparedRack> prepared, LoadReport& report, OldRack oldRack) {
+bool Session::activate(std::unique_ptr<PreparedRack> prepared, LoadReport& report) {
+    return activate(std::move(prepared), report, SwitchOptions{});
+}
+
+bool Session::activate(std::unique_ptr<PreparedRack> prepared, LoadReport& report, const SwitchOptions& how) {
     while (!prepareStep(*prepared)) {}
     PreparedRack& p = *prepared;
     for (const std::string& warning : p.warnings) report.warnings.push_back(warning);
@@ -128,17 +132,27 @@ bool Session::activate(std::unique_ptr<PreparedRack> prepared, LoadReport& repor
         SlotConfig config = configOf(slot);
         config.sequenceSources.clear();   // its sequences end with the switch
         config.draining = true;
-        if (oldRack == OldRack::Cut) mute(*config.runtime);
+        if (how.oldRack == OldRack::Cut) mute(*config.runtime);
         draining.push_back(std::move(config));
     }
     loaded     = std::move(p.slots);
     name       = rack.name;
-    setTempo(rack.tempoBpm);
-    if (!setTimeSignature(rack.timeSigNumerator, rack.timeSigDenominator)) setTimeSignature(4, 4);
+    tempo      = std::clamp(rack.tempoBpm, Engine::kMinTempo, Engine::kMaxTempo);   // the engine's at the switch
+    const bool powerOfTwo = rack.timeSigDenominator > 0 && (rack.timeSigDenominator & (rack.timeSigDenominator - 1)) == 0;
+    const bool validSig   = rack.timeSigNumerator >= 1 && rack.timeSigNumerator <= 32 && powerOfTwo &&
+                          rack.timeSigDenominator <= 32;
+    sigNumerator   = validSig ? rack.timeSigNumerator : 4;
+    sigDenominator = validSig ? rack.timeSigDenominator : 4;
     sampleRate = p.rate;
     dirty      = false;
-    commitSequences();
-    commitGraph();   // the one commit: the new slots and the rig's buses
+    Engine::SwitchPlan plan;
+    plan.atNextBar     = how.atNextBar;
+    plan.stopTransport = how.stopTransport;
+    plan.tempoBpm      = tempo;
+    plan.numerator     = sigNumerator;
+    plan.denominator   = sigDenominator;
+    engine.commitSwitch(buildGraph(), buildSequences(), plan);   // the one commit: the new slots and the rig's buses
+    graphDirty = sequencesDirty = false;
     return std::any_of(loaded.begin(), loaded.end(),
                        [](const Slot& s) { return s.plugin != nullptr; });
 }
@@ -429,6 +443,7 @@ void Session::flush() {
 }
 
 void Session::unload() {
+    engine.switchNow();   // a switch waiting for its bar line can't hold this up
     engine.commitSequences(nullptr);   // releases any sounding sequence notes
     engine.commit(nullptr);
     draining.clear();
@@ -577,7 +592,7 @@ double Session::sequencePosition(const std::string& id) const noexcept {
     return entry != nullptr ? entry->runtime->position.load(std::memory_order_relaxed) : 0.0;
 }
 
-void Session::commitSequences() {
+std::unique_ptr<SequenceSet> Session::buildSequences() const {
     std::vector<CompiledSequence> compiled;
     compiled.reserve(sequenceList.size());
     // A trigger whose input didn't resolve hears nothing.
@@ -605,7 +620,11 @@ void Session::commitSequences() {
     // An input that isn't connected: start on first note waits for nothing.
     transport.startOnNote       = transportSetup.startOnNote && startOnNoteProblem.empty();
     transport.startOnNoteSource = startOnNoteHandle;
-    engine.commitSequences(std::make_unique<SequenceSet>(std::move(compiled), std::move(transport)));
+    return std::make_unique<SequenceSet>(std::move(compiled), std::move(transport));
+}
+
+void Session::commitSequences() {
+    engine.commitSequences(buildSequences());
     sequencesDirty = false;
 }
 
@@ -644,7 +663,7 @@ SlotConfig Session::configOf(const Slot& slot) const {
     return config;
 }
 
-void Session::commitGraph() {
+std::unique_ptr<EngineGraph> Session::buildGraph() const {
     std::vector<SlotConfig> configs;
     for (const Slot& slot : loaded)
         if (slot.plugin) configs.push_back(configOf(slot));
@@ -658,7 +677,11 @@ void Session::commitGraph() {
             bus.firstOutput = rigState.saved.buses[b].firstOutput;
             buses.push_back(std::move(bus));
         }
-    engine.commit(std::make_unique<EngineGraph>(std::move(configs), std::move(buses)));
+    return std::make_unique<EngineGraph>(std::move(configs), std::move(buses));
+}
+
+void Session::commitGraph() {
+    engine.commit(buildGraph());
     graphDirty = false;
 }
 
