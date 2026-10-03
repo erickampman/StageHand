@@ -34,6 +34,13 @@ void UiWidget::fill(UiColor c, int alpha) {
     fillColor(c.r, c.g, c.b, alpha);
 }
 
+void UiWidget::gradientBox(float x, float y, float w, float h, UiColor left, UiColor right) {
+    beginPath();
+    rect(x, y, w, h);
+    fillPaint(linearGradient(x, y, x + w, y, Color(left.r, left.g, left.b), Color(right.r, right.g, right.b)));
+    NanoVG::fill();
+}
+
 void UiWidget::box(float x, float y, float w, float h, UiColor c, float radius) {
     beginPath();
     if (radius > 0.0f)
