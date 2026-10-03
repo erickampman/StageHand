@@ -8,7 +8,7 @@
   1. Count-in per song, and the Perform view with a large beat display
      (docs/perform.md).
   2. Panic (all notes off and pedals up on every row, a button and a learned
-     trigger), and CPU load and xruns shown in the window.
+     trigger), and CPU load and xruns shown in the window (docs/panic.md).
   3. MIDI controllers to plugin parameters (knobs, faders, an expression
      pedal), learned per rack.
   4. Velocity curves per row, or a fixed velocity.
