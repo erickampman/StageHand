@@ -50,9 +50,9 @@ The C++ is fine for Apple's toolchain as it is: no `<format>`, ranges or
    devices are the system's output devices, and connecting the click to one
    rebuilds the aggregate (a short gap in the sound, so it's a setup action,
    not a stage one). With the click on the main device, no aggregate is
-   made. The click's output stays saved per rack, as now (setlists.md, edge
-   case 7): a song switch to a rack with another click device rebuilds the
-   aggregate, so a set that wants no gap sets its racks alike.
+   made. The click's output is the rig's (rig.md, 2026-10-03), the same in
+   every song, so a song switch never rebuilds the aggregate; a rack only
+   says whether it clicks, and how loud.
 4. **One clock.** MIDI timestamps and audio block times must share a clock:
    `CLOCK_MONOTONIC` on Linux, host time (`mach_absolute_time`, in
    nanoseconds through `mach_timebase_info`) on macOS, where CoreMIDI and
