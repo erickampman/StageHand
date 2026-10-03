@@ -30,7 +30,7 @@ behind the seams already:
 The C++ is fine for Apple's toolchain as it is: no `<format>`, ranges or
 `jthread`, and `std::atomic<double>` is lock-free on arm64 and x86_64.
 
-## Decisions (proposed; 9 to 11 decided 2026-10-03)
+## Decisions (proposed; 3, 9 and 10 decided 2026-10-03)
 
 1. **DGL stays** for the rack window and the sequence editor (pugl's Cocoa
    backend). No native menu bar or controls.
@@ -50,7 +50,9 @@ The C++ is fine for Apple's toolchain as it is: no `<format>`, ranges or
    devices are the system's output devices, and connecting the click to one
    rebuilds the aggregate (a short gap in the sound, so it's a setup action,
    not a stage one). With the click on the main device, no aggregate is
-   made.
+   made. The click's output stays saved per rack, as now (setlists.md, edge
+   case 7): a song switch to a rack with another click device rebuilds the
+   aggregate, so a set that wants no gap sets its racks alike.
 4. **One clock.** MIDI timestamps and audio block times must share a clock:
    `CLOCK_MONOTONIC` on Linux, host time (`mach_absolute_time`, in
    nanoseconds through `mach_timebase_info`) on macOS, where CoreMIDI and
@@ -78,9 +80,6 @@ The C++ is fine for Apple's toolchain as it is: no `<format>`, ranges or
     X11 browser. To check when it's built: choosing a folder (a rack bundle
     on Linux), the setlist filter (`*.setlist`), and a suggested name when
     saving; anything missing is added to DPF's options or worked around.
-11. **The click's device is the machine's,** not the rack's (it's a
-    setting of the rig, as the click's output is now, so each machine keeps
-    its own).
 
 ## Engine and backends
 
