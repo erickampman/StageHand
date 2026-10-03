@@ -997,6 +997,46 @@ std::vector<std::string> Session::runningProblems() {
     return problems;
 }
 
+namespace {
+
+// "<device>:<port>" at its first colon (ports may have colons; devices rarely do).
+std::pair<std::string, std::string> splitDeviceId(const std::string& id) {
+    const std::size_t colon = id.find(':');
+    if (colon == std::string::npos) return {id, {}};
+    return {id.substr(0, colon), id.substr(colon + 1)};
+}
+
+bool isAddress(const std::string& id) {   // "14:0": a client and port number, not names
+    const auto [client, port] = splitDeviceId(id);
+    auto digits = [](const std::string& s) {
+        return !s.empty() && std::all_of(s.begin(), s.end(), [](char c) { return c >= '0' && c <= '9'; });
+    };
+    return digits(client) && digits(port);
+}
+
+} // namespace
+
+std::string findDeviceByName(const std::string& id, const std::vector<MidiSourceInfo>& listed) {
+    if (id.empty() || isAddress(id)) return {};
+    const auto [device, port] = splitDeviceId(id);
+    const MidiSourceInfo* firstOfDevice = nullptr;
+    for (const MidiSourceInfo& info : listed) {
+        const auto [d, p] = splitDeviceId(info.id);
+        if (d != device) continue;
+        if (!port.empty() && p == port) return info.id;   // the same port of the same device
+        if (firstOfDevice == nullptr) firstOfDevice = &info;
+    }
+    if (firstOfDevice != nullptr) return firstOfDevice->id;
+    if (port.empty()) return {};
+    const MidiSourceInfo* onlyPort = nullptr;
+    for (const MidiSourceInfo& info : listed)
+        if (splitDeviceId(info.id).second == port) {
+            if (onlyPort != nullptr) return {};   // two devices have it: which one is a guess
+            onlyPort = &info;
+        }
+    return onlyPort != nullptr ? onlyPort->id : std::string{};
+}
+
 MidiSourceHandle Session::resolve(const MidiSourceRef& ref, std::string& problem) {
     if (ref.kind == MidiSourceRef::Kind::Sequence) {
         if (const SequenceEntry* entry = sequence(ref.name)) return entry->source;
@@ -1014,6 +1054,9 @@ MidiSourceHandle Session::resolve(const MidiSourceRef& ref, std::string& problem
             addOpenSource(ref, handle);
             return handle;
         }
+        // Not there under its id: under another, by name? The rack keeps its id.
+        if (const std::string other = findDeviceByName(ref.name, midi.enumerate()); !other.empty() && other != ref.name)
+            return resolve(MidiSourceRef{MidiSourceRef::Kind::Device, other}, problem);
         problem = "MIDI device '" + ref.name + "' isn't connected";
     } else {
         problem = "there's no virtual input '" + ref.name + "'";

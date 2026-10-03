@@ -123,9 +123,9 @@ lock-free on arm64.
 - **A HAL IOProc** (`AudioDeviceCreateIOProcID`) on the device (or the
   aggregate), not AUHAL: it's given the time now and the output's time, so it
   passes now as the block's start (decision 4), and it suits the aggregate.
-- **Denormals flushed** in the callback (FTZ: the FPCR's FZ bit on arm64),
-  so a reverb's dying tail can't cost CPU spikes. JACK's callback gets the
-  same (FTZ/DAZ on x86, FZ on arm64): nothing sets it today.
+- **Denormals flushed** (done 2026-10-03, below): `Engine::process()` holds
+  a `ScopedFlushDenormals` for the whole block, so this backend gets it as
+  JACK's does, plugins included.
 - **The buffer size** through `kAudioDevicePropertyBufferFrameSize` (what
   `--quantum` does on Linux, without touching other apps), the sample rate
   through the device's nominal rate.
@@ -283,6 +283,24 @@ last position and the window size. Tests: `tests/ClockTests.cpp` (the
 clock, and host times on macOS), `testAppPaths` (setlist file tests: both
 platforms' paths, each checked on its own CI), the rig and setlist path
 checks per platform.
+
+**Done ahead, from Linux (2026-10-03):** two parts of later milestones that
+need no Mac.
+- From milestone 3, **devices by name** (decision 5):
+  `findDeviceByName()` (Session) and `Session::resolve()`. A device a rack
+  names that won't open by its id is looked for among the devices listed:
+  by its device name first (the port of the same name, else the device's
+  first port), then by its port name if exactly one device has a port of
+  that name. Never by an address (`"14:0"`), never a guess between two. The
+  rack keeps the id it was saved with, and a device already open isn't
+  opened again. Tests: `testDevicesByName` (Session).
+- From milestone 4, **denormals:** `Core/Denormals.h`, `ScopedFlushDenormals`
+  (x86: the MXCSR's FTZ and DAZ; ARM64: the FPCR's FZ), held by
+  `Engine::process()` for each block and restored after, so every backend
+  and every plugin the engine calls gets it. Tests: `tests/DenormalTests.cpp`
+  (a denormal result and a denormal input are 0 under it, normal values
+  untouched, the mode restored, nesting), run on x86 Linux and ARM64 macOS
+  by CI.
 
 ## Review (2026-10-03)
 

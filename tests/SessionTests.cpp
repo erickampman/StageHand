@@ -2,6 +2,7 @@
 // before activation, placeholders that round-trip, disabled slots, source
 // resolution without fallback, and capture().
 
+#include <algorithm>
 #include <cmath>
 #include <map>
 #include <memory>
@@ -108,6 +109,52 @@ void testNoFallbackToAll() {
     runBlock(*engine);
     auto* plugin = dynamic_cast<FakePlugin*>(session.slots()[0].plugin.get());
     CHECK(plugin != nullptr && plugin->calls.size() == 1 && plugin->calls[0].events.empty());
+    session.unload();
+    runBlock(*engine);
+}
+
+// A device a rack names that isn't there under its id, found by name
+// (docs/macos.md, decision 5): by its device name first (the same port if it
+// has one, else its first), then by its port name if exactly one device has
+// it; never by an address, and never a guess between two. The rack keeps the
+// id it was saved with; a device already open isn't opened again.
+void testDevicesByName() {
+    auto info = [](const char* id, bool hardware = true) { return MidiSourceInfo{id, "", false, hardware, MidiProtocol::Midi1}; };
+    const std::vector<MidiSourceInfo> listed = {info("KeyLab 88:KeyLab 88 Port 1"), info("KeyLab 88:KeyLab 88 Port 2"),
+                                                info("Keys:Keys MIDI 1"), info("Pad A:MIDI 1"), info("Pad B:MIDI 1")};
+    CHECK(findDeviceByName("KeyLab 88:KeyLab 88 MIDI 1", listed) == "KeyLab 88:KeyLab 88 Port 1");   // its first port
+    CHECK(findDeviceByName("KeyLab 88:KeyLab 88 Port 2", listed) == "KeyLab 88:KeyLab 88 Port 2");   // its own port
+    CHECK(findDeviceByName("USB Keys:Keys MIDI 1", listed) == "Keys:Keys MIDI 1");   // the one port of that name
+    CHECK(findDeviceByName("Pad C:MIDI 1", listed).empty());                       // two have it: no guess
+    CHECK(findDeviceByName("Nothing:Here", listed).empty());
+    CHECK(findDeviceByName("24:0", listed).empty() && findDeviceByName("", listed).empty());
+    CHECK(findDeviceByName("KeyLab 88", listed) == "KeyLab 88:KeyLab 88 Port 1");   // a device name alone
+
+    // Through a rack load: the slots resolve to what's there.
+    FakeFactory factory;
+    factory.installed = {installedPlugin("synth", "/clap/Synth.clap")};
+    FakeMidiInput midi;
+    midi.sources = listed;
+    midi.present = {"KeyLab 88:KeyLab 88 Port 1", "KeyLab 88:KeyLab 88 Port 2", "Pad A:MIDI 1", "Pad B:MIDI 1"};
+    NullHost      host;
+    auto          engine = std::make_unique<Engine>();
+    Session       session(factory, host, midi, *engine);
+    auto withSource = [](const char* id, const char* device) {
+        RackSlot s = slot(id, "synth", "/clap/Synth.clap");
+        s.source   = MidiSourceRef{MidiSourceRef::Kind::Device, device};
+        return s;
+    };
+    Rack rack;
+    rack.slots = {withSource("a", "KeyLab 88:KeyLab 88 MIDI 1"), withSource("b", "USB Keys:Keys MIDI 1"),
+                  withSource("c", "Pad C:MIDI 1"), withSource("d", "KeyLab 88:Another name")};
+    Session::LoadReport report;
+    CHECK(session.load(rack, 48000.0, report));
+    CHECK(session.slot("a")->source == 100 && session.slot("a")->sourceProblem.empty());
+    CHECK(session.slot("b")->source == 42);
+    CHECK(session.slot("c")->source == kInvalidMidiSource && !session.slot("c")->sourceProblem.empty());
+    CHECK(session.slot("d")->source == 100);   // the same device, opened once
+    CHECK(std::count(midi.opened.begin(), midi.opened.end(), "KeyLab 88:KeyLab 88 Port 1") == 1);
+    CHECK(session.capture().slots[0].source.name == "KeyLab 88:KeyLab 88 MIDI 1");   // the rack keeps its id
     session.unload();
     runBlock(*engine);
 }
@@ -674,6 +721,7 @@ void testDraining() {
 int main() {
     testLoad();
     testNoFallbackToAll();
+    testDevicesByName();
     testLiveEdits();
     testStructuralEdits();
     testAddRemove();
