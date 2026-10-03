@@ -565,6 +565,35 @@ bool SequenceSet::matchLooperSwitch(MidiSourceHandle source, const MidiMessage& 
     return true;
 }
 
+bool SequenceSet::matchPanic(MidiSourceHandle source, const MidiMessage& m, bool& pressed) noexcept {
+    pressed = false;
+    if (!transport.hasPanic || !ump::isChannelVoice(m) || isSequenceSource(source)) return false;
+    CompiledSequence::Trigger& t = transport.panic;
+    const ump::Status status = ump::status(m);
+    const bool        note   = status == ump::Status::NoteOn || status == ump::Status::NoteOff;
+    if (!note && status != ump::Status::ControlChange) return false;
+    if ((t.source != kInvalidMidiSource && t.source != source) || t.group != ump::group(m) ||
+        t.channel != ump::channel(m) || t.number != ((m.words[0] >> 8) & 0x7F) ||
+        (t.control == SequenceTrigger::Control::Note) != note)
+        return false;
+    if (note) {
+        pressed = ump::isNoteOn(m);
+        return true;
+    }
+    const bool high = ump::messageType(m) == ump::MessageType::Midi2ChannelVoice ? m.words[1] >= 0x80000000u
+                                                                                : (m.words[0] & 0x7F) >= 64;
+    pressed = high && !t.high;
+    t.high  = high;
+    return true;
+}
+
+void SequenceSet::forgetSounding() noexcept {
+    for (CompiledSequence& s : all)
+        for (SequenceRuntime::Sounding& sounding : s.runtime->sounding) sounding.used = false;
+    for (CompiledLooper& l : loopers)
+        for (LooperRuntime::Sounding& sounding : l.runtime->sounding) sounding.used = false;
+}
+
 // The transport started: a looper armed while it was stopped records from its first beat.
 void SequenceSet::loopersTransportStarted(const Block& b) noexcept {
     for (CompiledLooper& l : loopers) {

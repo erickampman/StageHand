@@ -137,6 +137,11 @@ struct TransportControl {
     // rack's. `action` unused.
     bool                      hasLooperSwitch = false;
     CompiledSequence::Trigger looperSwitch;
+
+    // Panic's control (docs/panic.md): a press is a Panic. Matched with the
+    // looper switch. `action` unused.
+    bool                      hasPanic = false;
+    CompiledSequence::Trigger panic;
 };
 
 class SequenceSet {
@@ -178,6 +183,13 @@ public:
     // `pressed` / `released` as it went down or up (a note, or a controller
     // crossing 64).
     bool matchLooperSwitch(MidiSourceHandle source, const MidiMessage& message, bool& pressed, bool& released) noexcept;
+    // Panic's control: true if `message` is its (it goes nowhere else);
+    // `pressed` on a note-on or a controller's rise to 64.
+    bool matchPanic(MidiSourceHandle source, const MidiMessage& message, bool& pressed) noexcept;
+    // Panic: the sequences and loopers forget the notes they're sounding (the
+    // engine has ended them), so their note-offs later don't end a note played
+    // since. They play on.
+    void forgetSounding() noexcept;
 
     // Replace `previous` (null for the first set). Sounding notes whose note was
     // deleted or shortened past now end at once; a rate or length change keeps

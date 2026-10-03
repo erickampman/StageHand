@@ -154,6 +154,23 @@ public:
     // itself. Main thread; false if the queue is full.
     bool endAuditions(MidiSourceHandle sequence, const MidiMessage* allNotesOff = nullptr) noexcept;
 
+    // --- Panic (docs/panic.md) ---
+    // At the next block, in every row of the graph: a note-off for every note
+    // sounding (the held-note table, sequences', loopers' and auditions'
+    // included), then the pedals up (CC 64, 66, 67) and All Notes Off (CC 123)
+    // on all 16 channels of group 1; the held pedals forgotten. The transport,
+    // sequences and loopers run on. A Panic within kPanicCutSeconds of the
+    // last also cuts the sound: All Sound Off (CC 120) first, and every row and
+    // bus effect reset (HostedPlugin::reset()). Panic's learned control
+    // (TransportControl::panic) does the same at its own frame. Any thread.
+    void panic() noexcept { panicRequested.store(true, std::memory_order_relaxed); }
+    static constexpr double kPanicCutSeconds = 2.0;
+    struct Panics {
+        std::uint32_t count = 0;       // so far (the button and the control)
+        bool          cut   = false;   // the last one cut the sound
+    };
+    Panics panics() const noexcept;   // any thread
+
     // --- MIDI learn (docs/sequences.md, section 4). Main thread.
     // Arm: the next note-on, or controller press (a value of 64 or more), from
     // any input is captured instead of reaching rows or triggers.
@@ -307,11 +324,12 @@ private:
     void takeMidi(const AudioCallbackContext& ctx) noexcept;
     void generateSequences(const AudioCallbackContext& ctx) noexcept;
     void generateAuditions(const AudioCallbackContext& ctx) noexcept;
-    void routeMidi(std::uint32_t frames) noexcept;
+    void routeMidi(const AudioCallbackContext& ctx) noexcept;
     void applyMutes() noexcept;
     void trackPedal(MidiSourceHandle source, const MidiMessage& m) noexcept;
     void sendHeldPedals() noexcept;   // to the graph's fresh slots
     void route(const QueuedMidi& item, std::uint32_t offset) noexcept;
+    void silence(const AudioCallbackContext& ctx, std::uint32_t offset) noexcept;   // a Panic, at `offset`
     bool deliver(std::size_t slot, const MidiMessage& original, const MidiMessage* upconverted,
                  std::size_t upconvertedCount, std::uint32_t offset, int noteOverride,
                  std::uint8_t* deliveredNote) noexcept;
@@ -417,6 +435,15 @@ private:
     enum : int { kLearnIdle, kLearnArmed, kLearnCaptured };
     std::atomic<int>              learnState{kLearnIdle};
     std::atomic<bool>             learnPrograms{false};
+
+    // Panic: main asks (panicRequested); the audio thread places it in the
+    // block (panicFrame: UINT32_MAX none), and publishes the count.
+    std::atomic<bool>             panicRequested{false};
+    std::uint32_t                 panicFrame    = UINT32_MAX;   // audio thread only
+    bool                          panickedOnce  = false;
+    Nanoseconds                   lastPanicTime = 0;
+    std::atomic<std::uint32_t>    panicCount{0};
+    std::atomic<bool>             panicCut{false};
     SpscQueue<SequenceSet::SetlistHit, 16> setlistRequests;   // audio -> main
 
     // Song switches: plans main -> audio (pushed before their graph is
