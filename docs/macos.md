@@ -1,7 +1,7 @@
 # StageHand — macOS (plan)
 
-Proposed 2026-10-03; nothing built yet. StageHand on macOS, keeping DGL for
-the UI (no native Cocoa interface). Builds on:
+Proposed 2026-10-03; nothing built yet. StageHand on macOS 15 (Sequoia) and
+later, keeping DGL for the UI (no native Cocoa interface). Builds on:
 - architecture.md, sections 1 to 3: MIDI, audio and plugins sit behind seams
   (`MidiInput`, `AudioBackend`, `PluginFactory`) so CoreMIDI and CoreAudio
   can be added without touching routing, the engine or the session.
@@ -17,12 +17,12 @@ behind the seams already:
 
 | Area | Linux | macOS | Size |
 |---|---|---|---|
-| Audio | `JackBackend` (JACK, through PipeWire) | `CoreAudioBackend` (AUHAL, outputs only) | Large |
+| Audio | `JackBackend` (JACK, through PipeWire) | `CoreAudioBackend` (outputs only; a second device for the click) | Large |
 | MIDI | `AlsaSeqInput` (sequencer, UMP mode) | `CoreMidiInput` (UMP, `MIDIEventList`) | Medium |
 | Plugin editors | `EditorWindow` (a raw X11 window) | A DGL window as the parent, on both | Medium |
 | Main loop | `MainLoop` (`poll()`, `eventfd`) | Timers on a `CFRunLoopTimer`; a pipe for wake-ups | Small to medium |
 | CLAP loading | `dlopen` of `.clap` files; `~/.clap`, `/usr/lib/clap` | `.clap` bundles (CFBundle); `~/Library/Audio/Plug-Ins/CLAP`, `/Library/Audio/Plug-Ins/CLAP` | Small |
-| File dialogs | zenity or kdialog, as a process | DPF's file browser (the native panel) | Small |
+| File dialogs | zenity or kdialog, as a process | DPF's file browser, on both (decision 10) | Small |
 | Monitor size | X11 / XRandR (`Ui/Monitor.cpp`) | CoreGraphics (plain C) | Tiny |
 | Paths | XDG (`~/.local/share`, `~/.local/state`) | `~/Library/Application Support/StageHand` | Tiny |
 | `main.cpp` | the pw-jack restart, `--quantum`, `/proc/self/exe` | left out; the buffer size set through CoreAudio | Small |
@@ -30,7 +30,7 @@ behind the seams already:
 The C++ is fine for Apple's toolchain as it is: no `<format>`, ranges or
 `jthread`, and `std::atomic<double>` is lock-free on arm64 and x86_64.
 
-## Decisions (proposed)
+## Decisions (proposed; 9 to 11 decided 2026-10-03)
 
 1. **DGL stays** for the rack window and the sequence editor (pugl's Cocoa
    backend). No native menu bar or controls.
@@ -38,12 +38,19 @@ The C++ is fine for Apple's toolchain as it is: no `<format>`, ranges or
    inputChannels` is 0 and the engine never reads input; the rig's "audio
    into plugins" is rows feeding bus effects, inside StageHand). So no
    microphone permission, and the backend opens an output device only.
-3. **One output device.** The main outputs, the click's pair and the bus
-   output pairs are channels of one device (an audio interface's 3-4, say).
-   A second device needs an aggregate device or drift correction: later, if
-   ever. `AuxRouting` (connect the click to a playback device, as JACK does)
-   becomes a choice of output channels on that device; on Linux the same
-   choice maps to ports.
+3. **The click can go to another interface** (decided 2026-10-03: headphones
+   on a second device, say), as it can on Linux today, where PipeWire
+   adapts between devices. On macOS StageHand makes a private aggregate
+   device (`AudioHardwareCreateAggregateDevice`, not shown to other apps,
+   gone when StageHand quits) of the main device and the click's, with
+   drift compensation on the click's: CoreAudio keeps the two in step, and
+   the engine still sees one device and one callback. The main outputs and
+   the bus pairs are channels of the main device; the click's pair is any
+   two channels of either. `AuxRouting` keeps its shape: its playback
+   devices are the system's output devices, and connecting the click to one
+   rebuilds the aggregate (a short gap in the sound, so it's a setup action,
+   not a stage one). With the click on the main device, no aggregate is
+   made.
 4. **One clock.** MIDI timestamps and audio block times must share a clock:
    `CLOCK_MONOTONIC` on Linux, host time (`mach_absolute_time`, in
    nanoseconds through `mach_timebase_info`) on macOS, where CoreMIDI and
@@ -62,6 +69,18 @@ The C++ is fine for Apple's toolchain as it is: no `<format>`, ranges or
    window (a pugl app has no menu bar).
 8. **OpenGL** (DPF's NanoVG backend) is deprecated on macOS but works,
    Apple Silicon included. Kept until it doesn't.
+9. **macOS 15 or later** (decided 2026-10-03). CoreMIDI's UMP API, audio
+   workgroups and everything else here are there; one version to test.
+10. **DPF's file browser on Linux too** (decided 2026-10-03), so both
+    platforms share one file-dialog path and `FileDialog`'s zenity and
+    kdialog processes go. On Linux DPF uses the desktop's portal
+    (xdg-desktop-portal, over D-Bus) where there is one, else its built-in
+    X11 browser. To check when it's built: choosing a folder (a rack bundle
+    on Linux), the setlist filter (`*.setlist`), and a suggested name when
+    saving; anything missing is added to DPF's options or worked around.
+11. **The click's device is the machine's,** not the rack's (it's a
+    setting of the rig, as the click's output is now, so each machine keeps
+    its own).
 
 ## Engine and backends
 
@@ -73,10 +92,13 @@ The C++ is fine for Apple's toolchain as it is: no `<format>`, ranges or
   through the device's nominal rate.
 - Property listeners: the sample rate changing (prepared racks dropped and
   remade, as now), the device list (hotplug), the device going away.
-- Output channels: the main pair, the click's pair and the buses' pairs as
-  channel numbers on the device (decision 3).
+- Output channels: the main pair and the buses' pairs as channel numbers on
+  the main device; the click's pair on the main device or, through the
+  private aggregate device, on another (decision 3). The aggregate is
+  rebuilt when either device changes or comes back (hotplug), and the click
+  waits silent until its device is there, as on Linux.
 - Real-time: CoreAudio's I/O thread. Plugins that start threads should join
-  its workgroup (`os_workgroup`, macOS 11+); CLAP's thread pool extension
+  its workgroup (`os_workgroup`); CLAP's thread pool extension
   runs on the host's threads, so this is the host's job when it's added.
 
 ### CoreMIDI input
@@ -115,9 +137,10 @@ The C++ is fine for Apple's toolchain as it is: no `<format>`, ranges or
   `CFRunLoopTimer` in the common modes, and DGL's `idle()` from the same;
   its wake-up `eventfd` becomes a pipe. Watched file descriptors (Linux
   plugins' `posix-fd-support`) aren't needed on macOS.
-- **File dialogs:** DPF's file browser, which uses the native open and save
-  panels on macOS (and could replace zenity and kdialog on Linux too: one
-  path). Racks as packages (decision 6) make choosing one a file choice.
+- **File dialogs:** DPF's file browser on both platforms (decision 10): the
+  native open and save panels on macOS, the portal (or DPF's own browser)
+  on Linux; `FileDialog` keeps its start-then-poll shape over it. Racks as
+  packages (decision 6) make choosing one a file choice on macOS.
 - **The monitor** a window opens on: `CGGetDisplaysWithPoint()` at the
   pointer, `CGDisplayBounds()`, through CoreGraphics' C API.
 - **Paths:** the default rig, the last position and the window size under
@@ -131,7 +154,7 @@ The C++ is fine for Apple's toolchain as it is: no `<format>`, ranges or
 
 - **CMake:** the Linux dependencies (JACK, ALSA, X11, XRandR) and sources
   only on Linux; CoreAudio, AudioToolbox, CoreMIDI, CoreFoundation and
-  CoreGraphics on macOS; DPF's Cocoa build. A universal binary (arm64 and
+  CoreGraphics on macOS; DPF's Cocoa build. `CMAKE_OSX_DEPLOYMENT_TARGET` 15.0. A universal binary (arm64 and
   x86_64), or arm64 only.
 - **CI:** the test suites run on a macOS GitHub Actions runner as well as
   Linux. They use fakes (no audio, MIDI or display), so they run anywhere.
@@ -155,13 +178,14 @@ The C++ is fine for Apple's toolchain as it is: no `<format>`, ranges or
 3. **CoreMIDI input,** with hotplug and devices by name (decision 5, both
    platforms). Tests: the name fallback in the Session tests; the backend on
    a Mac.
-4. **CoreAudio backend,** main outputs first, then the click's and the
-   buses' channel pairs (decision 3), the buffer size and sample-rate
-   changes.
+4. **CoreAudio backend,** main outputs first, then the buses' channel
+   pairs, then the click on its own pair or another device through the
+   private aggregate (decision 3), the buffer size and sample-rate changes.
 5. **Plugins and editors:** the CLAP bundle loader and scan paths, and the
    DGL editor window (replacing the X11 one on Linux too), with the run
    loop timers.
-6. **The app:** file dialogs, the monitor, Cmd shortcuts, the app bundle.
+6. **The app:** DPF's file dialogs on both platforms (decision 10; zenity
+   and kdialog go), the monitor, Cmd shortcuts, the app bundle.
 7. **Shipping:** signing, notarization, the entitlement, a release build.
 
 Milestones 3 to 5 are the real work, each about the size of a setlist
@@ -170,9 +194,6 @@ run the tests, but not play audio or MIDI.
 
 ## Open questions
 
-- **Minimum macOS version.** 11 (Big Sur) is the floor for CoreMIDI's UMP
-  API and `os_workgroup`; 12 or 13 would trim testing.
-- **Linux file dialogs:** switch them to DPF's file browser too (one path),
-  or keep zenity and kdialog there?
-- **A second output device** (the click on headphones from another
-  interface): wanted, or one device enough?
+None at the moment (answered 2026-10-03: macOS 15 or later; DPF's file
+dialogs on Linux too; the click can go to another interface, through a
+private aggregate device on macOS).
