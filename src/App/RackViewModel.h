@@ -263,6 +263,27 @@ struct SetlistModel {
     bool operator==(const SetlistModel&) const = default;
 };
 
+// A control link (docs/controls.md) as the Control Links menu and dialog show it.
+struct ControlLinkTargetModel {
+    ControlLinkTarget target;        // as saved: its range, curve, and what it names
+    std::string       text;          // "Keys: Cutoff", "Keys gain", "Bus A return", "Master"
+    bool              present = true; // there now (else left out until it is)
+
+    bool operator==(const ControlLinkTargetModel&) const = default;
+};
+struct ControlLinkModel {
+    ControlScope  scope = ControlScope::Song;
+    std::size_t   index = 0;          // in its scope's list
+    std::string   control;            // "KeyLab 88, CC 74, ch 1"
+    bool          connected  = true;  // its input is there
+    bool          pickUp     = true;
+    bool          passOn     = false;
+    bool          overridden = false; // all songs', with a song's own link on the same control
+    std::vector<ControlLinkTargetModel> targets;
+
+    bool operator==(const ControlLinkModel&) const = default;
+};
+
 struct RackViewModel {
     std::string               rackName;
     bool                      modified = false;
@@ -280,6 +301,9 @@ struct RackViewModel {
     StatusModel               status;
     SetlistModel              setlist;
     RigModel                  rig;
+    // Control links (docs/controls.md): this song's, then all songs'.
+    std::vector<ControlLinkModel> controlLinks;
+    bool                          controlLinkLearning = false;
 
     bool operator==(const RackViewModel&) const = default;
 };

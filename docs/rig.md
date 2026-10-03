@@ -208,6 +208,13 @@ song. It drives the current looper.
 (`"panic"` in rig.json, written as `"looperSwitch"` is), the performer's, the
 same in every song. A press is a Panic.
 
+**Added 2026-10-03 (docs/controls.md):** the rig holds the control links
+for all songs (`"controls"` in rig.json, written as a rack's are,
+rack-format.md), whose targets are the bus effects' parameters, the returns,
+the master, and a plugin's parameter in every row that has it (`"plugin"`
+instead of `"row"`). A song's own link on the same control overrides one of
+these while that song plays.
+
 **Added 2026-10-03 (the click's output):** the rig holds where the click
 plays (`"clickOutput"` in rig.json: a playback device by name; absent: none
 chosen), since it's the stage's headphones, the same in every song. Each rack

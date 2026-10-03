@@ -341,6 +341,13 @@ private:
     void sendHeldPedals() noexcept;   // to the graph's fresh slots
     void route(const QueuedMidi& item, std::uint32_t offset) noexcept;
     void silence(const AudioCallbackContext& ctx, std::uint32_t offset) noexcept;   // a Panic, at `offset`
+    // Control links (docs/controls.md): a controller a link takes, at `offset`.
+    void applyLinks(MidiSourceHandle source, const MidiMessage& message, std::uint32_t offset) noexcept;
+    double linkLevel(const CompiledControlLink::Target& target) noexcept;   // a level target's dB now
+    void setLinkTarget(const CompiledControlLink::Target& target, double value, std::uint32_t offset) noexcept;
+    SlotRuntime* findRuntime(const SlotRuntime* key) const noexcept;   // a row's or bus's, in the current graph
+    // A plugin's own parameter change (its GUI, a preset): pick-up waits for the control again.
+    void parameterChanged(const HostedPlugin* plugin, std::uint32_t param, double value) noexcept;
     bool deliver(std::size_t slot, const MidiMessage& original, const MidiMessage* upconverted,
                  std::size_t upconvertedCount, std::uint32_t offset, int noteOverride,
                  std::uint8_t* deliveredNote) noexcept;
@@ -435,7 +442,9 @@ private:
     // (a trigger must act before they generate). As large as the queue.
     struct StagedMidi {
         QueuedMidi    item;
-        std::uint32_t offset = 0;
+        std::uint32_t offset   = 0;
+        bool          linked   = false;   // a control link's controller (applied in routeMidi())
+        bool          consumed = false;   // and it goes nowhere else
     };
     static constexpr std::size_t kMaxStagedMidi = 4096;
     StagedMidi                    staged[kMaxStagedMidi];
@@ -455,6 +464,18 @@ private:
     Nanoseconds                   lastPanicTime = 0;
     std::atomic<std::uint32_t>    panicCount{0};
     std::atomic<bool>             panicCut{false};
+
+    // Plugins' parameter changes out of process(), for control links' pick-up.
+    struct ParamFeedback final : EventSink {
+        explicit ParamFeedback(Engine* owner) noexcept : engine(owner) {}
+        Engine*             engine;
+        const HostedPlugin* plugin = nullptr;   // the one processing
+        void push(const Event& event) noexcept override {
+            if (event.type == EventType::ParamValue) engine->parameterChanged(plugin, event.param.id, event.value);
+        }
+    };
+    ParamFeedback feedback{this};
+    double        linkMasterDb = 0.0;   // the master's control link level (audio thread)
 
     // DSP load: the running average (audio thread only) and what's published.
     float                         loadAverage = 0.0f;

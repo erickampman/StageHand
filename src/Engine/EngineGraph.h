@@ -83,6 +83,8 @@ public:
     const std::vector<BusConfig>&  buses() const noexcept { return busConfigs; }
     bool contains(const HostedPlugin* plugin) const noexcept;
 
+    static constexpr std::uint32_t kMaxBusEffectEvents = 256;   // a bus effect's events a block
+
 private:
     friend class Engine;
 
@@ -112,6 +114,9 @@ private:
             std::vector<const float*> in;     // the effect's main input channels
             std::vector<float>         audio;  // its output, channels * kMaxPluginBlockFrames
             std::vector<float*>        out;
+            std::vector<Event>         events;   // one block's (control links' parameter changes); fixed capacity
+            std::uint32_t              eventCount = 0;
+            std::uint32_t              cursor     = 0;
         };
         Stage                      stages[BusConfig::kEffects];
         const float*               returnChannels[2] = {};   // the last stage's output (or the input), as stereo

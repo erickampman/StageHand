@@ -21,6 +21,7 @@ const std::string kTransportLearn = "\x01transport";
 const std::string kSetlistLearn   = "\x01setlist";
 const std::string kLooperLearn    = "\x01looper";
 const std::string kPanicLearn     = "\x01panic";
+const std::string kLinkLearn      = "\x01link";
 
 SourceProtocol toSourceProtocol(MidiProtocol p) {
     return p == MidiProtocol::Midi2 ? SourceProtocol::Midi2 : SourceProtocol::Midi1;
@@ -198,6 +199,7 @@ void RackController::tick(double now) {
     }
     transport.panicConnected = session.panicControlProblem().empty();
     transport.panicLearning  = learningId == kPanicLearn;
+    model.controlLinkLearning = learningId == kLinkLearn;
     model.rows.clear();
     for (const Session::Slot& slot : session.slots()) model.rows.push_back(rowFor(slot, now, dt));
     // Forget rows that are gone.
@@ -207,6 +209,7 @@ void RackController::tick(double now) {
     takeKeptLoops();
     buildDock(now);
     buildRig(now, dt);
+    buildControlLinks();
 
     StatusModel& status = model.status;
     if (config.audioStatus) {
@@ -582,6 +585,249 @@ void RackController::removePanic() {
 
 std::vector<std::string> RackController::takeNotices() {
     return std::exchange(notices, {});
+}
+
+// --- control links (docs/controls.md) --------------------------------------------------------
+
+namespace {
+
+std::vector<RackController::ParameterChoice> choicesOf(const HostedPlugin* plugin) {
+    std::vector<RackController::ParameterChoice> out;
+    if (plugin == nullptr) return out;
+    for (const ParameterInfo& p : plugin->parameters())
+        if (p.isAutomatable) out.push_back({p.id, p.name, p.minValue, p.maxValue, p.isStepped});
+    return out;
+}
+
+const char* busName(int bus) {
+    return bus == 0 ? "A" : "B";
+}
+
+} // namespace
+
+std::vector<RackController::ParameterChoice> RackController::rowParameters(const std::string& rowId) const {
+    const Session::Slot* s = session.slot(rowId);
+    return choicesOf(s != nullptr ? s->plugin.get() : nullptr);
+}
+
+std::vector<RackController::ParameterChoice> RackController::effectParameters(std::size_t bus, std::size_t effect) const {
+    if (!session.hasRig() || bus >= kRigBuses || effect >= RigBus::kEffects) return {};
+    return choicesOf(session.rig().effects[bus][effect].plugin.get());
+}
+
+void RackController::learnControlLink(ControlLinkTarget target, ControlScope scope) {
+    using Kind = ControlLinkTarget::Kind;
+    std::vector<ControlLinkTarget> kept;
+    if (ControlLinkTarget check = target; !targetFor(scope, check, kept)) {
+        notice("Control Link: a row's gain or send belongs to its song; it can't be for all songs");
+        return;
+    }
+    if (target.kind == Kind::Parameter) {   // its whole range, and its name as it is now
+        const std::vector<ParameterChoice> choices =
+            target.bus >= 0 ? effectParameters(static_cast<std::size_t>(target.bus), static_cast<std::size_t>(target.effect))
+                            : rowParameters(target.row);
+        const auto p = std::find_if(choices.begin(), choices.end(), [&](const ParameterChoice& c) { return c.id == target.param; });
+        if (p == choices.end()) {
+            notice("Control Link: that parameter isn't there to link");
+            return;
+        }
+        target.paramName = p->name;
+        target.bottom    = p->minValue;
+        target.top       = p->maxValue;
+    } else {
+        target.bottom = -60.0;
+        target.top    = 0.0;
+    }
+    linkTarget = std::move(target);
+    linkScope  = scope;
+    learningId = kLinkLearn;
+    engine.armLearn();
+}
+
+void RackController::setControlLink(ControlScope scope, std::size_t index, ControlLinkSetup link) {
+    std::vector<ControlLinkSetup> links = session.controlLinks(scope);
+    if (index >= links.size()) return;
+    if (link.targets.empty()) links.erase(links.begin() + static_cast<std::ptrdiff_t>(index));
+    else links[index] = std::move(link);
+    session.setControlLinks(scope, std::move(links));
+}
+
+void RackController::removeControlLink(ControlScope scope, std::size_t index) {
+    std::vector<ControlLinkSetup> links = session.controlLinks(scope);
+    if (index >= links.size()) return;
+    links.erase(links.begin() + static_cast<std::ptrdiff_t>(index));
+    session.setControlLinks(scope, std::move(links));
+}
+
+bool RackController::setControlLinkScope(ControlScope scope, std::size_t index, ControlScope to) {
+    const std::vector<ControlLinkSetup>& links = session.controlLinks(scope);
+    if (index >= links.size()) return false;
+    if (scope == to) return true;
+    ControlLinkSetup link = links[index];
+    for (ControlLinkTarget t : link.targets) {
+        std::vector<ControlLinkTarget> kept;
+        if (targetFor(to, t, kept)) continue;
+        bool present = true;
+        notice("Control Link: " + targetText(t, present) +
+               (to == ControlScope::AllSongs ? " belongs to this song; it can't be for all songs"
+                                             : " isn't in this song; it can't be this song's"));
+        return false;
+    }
+    removeControlLink(scope, index);
+    addLinkTarget(std::move(link), to);
+    return true;
+}
+
+bool RackController::targetFor(ControlScope scope, ControlLinkTarget& target, std::vector<ControlLinkTarget>& out) const {
+    using Kind = ControlLinkTarget::Kind;
+    const bool rowParameter = target.kind == Kind::Parameter && target.bus < 0;
+    if (scope == ControlScope::AllSongs) {
+        if (target.kind == Kind::Gain || target.kind == Kind::Send) return false;
+        if (rowParameter && !target.row.empty()) {   // a row's plugin: that plugin, in every row
+            const Session::Slot* s = session.slot(target.row);
+            if (s == nullptr) return false;
+            target.plugin = s->saved.plugin.id;
+            target.row.clear();
+        }
+        out.push_back(target);
+        return true;
+    }
+    if (rowParameter && !target.plugin.empty()) {   // a plugin's: each row of this song with it
+        for (const Session::Slot& s : session.slots())
+            if (s.saved.plugin.id == target.plugin) {
+                ControlLinkTarget own = target;
+                own.plugin.clear();
+                own.row = s.saved.id;
+                out.push_back(std::move(own));
+            }
+        return !out.empty();
+    }
+    out.push_back(target);
+    return true;
+}
+
+void RackController::addLinkTarget(ControlLinkSetup link, ControlScope scope) {
+    std::vector<ControlLinkTarget> targets;
+    for (ControlLinkTarget t : link.targets) targetFor(scope, t, targets);
+    if (targets.empty()) return;
+    std::vector<ControlLinkSetup> links = session.controlLinks(scope);
+    auto same = std::find_if(links.begin(), links.end(), [&](const ControlLinkSetup& l) { return l.sameControl(link); });
+    if (same == links.end()) {
+        link.targets = std::move(targets);
+        links.push_back(std::move(link));
+    } else {   // a macro: one more target (or a new range for one it has)
+        for (ControlLinkTarget& t : targets) {
+            auto own = std::find_if(same->targets.begin(), same->targets.end(),
+                                    [&](const ControlLinkTarget& o) { return o.sameTarget(t); });
+            if (own != same->targets.end()) *own = std::move(t);
+            else same->targets.push_back(std::move(t));
+        }
+    }
+    session.setControlLinks(scope, std::move(links));
+}
+
+std::string RackController::triggerOn(const MidiSourceRef& source, std::uint8_t group, std::uint8_t channel,
+                                      std::uint8_t number) const {
+    auto overlaps = [&](const MidiSourceRef& other) {
+        return source.kind == MidiSourceRef::Kind::All || other.kind == MidiSourceRef::Kind::All || other == source;
+    };
+    auto answers = [&](const SequenceTrigger& t) {
+        return t.control == SequenceTrigger::Control::Controller && t.group == group && t.channel == channel &&
+               t.number == number && overlaps(t.source);
+    };
+    for (const SequenceTrigger& t : session.transportSettings().triggers)
+        if (answers(t)) return "the transport's";
+    for (const Session::SequenceEntry& e : session.sequences())
+        for (const SequenceTrigger& t : e.sequence.triggers)
+            if (answers(t)) return "'" + e.sequence.name + "''s";
+    if (setlistOpen)
+        for (const SetlistTrigger& t : setlist.triggers)
+            if (t.action != SetlistTrigger::Action::Song && t.control == SequenceTrigger::Control::Controller &&
+                t.group == group && t.channel == channel && t.number == number && overlaps(t.source))
+                return "the setlist's";
+    if (const auto& t = session.rig().saved.looperSwitch; t && answers(*t)) return "the looper switch";
+    if (const auto& t = session.rig().saved.panic; t && answers(*t)) return "Panic's";
+    return {};
+}
+
+std::string RackController::controlText(const ControlLinkSetup& link) const {
+    SequenceTrigger t;
+    t.source  = link.source;
+    t.control = SequenceTrigger::Control::Controller;
+    t.group   = link.group;
+    t.channel = link.channel;
+    t.number  = link.number;
+    const std::string text = triggerText(t);
+    return text.substr(text.find(": ") + 2);   // without the action
+}
+
+std::string RackController::targetText(const ControlLinkTarget& t, bool& present) const {
+    using Kind = ControlLinkTarget::Kind;
+    const std::string param = t.paramName.empty() ? "parameter " + std::to_string(t.param) : t.paramName;
+    auto rowName = [&](const std::string& id) {
+        const Session::Slot* s = session.slot(id);
+        present = s != nullptr && s->plugin != nullptr;
+        return s != nullptr ? s->saved.name : id;
+    };
+    present = true;
+    switch (t.kind) {
+        case Kind::Parameter:
+            if (t.bus >= 0) {
+                std::string effect = std::string("Bus ") + busName(t.bus) + " effect " + std::to_string(t.effect + 1);
+                const HostedPlugin* plugin =
+                    session.hasRig() && t.bus < static_cast<int>(kRigBuses) && t.effect >= 0 &&
+                            t.effect < static_cast<int>(RigBus::kEffects)
+                        ? session.rig().effects[t.bus][t.effect].plugin.get()
+                        : nullptr;
+                present = plugin != nullptr;
+                if (plugin != nullptr) effect += " (" + plugin->descriptor().name + ")";
+                return effect + ": " + param;
+            }
+            if (!t.plugin.empty()) {   // all songs': every row with that plugin
+                std::string pluginName = t.plugin;
+                present                = false;
+                for (const Session::Slot& s : session.slots())
+                    if (s.plugin && s.saved.plugin.id == t.plugin) {
+                        pluginName = s.plugin->descriptor().name;
+                        present    = true;
+                        break;
+                    }
+                return pluginName + " (every row): " + param;
+            }
+            return rowName(t.row) + ": " + param;
+        case Kind::Gain:   return rowName(t.row) + " gain";
+        case Kind::Send:   return rowName(t.row) + " send " + busName(t.bus);
+        case Kind::Return: present = session.hasRig(); return std::string("Bus ") + busName(t.bus) + " return";
+        case Kind::Master: return "Master";
+    }
+    return {};
+}
+
+void RackController::buildControlLinks() {
+    model.controlLinks.clear();
+    const std::vector<ControlLinkSetup>& own = session.controlLinks(ControlScope::Song);
+    for (const ControlScope scope : {ControlScope::Song, ControlScope::AllSongs}) {
+        const std::vector<ControlLinkSetup>& links = session.controlLinks(scope);
+        for (std::size_t i = 0; i < links.size(); ++i) {
+            const ControlLinkSetup& link = links[i];
+            ControlLinkModel        m;
+            m.scope      = scope;
+            m.index      = i;
+            m.control    = controlText(link);
+            m.connected  = session.controlLinkProblem(scope, i).empty();
+            m.pickUp     = link.pickUp;
+            m.passOn     = link.passOn;
+            m.overridden = scope == ControlScope::AllSongs &&
+                           std::any_of(own.begin(), own.end(), [&](const ControlLinkSetup& o) { return o.sameControl(link); });
+            for (const ControlLinkTarget& t : link.targets) {
+                ControlLinkTargetModel target;
+                target.target = t;
+                target.text   = targetText(t, target.present);
+                m.targets.push_back(std::move(target));
+            }
+            model.controlLinks.push_back(std::move(m));
+        }
+    }
 }
 
 // --- sources -----------------------------------------------------------------------
@@ -1226,11 +1472,14 @@ void RackController::finishLearn(const Engine::Learned& learned) {
     const bool        forSet    = id == kSetlistLearn;
     const bool        forLooper = id == kLooperLearn;
     const bool        forPanic  = id == kPanicLearn;
-    const Session::SequenceEntry* entry = transport || forSet || forLooper || forPanic ? nullptr : session.sequence(id);
-    if (forSet ? !setlistOpen : !transport && !forLooper && !forPanic && entry == nullptr) return;   // closed or removed meanwhile
+    const bool        forLink   = id == kLinkLearn;
+    const bool        ownTrigger = transport || forSet || forLooper || forPanic || forLink;
+    const Session::SequenceEntry* entry = ownTrigger ? nullptr : session.sequence(id);
+    if (forSet ? !setlistOpen : !ownTrigger && entry == nullptr) return;   // closed or removed meanwhile
     const std::string who = forSet      ? std::string("Setlist")
                             : forLooper ? std::string("Looper switch")
                             : forPanic  ? std::string("Panic")
+                            : forLink   ? std::string("Control Link")
                             : transport ? std::string("Transport")
                                         : entry->sequence.name;
     const auto input = std::find_if(session.openInputs().begin(), session.openInputs().end(),
@@ -1257,6 +1506,27 @@ void RackController::finishLearn(const Engine::Learned& learned) {
         for (const Session::SequenceEntry& e : session.sequences()) sequences.push_back(&e.sequence);
         for (const std::string& warning : triggerConflicts(session.rackName(), session.transportSettings(), sequences))
             notice(warning);
+        return;
+    }
+    if (forLink) {   // docs/controls.md
+        const MidiMessage& m = learned.message;
+        if (!ump::isChannelVoice(m) || ump::status(m) != ump::Status::ControlChange) {
+            notice(who + ": that was a key; move a knob, fader or pedal instead");
+            return;
+        }
+        ControlLinkSetup link;
+        link.source  = input->ref;
+        link.group   = ump::group(m);
+        link.channel = ump::channel(m);
+        link.number  = static_cast<std::uint8_t>((m.words[0] >> 8) & 0x7F);
+        if (const std::string user = triggerOn(link.source, link.group, link.channel, link.number); !user.empty()) {
+            notice(who + ": CC " + std::to_string(link.number) + " is already " + user + "; choose another control");
+            return;
+        }
+        link.targets = {linkTarget};
+        addLinkTarget(link, linkScope);
+        bool present = true;
+        notice(who + ": " + controlText(link) + " \xE2\x86\x92 " + targetText(linkTarget, present));
         return;
     }
     if (forLooper || forPanic) {   // in the rig: the performer's, the same in every song

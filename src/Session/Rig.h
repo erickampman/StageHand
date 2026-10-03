@@ -48,6 +48,9 @@ struct Rig {
     // Panic's control (docs/panic.md): a press is a Panic, in every song. Its
     // action is unused.
     std::optional<SequenceTrigger>   panic;
+    // Control links for all songs (docs/controls.md): bus effects, returns,
+    // the master, and a plugin's parameters in every row that has it.
+    std::vector<ControlLinkSetup>    controls;
     // Where the click plays (docs/sequences.md, section 7): a playback device,
     // by name; "" = none chosen. The stage's, so the same in every song; each
     // rack says whether it clicks, and how loud (MetronomeSettings).

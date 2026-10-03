@@ -67,6 +67,19 @@ void testRoundTrip(const fs::path& dir) {
     panic.number  = 21;
     panic.channel = 15;
     rig.panic                 = panic;
+    ControlLinkSetup tremolo;   // a control link for all songs: a plugin's parameter, in every row with it
+    tremolo.number = 1;
+    ControlLinkTarget depth;
+    depth.plugin    = "com.example.rhodes";
+    depth.param     = 12;
+    depth.paramName = "Tremolo depth";
+    ControlLinkTarget verb;
+    verb.kind  = ControlLinkTarget::Kind::Return;
+    verb.bus   = 1;
+    verb.bottom = -60.0;
+    verb.top    = 0.0;
+    tremolo.targets = {depth, verb};
+    rig.controls    = {tremolo};
     rig.clickOutput           = "Scarlett 2i2 USB Analog Stereo";   // where the click plays, in every song
     const std::string path    = (dir / "Stage.rig").string();
     CHECK(saveRig(path, rig).ok);
@@ -106,6 +119,14 @@ void testFailures(const fs::path& dir) {
     CHECK(!newer.ok && newer.error.find("newer") != std::string::npos);
     writeText(dir / "Three.rig/rig.json", R"({ "format": "stagehand-rig", "version": 1, "buses": [ {}, {}, {} ] })");
     CHECK(!loadRig((dir / "Three.rig").string(), rig).ok);
+    // A row's gain belongs to a song; a rig's parameter target names a plugin, not a row.
+    writeText(dir / "Gain.rig/rig.json", R"({ "format": "stagehand-rig", "version": 1,
+        "controls": [ { "controller": 11, "targets": [ { "target": "gain", "row": "keys" } ] } ] })");
+    const RackFileResult gain = loadRig((dir / "Gain.rig").string(), rig);
+    CHECK(!gain.ok && gain.error.find("all songs") != std::string::npos);
+    writeText(dir / "Row.rig/rig.json", R"({ "format": "stagehand-rig", "version": 1,
+        "controls": [ { "controller": 11, "targets": [ { "row": "keys", "param": 1 } ] } ] })");
+    CHECK(!loadRig((dir / "Row.rig").string(), rig).ok);
 }
 
 void testPaths(const fs::path& dir) {

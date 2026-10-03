@@ -8,6 +8,7 @@
 
 #include "Session/AppPaths.h"
 #include "Session/BundleFiles.h"
+#include "Session/ControlLinkJson.h"
 
 namespace stagehand {
 
@@ -68,6 +69,18 @@ RackFileResult loadRig(const std::string& bundlePath, Rig& rig) {
         };
         if (doc.contains("looperSwitch")) loaded.looperSwitch = control("looperSwitch");
         if (doc.contains("panic")) loaded.panic = control("panic");
+        if (doc.contains("controls")) {   // control links for all songs (docs/controls.md)
+            if (!doc.at("controls").is_array()) fail("\"controls\" should be a list");
+            std::size_t linkIndex = 0;
+            for (const Json& c : doc.at("controls")) {
+                ++linkIndex;
+                try {
+                    loaded.controls.push_back(parseControlLink(c, ControlScope::AllSongs));
+                } catch (const std::exception& e) {
+                    fail("control link " + std::to_string(linkIndex) + ": " + e.what());
+                }
+            }
+        }
         if (doc.contains("buses")) {
             const Json& buses = doc.at("buses");
             if (!buses.is_array() || buses.size() > kRigBuses) fail("\"buses\" must be a list of up to 2 buses");
@@ -135,6 +148,11 @@ RackFileResult saveRig(const std::string& bundlePath, const Rig& rig) {
         };
         if (rig.looperSwitch) control("looperSwitch", *rig.looperSwitch);
         if (rig.panic) control("panic", *rig.panic);
+        if (!rig.controls.empty()) {
+            Json controls = Json::array();
+            for (const ControlLinkSetup& link : rig.controls) controls.push_back(controlLinkJson(link));
+            doc["controls"] = controls;
+        }
         Json buses      = Json::array();
         for (std::size_t b = 0; b < kRigBuses; ++b) {
             const RigBus& bus = rig.buses[b];

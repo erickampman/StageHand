@@ -718,6 +718,109 @@ void testDraining() {
     engine->collect();
 }
 
+// Control links (docs/controls.md, milestone 2): compiled from both scopes
+// with their targets found in what's running: a row's parameter; all songs'
+// by plugin in every row that has it, unless the song has its own link on
+// the control; a bus effect's; a link whose input isn't there, or whose
+// parameter the plugin doesn't have, leaves it out. A row removed takes its
+// targets with it; capture() keeps the song's links; editing the rig's marks it.
+void testControlLinks() {
+    using Kind = ControlLinkTarget::Kind;
+    FakeFactory factory;
+    factory.installed = {installedPlugin("synth", "/clap/Synth.clap"), installedPlugin("verb", "/clap/Verb.clap")};
+    FakeMidiInput midi;
+    NullHost      host;
+    auto          engine = std::make_unique<Engine>();
+    Session       session(factory, host, midi, *engine);
+    Rack rack;
+    rack.slots = {slot("a", "synth", "/clap/Synth.clap"), slot("b", "synth", "/clap/Synth.clap")};
+    Session::LoadReport report;
+    CHECK(session.load(rack, 48000.0, report));
+    Rig       rig;
+    RigEffect verb;
+    verb.plugin             = installedPlugin("verb", "/clap/Verb.clap");
+    rig.buses[0].effects[0] = verb;
+    session.loadRig(rig, 48000.0, report);
+
+    auto fake = [&](const std::string& row) { return dynamic_cast<FakePlugin*>(session.slot(row)->plugin.get()); };
+    FakePlugin* a = fake("a");
+    FakePlugin* b = fake("b");
+    auto* fx      = dynamic_cast<FakePlugin*>(session.rig().effects[0][0].plugin.get());
+    for (FakePlugin* p : {a, b}) p->params = {ParameterInfo{7, nullptr, "Cutoff", 0.0, 1.0, 0.5}};
+    fx->params = {ParameterInfo{3, nullptr, "Size", 0.0, 10.0, 0.0, true, true}};
+
+    auto link = [](std::uint8_t cc, std::vector<ControlLinkTarget> targets) {
+        ControlLinkSetup l;
+        l.number  = cc;
+        l.pickUp  = false;   // jump: every move acts
+        l.targets = std::move(targets);
+        return l;
+    };
+    auto param = [](std::string row, std::string plugin, std::uint32_t id, double top) {
+        ControlLinkTarget t;
+        t.row    = std::move(row);
+        t.plugin = std::move(plugin);
+        t.param  = id;
+        t.top    = top;
+        return t;
+    };
+    ControlLinkTarget size = param("", "", 3, 10.0);
+    size.bus               = 0;
+    size.effect            = 0;
+    ControlLinkSetup elsewhere = link(77, {param("", "", 0, 0.0)});
+    elsewhere.targets[0].kind  = Kind::Master;
+    elsewhere.source           = MidiSourceRef{MidiSourceRef::Kind::Device, "Gone:Gone 1"};
+    session.setControlLinks(ControlScope::Song, {link(74, {param("a", "", 7, 1.0)}), link(78, {param("a", "", 99, 1.0)})});
+    session.setControlLinks(ControlScope::AllSongs, {link(74, {param("", "synth", 7, 0.5)}),
+                                                     link(75, {param("", "synth", 7, 1.0)}), link(76, {size}), elsewhere});
+    CHECK(session.modified() && session.rigModified());
+    CHECK(session.controlLinkProblem(ControlScope::AllSongs, 3) != "" &&
+          session.controlLinkProblem(ControlScope::AllSongs, 0).empty());
+    session.flush();
+    runBlock(*engine);
+
+    // The parameter values each plugin was sent since the last call.
+    auto sent = [](FakePlugin* p) {
+        std::vector<std::pair<std::uint32_t, double>> values;
+        for (const FakePlugin::Call& call : p->calls)
+            for (const Event& e : call.events)
+                if (e.type == EventType::ParamValue) values.emplace_back(e.param.id, e.value);
+        p->calls.clear();
+        return values;
+    };
+    auto cc = [&](std::uint8_t number, std::uint8_t value) {
+        TimedMidiMessage m;
+        m.captureTime       = 1'000'000'000 - 1'000'000;
+        m.message.words[0]  = 0x20B00000u | (std::uint32_t{number} << 8) | value;
+        m.message.wordCount = 1;
+        engine->onMidi(42, m);
+        runBlock(*engine);
+    };
+    using Sent = std::vector<std::pair<std::uint32_t, double>>;
+    sent(a), sent(b), sent(fx);
+    cc(74, 127);   // the song's own: row a, to 1 (the rig's, to 0.5, is overridden)
+    CHECK((sent(a) == Sent{{7, 1.0}}) && sent(b).empty());
+    cc(75, 127);   // all songs', by plugin: both rows
+    CHECK((sent(a) == Sent{{7, 1.0}}) && (sent(b) == Sent{{7, 1.0}}));
+    cc(76, 64);    // the bus effect's stepped parameter
+    CHECK((sent(fx) == Sent{{3, 5.0}}));
+    cc(78, 127);   // a parameter the plugin doesn't have: left out
+    CHECK(sent(a).empty());
+
+    // Row a removed: its targets go, and with them the links that had only it.
+    CHECK(session.removeSlot("a"));
+    CHECK(session.controlLinks(ControlScope::Song).empty() && session.capture().controls.empty());
+    session.flush();
+    runBlock(*engine);
+    sent(b);
+    cc(74, 127);   // now all songs' 74 acts: row b, to 0.5
+    CHECK((sent(b) == Sent{{7, 0.5}}));
+
+    session.setControlLinks(ControlScope::Song, {link(74, {param("b", "", 7, 1.0)})});
+    CHECK(session.capture().controls.size() == 1);
+    session.unload();
+}
+
 int main() {
     testLoad();
     testNoFallbackToAll();
@@ -731,5 +834,6 @@ int main() {
     testRig();
     testPrepare();
     testDraining();
+    testControlLinks();
     return test::finish("Session");
 }

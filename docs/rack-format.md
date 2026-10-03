@@ -314,6 +314,49 @@ Written only when it differs from the defaults.
 
 Written only when it differs from the defaults.
 
+## Control links
+
+A knob, fader or pedal driving parameters and levels in this song
+(docs/controls.md). The rig's links for all songs are written the same way
+in rig.json (docs/rig.md).
+
+```json
+"controls": [
+  {"source": "device:FCB1010:FCB1010 MIDI 1", "controller": 11, "channel": 1, "group": 1,
+   "mode": "jump", "passOn": true,
+   "targets": [
+     {"target": "parameter", "row": "keys", "param": 7, "name": "Cutoff",
+      "bottom": 0.8, "top": 0.2, "curve": "fast start"},
+     {"target": "gain", "row": "keys", "bottom": -60, "top": 0, "curve": "linear"},
+     {"target": "parameter", "bus": "A", "effect": 1, "param": 3, "bottom": 0, "top": 10, "curve": "linear"}
+   ]}
+]
+```
+
+| Field | Default | Meaning |
+|---|---|---|
+| `source` | `"all"` | The input, as a trigger's: `"all"`, `"device:<id>"`, `"virtual:<name>"` |
+| `controller`, `channel`, `group` | (required), `1`, `1` | The controller, 1-based channel and group |
+| `mode` | `"pick-up"` | `"pick-up"`: it acts once it reaches where the target is; `"jump"`: at once |
+| `passOn` | `false` | The controller also goes to the rows as usual (else it goes nowhere else) |
+| `targets` | (required) | One or more; several make a macro |
+
+Each target:
+
+| Field | Meaning |
+|---|---|
+| `target` | `"parameter"` (the default), `"gain"`, `"send"`, `"return"` or `"master"` |
+| `row` | A slot id: a parameter's row, a gain's, a send's. Must be one of the rack's slots |
+| `plugin` | In rig.json only: a parameter of this plugin (by id), in every row that has it |
+| `bus`, `effect` | `"A"` or `"B"`; `1` or `2`: a bus effect's parameter (with `effect`), a send's bus, a return's bus |
+| `param`, `name` | A parameter's id, and its name as last seen |
+| `bottom`, `top` | Its value at the control's bottom and top (top below bottom reverses it): the parameter's plain value, or dB for a level (defaults `-60` and `0`; `0` and `1` for a parameter) |
+| `curve` | `"linear"` (the default), `"slow start"` or `"fast start"` |
+
+Written only when there are any. A link whose input isn't connected, or a
+target that isn't there (a row without its plugin, a parameter the plugin
+doesn't have), is kept and does nothing until it is.
+
 ## Versioning
 
 `version` counts incompatible changes. A newer rack is refused with a clear

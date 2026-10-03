@@ -14,6 +14,7 @@
 
 #include "Core/Ump.h"
 #include "Session/BundleFiles.h"
+#include "Session/ControlLinkJson.h"
 
 namespace stagehand {
 
@@ -547,6 +548,21 @@ RackFileResult loadRack(const std::string& bundlePath, Rack& rack) {
                 }
             }
         }
+        if (doc.contains("controls")) {   // docs/controls.md
+            if (!doc.at("controls").is_array()) fail("\"controls\" should be a list");
+            std::size_t linkIndex = 0;
+            for (const Json& c : doc.at("controls")) {
+                ++linkIndex;
+                try {
+                    ControlLinkSetup link = parseControlLink(c, ControlScope::Song);
+                    for (const ControlLinkTarget& t : link.targets)
+                        if (!t.row.empty() && ids.count(t.row) == 0) fail("there's no slot '" + t.row + "'");
+                    loaded.controls.push_back(std::move(link));
+                } catch (const std::exception& e) {
+                    fail("control link " + std::to_string(linkIndex) + ": " + e.what());
+                }
+            }
+        }
     } catch (const std::exception& e) {   // nlohmann's errors are std::exceptions too
         result.error = jsonPath.string() + ": " + e.what();
         return result;
@@ -603,6 +619,11 @@ RackFileResult saveRack(const std::string& bundlePath, const Rack& rack) {
         }
         if (rack.transport != TransportSettings{}) doc["transport"] = transportJson(rack.transport);
         if (rack.metronome != MetronomeSettings{}) doc["metronome"] = metronomeJson(rack.metronome);
+        if (!rack.controls.empty()) {
+            Json controls = Json::array();
+            for (const ControlLinkSetup& link : rack.controls) controls.push_back(controlLinkJson(link));
+            doc["controls"] = controls;
+        }
         {
             std::ofstream out(temp / "rack.json", std::ios::trunc);
             out << doc.dump(2) << '\n';

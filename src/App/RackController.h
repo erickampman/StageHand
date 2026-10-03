@@ -243,6 +243,31 @@ public:
     void        panic();
     void        learnPanic();
     void        removePanic();
+
+    // --- control links (docs/controls.md) ---
+    // A plugin's parameters, for choosing one from a list: a row's, or a bus
+    // effect's. Empty for a placeholder or an empty slot.
+    struct ParameterChoice {
+        std::uint32_t id = 0;
+        std::string   name;
+        double        minValue = 0.0, maxValue = 1.0;
+        bool          stepped  = false;
+    };
+    std::vector<ParameterChoice> rowParameters(const std::string& rowId) const;
+    std::vector<ParameterChoice> effectParameters(std::size_t bus, std::size_t effect) const;
+    // Learn: the next controller moved drives `target`, over the parameter's
+    // whole range (a level: -60 to 0 dB). A link in `scope` on that control
+    // takes it as another target (a macro); otherwise it's a new link. For all
+    // songs, a row's parameter becomes that plugin's in every row; a row's gain
+    // or send can't be. A note, or a control a trigger uses, is refused (a notice).
+    void learnControlLink(ControlLinkTarget target, ControlScope scope);
+    // Replace link `index` as edited (mode, pass on, targets' ranges and
+    // curves, targets removed; none left removes it).
+    void setControlLink(ControlScope scope, std::size_t index, ControlLinkSetup link);
+    void removeControlLink(ControlScope scope, std::size_t index);
+    // Move a link between this song and all songs; false (with a notice) if
+    // it can't go: a row's gain or send, or (to this song) a plugin no row has.
+    bool setControlLinkScope(ControlScope scope, std::size_t index, ControlScope to);
     // Leading and trailing spaces go; an empty name is refused (with a notice);
     // at most kMaxNameBytes. The id stays: rows keep playing it.
     void renameSequence(const std::string& id, const std::string& name);
@@ -468,6 +493,18 @@ private:
     void           buildRig(double now, double dt);   // model.rig
     void           finishLearn(const Engine::Learned& learned);
     void           logXrun() const;   // a new xrun, with the song and the bar, on stderr
+    void           buildControlLinks();   // model.controlLinks
+    std::string    controlText(const ControlLinkSetup& link) const;   // "KeyLab 88, CC 74, ch 1"
+    std::string    targetText(const ControlLinkTarget& target, bool& present) const;
+    // Which trigger already answers this controller, if one does ("Transport", a sequence's name...).
+    std::string    triggerOn(const MidiSourceRef& source, std::uint8_t group, std::uint8_t channel,
+                             std::uint8_t number) const;
+    // `target` as `scope` keeps it (for all songs, a row's parameter by its
+    // plugin); false if it can't be in that scope.
+    bool           targetFor(ControlScope scope, ControlLinkTarget& target, std::vector<ControlLinkTarget>& out) const;
+    void           addLinkTarget(ControlLinkSetup link, ControlScope scope);   // merged with one on its control
+    ControlLinkTarget linkTarget;    // learning: what the control will drive
+    ControlScope      linkScope = ControlScope::Song;
     // The setlist's triggers that fired since the last tick, all at once
     // (pressing Next three times goes three songs on), then one switch.
     void           takeSetlistRequests();

@@ -102,6 +102,10 @@ struct SlotRuntime {
     // --- audio thread only: the ramps ---
     GainRamp gain;
     GainRamp send[kBusCount] = {GainRamp(0.0f), GainRamp(0.0f)};
+    // Control links' levels (docs/controls.md), in dB, after the gain (a bus's:
+    // its return) and after each send level. 0 dB until a link moves them.
+    double linkGainDb              = 0.0;
+    double linkSendDb[kBusCount]   = {};
 
     // Audio thread writes, main thread reads: a draining slot (SlotConfig::draining)
     // has finished ringing out; the next graph can leave it out.

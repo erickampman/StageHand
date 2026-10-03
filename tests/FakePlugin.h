@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <map>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -34,13 +35,16 @@ public:
 
     const PluginDescriptor&    descriptor() const override { return desc; }
     PortLayout                 portLayout() const override { return layout; }
-    std::vector<ParameterInfo> parameters() const override { return {}; }
+    std::vector<ParameterInfo> parameters() const override { return params; }
     bool activate(double, std::uint32_t) override {
         active = true;
         return true;
     }
     void   deactivate() override { active = false; }
-    double paramValue(std::uint32_t) const override { return 0.0; }
+    double paramValue(std::uint32_t id) const override {
+        const auto it = values.find(id);
+        return it != values.end() ? it->second : 0.0;
+    }
     void   flushParams(const EventBlock&, EventSink*) override {}
     bool   saveState(std::vector<std::byte>& out) const override {
         out.insert(out.end(), state.begin(), state.end());
@@ -62,6 +66,9 @@ public:
         call.time     = ctx.time;
         call.events.assign(ctx.eventsIn.events, ctx.eventsIn.events + ctx.eventsIn.count);
         calls.push_back(call);   // allocates: fine in a test
+        if (ctx.eventsOut != nullptr)   // its own parameter changes (as if from its GUI)
+            for (const Event& e : emit) ctx.eventsOut->push(e);
+        emit.clear();
         if (busy.count() > 0)    // a heavy plugin: this long a call, at least
             for (const auto end = std::chrono::steady_clock::now() + busy; std::chrono::steady_clock::now() < end;) {}
         for (std::uint32_t c = 0; c < ctx.audioOut.channelCount; ++c)
@@ -79,6 +86,9 @@ public:
     int                    stops             = 0;
     int                    resets            = 0;
     std::chrono::nanoseconds busy{0};                // each process() call takes this long
+    std::vector<Event>     emit;                     // pushed to eventsOut at the next process()
+    std::vector<ParameterInfo>      params;          // parameters()
+    std::map<std::uint32_t, double> values;          // paramValue(); 0 if not set
     bool                   processing        = false;
     bool                   active            = false;
     bool                   loadedWhileActive = false;
@@ -116,6 +126,7 @@ public:
     void process(const ProcessContext& ctx) noexcept override {
         ++processed;
         processing = true;
+        received.insert(received.end(), ctx.eventsIn.events, ctx.eventsIn.events + ctx.eventsIn.count);
         lastInputChannels = ctx.audioIn.channelCount;
         for (std::uint32_t c = 0; c < ctx.audioOut.channelCount; ++c)
             for (std::uint32_t f = 0; f < ctx.frameCount; ++f) {
@@ -134,6 +145,7 @@ public:
     PluginDescriptor desc;
     float            factor;
     int              processed         = 0;
+    std::vector<Event> received;   // every event it was given
     int              stops             = 0;
     int              resets            = 0;
     bool             processing        = false;

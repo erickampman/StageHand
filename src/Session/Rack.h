@@ -13,6 +13,7 @@
 #include "Core/MidiSourceRef.h"
 #include "Core/Sequence.h"
 #include "Plugin/PluginDescriptor.h"
+#include "Session/ControlLinks.h"
 
 namespace stagehand {
 
@@ -94,6 +95,7 @@ struct Rack {
     std::vector<LooperSetup> loopers;   // docs/looper.md
     TransportSettings     transport;
     MetronomeSettings     metronome;
+    std::vector<ControlLinkSetup> controls;   // this song's control links (docs/controls.md)
 };
 
 // A slot id from a display name: lowercase letters and digits, other runs of

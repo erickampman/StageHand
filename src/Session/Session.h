@@ -290,6 +290,18 @@ public:
     // = off. Marks the rig modified.
     void               setPanicControl(const std::optional<SequenceTrigger>& trigger);
     const std::string& panicControlProblem() const noexcept { return panicIssue; }
+
+    // --- control links (docs/controls.md): this song's (saved with the rack:
+    // modified()) and all songs' (the rig's: rigModified()), published with
+    // the sequences. A song's link on a control overrides an all-songs link on
+    // the same control. Targets that aren't there (a row without its plugin, a
+    // parameter the plugin doesn't have) are left out until they are.
+    const std::vector<ControlLinkSetup>& controlLinks(ControlScope scope) const noexcept {
+        return scope == ControlScope::Song ? songLinks : rigState.saved.controls;
+    }
+    void setControlLinks(ControlScope scope, std::vector<ControlLinkSetup> links);
+    // Why link `index`'s input didn't resolve; empty if it did (or there's no such link).
+    const std::string& controlLinkProblem(ControlScope scope, std::size_t index) const noexcept;
     // Where the click plays: in the rig (Rig::clickOutput), the same in every
     // song. Marks the rig modified. A rack from before kept it itself: loading
     // one gives the rig its choice if the rig has none (and the rack drops it).
@@ -406,6 +418,15 @@ private:
     std::string                             looperSwitchIssue;
     MidiSourceHandle                        panicSource = kInvalidMidiSource;
     std::string                             panicIssue;
+    std::vector<ControlLinkSetup>           songLinks;
+    struct LinkSources {   // a scope's links' inputs, resolved
+        std::vector<MidiSourceHandle> handles;
+        std::vector<std::string>      problems;
+        bool operator==(const LinkSources&) const = default;
+    };
+    LinkSources                             songLinkSources, rigLinkSources;
+    void                                    resolveControlLinks();
+    void                                    compileControlLinks(std::vector<CompiledControlLink>& out) const;
     void                                    resolveLooper(LooperEntry& entry);
     LooperEntry*                            findLooper(const std::string& id) noexcept;
     std::vector<MidiSourceHandle>           setlistSources;   // setlistControls' inputs, resolved

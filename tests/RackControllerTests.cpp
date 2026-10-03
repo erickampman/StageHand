@@ -1879,6 +1879,134 @@ void testDspAndXruns() {
     rig.engine->collect();
 }
 
+// Control links (docs/controls.md, milestone 2): learned for a row's
+// parameter, then its gain on the same control (a macro); a key, a control a
+// trigger uses, and a row's gain for all songs refused; moved to all songs
+// (a row's parameter becomes its plugin's) once nothing holds it to the song;
+// saved in the rack and the rig; removed.
+void testControlLinks() {
+    namespace fs = std::filesystem;
+    using Kind = ControlLinkTarget::Kind;
+    const fs::path dir = scratchDir("stagehand-links-test");
+    fs::remove_all(dir);
+    Rig rig;
+    rig.session->addOpenSource(MidiSourceRef{MidiSourceRef::Kind::Virtual, "MIDI 2.0 In"}, 7);
+    Rack rack;
+    rack.name  = "Song";
+    rack.slots = {slot("keys", "synth", "/clap/Synth.clap")};
+    Session::LoadReport report;
+    rig.session->load(rack, 48000.0, report);
+    const std::string rackPath    = (dir / "Song.rack").string();
+    RackController::Config config = rig.config(rackPath);
+    config.defaultRigPath         = (dir / "Default.rig").string();
+    RackController       controller(*rig.session, *rig.engine, rig.midi, rig.factory, config);
+    const RackViewModel& view = controller.view();
+    rig.factory.created.at("synth")->params = {ParameterInfo{7, nullptr, "Cutoff", 0.0, 1.0, 0.5},
+                                               ParameterInfo{8, nullptr, "Hidden", 0.0, 1.0, 0.5, false}};
+    double now  = 0.0;
+    auto   tick = [&] { controller.tick(now += 0.05); };
+    auto   send = [&](std::uint32_t word) {
+        TimedMidiMessage m;
+        m.captureTime       = 1'000'000'000 - 1'000'000;
+        m.message.words[0]  = word;
+        m.message.wordCount = 1;
+        rig.engine->onMidi(7, m);
+        runBlock(*rig.engine);
+        tick();
+    };
+    tick();
+    controller.takeNotices();
+    CHECK(controller.rowParameters("keys").size() == 1);   // automatable ones only
+
+    ControlLinkTarget cutoff;
+    cutoff.row   = "keys";
+    cutoff.param = 7;
+    controller.learnControlLink(cutoff, ControlScope::Song);
+    tick();
+    CHECK(view.controlLinkLearning);
+    send(0x20B04A7Fu);   // CC 74
+    CHECK(!view.controlLinkLearning && view.controlLinks.size() == 1);
+    CHECK(controller.takeNotices() ==
+          std::vector<std::string>{"Control Link: From other apps (MIDI 2.0), CC 74, ch 1 \xE2\x86\x92 keys: Cutoff"});
+    if (view.controlLinks.size() == 1) {
+        const ControlLinkModel& l = view.controlLinks[0];
+        CHECK(l.scope == ControlScope::Song && l.pickUp && !l.passOn && l.connected && l.targets.size() == 1);
+        CHECK(l.targets[0].text == "keys: Cutoff" && l.targets[0].present && l.targets[0].target.bottom == 0.0 &&
+              l.targets[0].target.top == 1.0 && l.targets[0].target.paramName == "Cutoff");
+    }
+    CHECK(rig.session->modified());
+
+    // The same control again: the link gets a second target.
+    ControlLinkTarget gain;
+    gain.kind = Kind::Gain;
+    gain.row  = "keys";
+    controller.learnControlLink(gain, ControlScope::Song);
+    send(0x20B04A7Fu);
+    CHECK(view.controlLinks.size() == 1 && view.controlLinks[0].targets.size() == 2);
+    if (view.controlLinks[0].targets.size() == 2)
+        CHECK(view.controlLinks[0].targets[1].text == "keys gain" && view.controlLinks[0].targets[1].target.bottom == -60.0);
+    controller.takeNotices();
+
+    // Refused: a key; a control a trigger answers; a row's gain for all songs.
+    controller.learnControlLink(cutoff, ControlScope::Song);
+    send(0x20903C64u);
+    CHECK(controller.takeNotices().size() == 1 && view.controlLinks.size() == 1);
+    TransportSettings transport;
+    SequenceTrigger   start;
+    start.action  = SequenceTrigger::Action::Start;
+    start.control = SequenceTrigger::Control::Controller;
+    start.number  = 80;
+    transport.triggers = {start};
+    rig.session->setTransportSettings(transport);
+    controller.learnControlLink(cutoff, ControlScope::Song);
+    send(0x20B0507Fu);
+    std::vector<std::string> notices = controller.takeNotices();
+    CHECK(notices.size() == 1 && notices[0].find("already the transport's") != std::string::npos);
+    controller.learnControlLink(gain, ControlScope::AllSongs);
+    tick();
+    CHECK(!view.controlLinkLearning && controller.takeNotices().size() == 1);
+
+    // To all songs: refused while it drives the row's gain; then, without it, moved.
+    CHECK(!controller.setControlLinkScope(ControlScope::Song, 0, ControlScope::AllSongs));
+    CHECK(controller.takeNotices().size() == 1);
+    ControlLinkSetup edited = rig.session->controlLinks(ControlScope::Song)[0];
+    edited.targets.pop_back();
+    edited.pickUp = false;
+    controller.setControlLink(ControlScope::Song, 0, edited);
+    CHECK(controller.setControlLinkScope(ControlScope::Song, 0, ControlScope::AllSongs));
+    tick();
+    CHECK(view.controlLinks.size() == 1 && view.controlLinks[0].scope == ControlScope::AllSongs &&
+          !view.controlLinks[0].pickUp);
+    if (!view.controlLinks.empty() && !view.controlLinks[0].targets.empty()) {
+        const ControlLinkTargetModel& t = view.controlLinks[0].targets[0];
+        CHECK(t.target.plugin == "synth" && t.target.row.empty() && t.text == "synth (every row): Cutoff" && t.present);
+    }
+    CHECK(rig.session->rigModified());
+
+    // A song's link on the same control overrides it.
+    controller.learnControlLink(cutoff, ControlScope::Song);
+    send(0x20B04A7Fu);
+    CHECK(view.controlLinks.size() == 2 && view.controlLinks[1].overridden && !view.controlLinks[0].overridden);
+
+    // Saved: the song's in the rack, all songs' in the rig.
+    CHECK(controller.save());
+    stagehand::Rack savedRack;
+    stagehand::Rig  savedRig;
+    CHECK(loadRack(rackPath, savedRack).ok && savedRack.controls.size() == 1 &&
+          savedRack.controls[0].targets[0].row == "keys");
+    CHECK(loadRig(config.defaultRigPath, savedRig).ok && savedRig.controls.size() == 1 &&
+          savedRig.controls[0].targets[0].plugin == "synth" && !savedRig.controls[0].pickUp);
+
+    controller.removeControlLink(ControlScope::AllSongs, 0);
+    controller.removeControlLink(ControlScope::Song, 0);
+    tick();
+    CHECK(view.controlLinks.empty());
+
+    runBlock(*rig.engine);
+    rig.engine->collect();
+    fs::remove_all(dir);
+}
+
 } // namespace
 
 int main() {
@@ -1909,5 +2037,6 @@ int main() {
     testHotplug();
     testPanic();
     testDspAndXruns();
+    testControlLinks();
     return test::finish("RackController");
 }

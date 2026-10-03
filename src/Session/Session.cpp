@@ -99,13 +99,16 @@ std::vector<std::string> Session::syncMidi() {
     const std::vector<MidiSourceHandle> setlistBefore  = setlistSources;
     const MidiSourceHandle              switchBefore   = looperSwitchSource;
     const MidiSourceHandle              panicBefore    = panicSource;
+    const LinkSources                   songLinksBefore = songLinkSources, rigLinksBefore = rigLinkSources;
     const bool                          rigWasModified = rigDirty;
     setSetlistTriggers(std::vector<SetlistTrigger>(setlistControls));
     setLooperSwitch(rigState.saved.looperSwitch);
     setPanicControl(rigState.saved.panic);
     rigDirty         = rigWasModified;   // the same controls: not an edit
+    resolveControlLinks();
     sequencesChanged = sequencesChanged || setlistSources != setlistBefore || looperSwitchSource != switchBefore ||
-                       panicSource != panicBefore;
+                       panicSource != panicBefore || songLinkSources != songLinksBefore ||
+                       rigLinkSources != rigLinksBefore;
     sequencesDirty   = wasDirty || sequencesChanged;
     return changes;
 }
@@ -205,6 +208,10 @@ bool Session::activate(std::unique_ptr<PreparedRack> prepared, LoadReport& repor
     applyMetronome();
     for (const std::string& problem : resolveTransport())
         report.warnings.push_back("transport: a MIDI control won't act: " + problem);
+    songLinks = rack.controls;
+    resolveControlLinks();
+    for (const std::string& problem : songLinkSources.problems)
+        if (!problem.empty()) report.warnings.push_back("a control link won't act: " + problem);
     for (Slot& slot : p.slots) {
         if (!slot.plugin) continue;
         resolveSource(slot);
@@ -264,6 +271,7 @@ Rack Session::capture() const {
     for (const LooperEntry& entry : looperList) rack.loopers.push_back(entry.setup);   // the container, not its notes
     rack.transport = transportSetup;
     rack.metronome = metronomeSetup;
+    rack.controls  = songLinks;
     for (const Slot& slot : loaded) {
         RackSlot saved = slot.saved;
         if (slot.plugin) {
@@ -365,6 +373,7 @@ void Session::loadRig(const Rig& rig, double rate, LoadReport& report) {
     rigState  = std::move(next);   // the old effects live on in the old graph until it's collected
     setLooperSwitch(rigState.saved.looperSwitch);   // resolved; sent with the sequences
     setPanicControl(rigState.saved.panic);
+    resolveControlLinks();
     adoptClickOutput();
     rigLoaded = true;
     rigRate   = rate;
@@ -526,6 +535,11 @@ bool Session::removeSlot(const std::string& id) {
         auto& targets = entry.setup.targets;
         targets.erase(std::remove(targets.begin(), targets.end(), id), targets.end());
     }
+    std::vector<ControlLinkSetup> links = songLinks;   // nor any of this song's control links
+    for (ControlLinkSetup& link : links)
+        std::erase_if(link.targets, [&](const ControlLinkTarget& t) { return t.row == id; });
+    std::erase_if(links, [](const ControlLinkSetup& link) { return link.targets.empty(); });
+    if (links != songLinks) setControlLinks(ControlScope::Song, std::move(links));
     graphDirty = dirty = true;
     return true;
 }
@@ -538,6 +552,8 @@ void Session::flush() {
         draining.erase(done, draining.end());   // the plugin goes when the graph that held it is collected
         graphDirty = true;
     }
+    // Control links name plugins and rows: a new graph needs them compiled anew.
+    if (graphDirty && (!songLinks.empty() || !rigState.saved.controls.empty())) sequencesDirty = true;
     if (sequencesDirty) commitSequences();
     if (graphDirty) commitGraph();
 }
@@ -693,6 +709,86 @@ double Session::sequencePosition(const std::string& id) const noexcept {
     return entry != nullptr ? entry->runtime->position.load(std::memory_order_relaxed) : 0.0;
 }
 
+// The song's control links, then the rig's (but where the song has a link on
+// the same control), with their targets found in what's running now.
+void Session::compileControlLinks(std::vector<CompiledControlLink>& out) const {
+    using Kind = ControlLinkTarget::Kind;
+    std::map<const HostedPlugin*, std::vector<ParameterInfo>> parameters;   // asked once per plugin
+    auto addParameter = [&](CompiledControlLink& c, const ControlLinkTarget& t, const HostedPlugin* plugin) {
+        auto known = parameters.find(plugin);
+        if (known == parameters.end()) known = parameters.emplace(plugin, plugin->parameters()).first;
+        const auto info = std::find_if(known->second.begin(), known->second.end(),
+                                       [&](const ParameterInfo& p) { return p.id == t.param; });
+        if (info == known->second.end()) return;   // not this plugin's (any more)
+        CompiledControlLink::Target target;
+        target.plugin  = plugin;
+        target.param   = t.param;
+        target.bottom  = std::clamp(t.bottom, info->minValue, info->maxValue);
+        target.top     = std::clamp(t.top, info->minValue, info->maxValue);
+        target.curve   = t.curve;
+        target.stepped = info->isStepped;
+        target.initial = plugin->paramValue(t.param);
+        c.targets.push_back(target);
+    };
+    auto add = [&](CompiledControlLink& c, const ControlLinkTarget& t) {
+        CompiledControlLink::Target target;
+        target.kind   = t.kind;
+        target.bottom = t.bottom;
+        target.top    = t.top;
+        target.curve  = t.curve;
+        switch (t.kind) {
+            case Kind::Parameter:
+                if (t.bus >= 0) {
+                    if (rigLoaded && t.bus < static_cast<int>(kRigBuses) && t.effect >= 0 &&
+                        t.effect < static_cast<int>(RigBus::kEffects))
+                        if (const auto& effect = rigState.effects[t.bus][t.effect].plugin) addParameter(c, t, effect.get());
+                    return;
+                }
+                for (const Slot& s : loaded)   // the row, or (all songs) every row with the plugin
+                    if (s.plugin && (t.row.empty() ? s.saved.plugin.id == t.plugin : s.saved.id == t.row))
+                        addParameter(c, t, s.plugin.get());
+                return;
+            case Kind::Gain:
+            case Kind::Send:
+                if (const Slot* s = slot(t.row); s != nullptr && s->runtime) {
+                    target.runtime = s->runtime.get();
+                    target.param   = static_cast<std::uint32_t>(std::max(t.bus, 0));
+                    c.targets.push_back(target);
+                }
+                return;
+            case Kind::Return:
+                if (rigLoaded && t.bus >= 0 && t.bus < static_cast<int>(kRigBuses) && rigState.returns[t.bus]) {
+                    target.runtime = rigState.returns[t.bus].get();
+                    c.targets.push_back(target);
+                }
+                return;
+            case Kind::Master:
+                c.targets.push_back(target);
+                return;
+        }
+    };
+    auto compile = [&](const std::vector<ControlLinkSetup>& links, const LinkSources& sources, bool rig) {
+        for (std::size_t i = 0; i < links.size() && i < sources.handles.size(); ++i) {
+            const ControlLinkSetup& link = links[i];
+            if (sources.handles[i] == kInvalidMidiSource && link.source.kind != MidiSourceRef::Kind::All) continue;
+            if (rig && std::any_of(songLinks.begin(), songLinks.end(),
+                                   [&](const ControlLinkSetup& own) { return own.sameControl(link); }))
+                continue;   // the song's own overrides it
+            CompiledControlLink c;
+            c.source  = sources.handles[i];
+            c.group   = link.group;
+            c.channel = link.channel;
+            c.number  = link.number;
+            c.pickUp  = link.pickUp;
+            c.passOn  = link.passOn;
+            for (const ControlLinkTarget& t : link.targets) add(c, t);
+            if (!c.targets.empty()) out.push_back(std::move(c));
+        }
+    };
+    compile(songLinks, songLinkSources, false);
+    if (rigLoaded) compile(rigState.saved.controls, rigLinkSources, true);
+}
+
 std::unique_ptr<SequenceSet> Session::buildSequences() const {
     std::vector<CompiledSequence> compiled;
     compiled.reserve(sequenceList.size());
@@ -730,6 +826,7 @@ std::unique_ptr<SequenceSet> Session::buildSequences() const {
         transport.setlist.push_back(CompiledSetlistTrigger{setlistSources[i], t.action, t.control, t.group, t.channel,
                                                            t.number});
     }
+    compileControlLinks(transport.links);
     // An input that isn't connected: start on first note waits for nothing.
     transport.startOnNote       = transportSetup.startOnNote && startOnNoteProblem.empty();
     transport.startOnNoteSource = startOnNoteHandle;
@@ -865,6 +962,39 @@ void Session::setLooperSwitch(const std::optional<SequenceTrigger>& trigger) {
     sequencesDirty = true;
 }
 
+void Session::setControlLinks(ControlScope scope, std::vector<ControlLinkSetup> links) {
+    if (scope == ControlScope::Song) {
+        if (links != songLinks) dirty = true;
+        songLinks = std::move(links);
+    } else {
+        if (links != rigState.saved.controls) rigDirty = true;
+        rigState.saved.controls = std::move(links);
+    }
+    resolveControlLinks();
+    sequencesDirty = true;
+}
+
+const std::string& Session::controlLinkProblem(ControlScope scope, std::size_t index) const noexcept {
+    static const std::string none;
+    const LinkSources& sources = scope == ControlScope::Song ? songLinkSources : rigLinkSources;
+    return index < sources.problems.size() ? sources.problems[index] : none;
+}
+
+void Session::resolveControlLinks() {
+    auto resolveAll = [this](const std::vector<ControlLinkSetup>& links, LinkSources& out) {
+        out = LinkSources{};
+        for (const ControlLinkSetup& link : links) {
+            std::string      problem;
+            MidiSourceHandle handle = kInvalidMidiSource;   // All: any input
+            if (link.source.kind != MidiSourceRef::Kind::All) handle = resolve(link.source, problem);
+            out.handles.push_back(handle);
+            out.problems.push_back(std::move(problem));
+        }
+    };
+    resolveAll(songLinks, songLinkSources);
+    resolveAll(rigState.saved.controls, rigLinkSources);
+}
+
 void Session::setPanicControl(const std::optional<SequenceTrigger>& trigger) {
     if (trigger != rigState.saved.panic) rigDirty = true;
     rigState.saved.panic = trigger;
@@ -998,6 +1128,7 @@ std::vector<std::string> Session::sourceProblems(const Rack& rack) {
         check(t.source, "transport: a MIDI control won't act: ", "");
     if (rack.transport.startOnNote)
         check(rack.transport.startOnNoteSource, "transport: a MIDI control won't act: start on first note: ", "");
+    for (const ControlLinkSetup& link : rack.controls) check(link.source, "a control link won't act: ", "");
     return problems;
 }
 
@@ -1013,6 +1144,7 @@ std::vector<std::string> Session::runningProblems() {
     for (const SequenceEntry& entry : sequenceList) shape.sequences.push_back(entry.sequence);
     for (const LooperEntry& entry : looperList) shape.loopers.push_back(entry.setup);
     shape.transport = transportSetup;
+    shape.controls  = songLinks;
     for (std::string& problem : sourceProblems(shape)) problems.push_back(std::move(problem));
     return problems;
 }

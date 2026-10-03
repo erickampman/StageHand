@@ -377,6 +377,71 @@ void testLoopers(const fs::path& dir) {
 
 } // namespace
 
+// Control links (docs/controls.md) in rack.json: every kind of target, both
+// modes, passed on; a target naming a missing row, or a song link naming a
+// plugin, fails.
+void testControlLinks(const fs::path& dir) {
+    using Kind = ControlLinkTarget::Kind;
+    Rack rack = sampleRack();
+    ControlLinkSetup pedal;
+    pedal.source  = MidiSourceRef{MidiSourceRef::Kind::Device, "FCB1010:FCB1010 MIDI 1"};
+    pedal.number  = 11;
+    pedal.channel = 2;
+    pedal.pickUp  = false;
+    pedal.passOn  = true;
+    ControlLinkTarget cutoff;
+    cutoff.row       = rack.slots[0].id;
+    cutoff.param     = 7;
+    cutoff.paramName = "Cutoff";
+    cutoff.bottom    = 0.8;   // reversed
+    cutoff.top       = 0.2;
+    cutoff.curve     = ControlCurve::FastStart;
+    ControlLinkTarget gain;
+    gain.kind   = Kind::Gain;
+    gain.row    = rack.slots[1].id;
+    gain.bottom = -60.0;
+    gain.top    = 0.0;
+    ControlLinkTarget send = gain;
+    send.kind = Kind::Send;
+    send.bus  = 1;
+    ControlLinkTarget size;
+    size.bus    = 0;
+    size.effect = 1;
+    size.param  = 3;
+    size.top    = 10.0;
+    size.curve  = ControlCurve::SlowStart;
+    ControlLinkTarget ret = gain;
+    ret.kind = Kind::Return;
+    ret.row.clear();
+    ret.bus = 0;
+    ControlLinkTarget master = ret;
+    master.kind = Kind::Master;
+    master.bus  = -1;
+    pedal.targets = {cutoff, gain, send, size, ret, master};
+    ControlLinkSetup knob;   // any input, pick-up, consumed: the defaults
+    knob.number  = 74;
+    knob.targets = {cutoff};
+    rack.controls = {pedal, knob};
+    const std::string path = (dir / "Links.rack").string();
+    CHECK(saveRack(path, rack).ok);
+    Rack back;
+    CHECK(loadRack(path, back).ok);
+    CHECK(back.controls == rack.controls);
+
+    auto fails = [&](const std::string& controls, const std::string& expect) {
+        writeText(dir / "Bad.rack/rack.json",
+                  R"({"format": "stagehand-rack", "version": 1, "slots": [{"id": "keys", "plugin": {"format": "clap", "id": "x"}}],
+                      "controls": [)" + controls + "]}");
+        Rack           bad;
+        RackFileResult result = loadRack((dir / "Bad.rack").string(), bad);
+        CHECK(!result.ok && result.error.find(expect) != std::string::npos);
+    };
+    fails(R"({"controller": 1, "targets": [{"row": "nope", "param": 1}]})", "no slot 'nope'");
+    fails(R"({"controller": 1, "targets": [{"plugin": "x", "param": 1}]})", "names a \"row\"");
+    fails(R"({"controller": 1, "targets": []})", "targets");
+    fails(R"({"controller": 1, "mode": "sometimes", "targets": [{"target": "master"}]})", "mode");
+}
+
 int main() {
     const fs::path dir = scratch();
     testRoundTrip(dir);
@@ -386,6 +451,7 @@ int main() {
     testMissingStateWarns(dir);
     testSequenceTargets(dir);
     testLoopers(dir);
+    testControlLinks(dir);
     fs::remove_all(dir);
     return test::finish("RackFile");
 }

@@ -1293,6 +1293,168 @@ void testDspLoad() {
     engine->collect();
 }
 
+// Control links (docs/controls.md, milestone 1): a controller drives plugin
+// parameters (a row's, a bus effect's) as ParamValue events at its frame,
+// and levels after the faders; range, reverse, curve, steps; jump and
+// pick-up (crossed from either side, re-armed by the plugin's own change, by
+// another link moving the target, and by a song switch, not by an edit);
+// consumed, or passed on.
+void testControlLinks() {
+    using Target = CompiledControlLink::Target;
+    auto engine = std::make_unique<Engine>();
+    auto synth  = std::make_shared<FakePlugin>(2, NoteDialect::Midi);   // outputs 1.0
+    auto reverb = std::make_shared<FakeEffect>();
+    SlotConfig slot = slotFor(synth);
+    slot.runtime    = std::make_shared<SlotRuntime>(1.0f);
+    BusConfig bus;
+    bus.effects[0] = reverb;
+    bus.runtime    = std::make_shared<SlotRuntime>(1.0f);
+    auto graph = [&] { return std::make_unique<EngineGraph>(std::vector<SlotConfig>{slot}, std::vector<BusConfig>{bus}); };
+    engine->commit(graph());
+
+    auto param = [&](std::uint32_t id, double bottom, double top, double initial) {
+        Target t;
+        t.plugin  = synth.get();
+        t.param   = id;
+        t.bottom  = bottom;
+        t.top     = top;
+        t.initial = initial;
+        return t;
+    };
+    auto link = [](std::uint8_t cc, bool pickUp, std::vector<Target> targets, bool passOn = false) {
+        CompiledControlLink l;
+        l.number  = cc;
+        l.pickUp  = pickUp;
+        l.passOn  = passOn;
+        l.targets = std::move(targets);
+        return l;
+    };
+    Target cutoffish = param(9, 1.0, 0.0, 0.5);   // reversed, fast start
+    cutoffish.curve  = ControlCurve::FastStart;
+    Target steps     = param(3, 0.0, 4.0, 0.0);   // the reverb's, stepped
+    steps.plugin     = reverb.get();
+    steps.stepped    = true;
+    Target gain;
+    gain.kind    = Target::Kind::Gain;
+    gain.runtime = slot.runtime.get();
+    gain.bottom  = -60.0;
+    gain.top     = 0.0;
+    Target master = gain;
+    master.kind   = Target::Kind::Master;
+    TransportControl control;
+    control.links = {link(74, true, {param(7, 0.2, 0.8, 0.5)}),   // pick-up, from 0.5
+                     link(11, false, {cutoffish, steps, gain}),     // jump: a macro
+                     link(12, true, {param(9, 0.0, 1.0, 0.5)}),     // pick-up, on 11's parameter 9
+                     link(1, false, {master}, true)};               // passed on
+    auto sequences = [&] { return std::make_unique<SequenceSet>(std::vector<CompiledSequence>{}, control); };
+    engine->commitSequences(sequences());
+
+    auto block = [&] {
+        Block blk(480, 48000.0, T);
+        engine->process(blk.ctx);
+        return blk.samples[0][479];
+    };
+    auto cc = [&](std::uint8_t number, std::uint8_t value) {   // MIDI 1.0, at frame 240 of the next block
+        TimedMidiMessage m;
+        m.captureTime       = T - 5 * ms;
+        m.message.words[0]  = 0x20B00000u | (std::uint32_t{number} << 8) | value;
+        m.message.wordCount = 1;
+        engine->onMidi(1, m);
+        block();
+    };
+    // The values parameter `id` was sent since the last call, and any MIDI.
+    auto sent = [](auto& calls, std::uint32_t id, std::size_t* midi = nullptr) {
+        std::vector<double> values;
+        for (const auto& call : calls)
+            for (const Event& e : call.events) {
+                if (e.type == EventType::ParamValue && e.param.id == id) values.push_back(e.value);
+                if (e.type == EventType::Midi && midi != nullptr) ++*midi;
+            }
+        calls.clear();
+        return values;
+    };
+    auto near = [](const std::vector<double>& v, double x) { return v.size() == 1 && std::fabs(v[0] - x) < 1e-6; };
+    block();
+
+    // Jump, a macro: reversed with a fast start, stepped, and the row's level.
+    std::size_t midi = 0;
+    cc(11, 32);
+    CHECK(near(sent(synth->calls, 9, &midi), 1.0 - std::sqrt(32.0 / 127.0)) && midi == 0);   // consumed
+    CHECK(reverb->received.size() == 1 && reverb->received[0].value == 1.0 && reverb->received[0].param.id == 3 &&
+          reverb->received[0].sampleOffset == 240);
+    for (int i = 0; i < 3; ++i) block();
+    cc(11, 0);   // the level at -60 dB: silence, after the ramp
+    float out = 0.0f;
+    for (int i = 0; i < 3; ++i) out = block();
+    CHECK(out == 0.0f);
+    cc(11, 127);
+    for (int i = 0; i < 3; ++i) out = block();
+    CHECK(std::fabs(out - 1.0f) < 1e-5f);
+    synth->calls.clear();
+
+    // Pick-up from 0.5: nothing until the control reaches it, from below.
+    cc(74, 0);    // 0.2
+    cc(74, 40);   // 0.389
+    CHECK(sent(synth->calls, 7).empty());
+    cc(74, 80);   // 0.578: crossed 0.5
+    CHECK(near(sent(synth->calls, 7), 0.2 + 0.6 * 80.0 / 127.0));
+    cc(74, 0);
+    CHECK(near(sent(synth->calls, 7), 0.2));
+
+    // The plugin's own change (its GUI) re-arms it; its echo of a link's value doesn't.
+    Event own;
+    own.type     = EventType::ParamValue;
+    own.param.id = 7;
+    own.value    = 0.7;
+    synth->emit.push_back(own);
+    block();
+    cc(74, 10);    // 0.247
+    CHECK(sent(synth->calls, 7).empty());
+    cc(74, 127);   // 0.8: crossed 0.7, from below
+    CHECK(near(sent(synth->calls, 7), 0.8));
+    own.value = 0.8;   // an echo
+    synth->emit.push_back(own);
+    block();
+    cc(74, 64);
+    CHECK(sent(synth->calls, 7).size() == 1);
+
+    // Another link moving the target re-arms it: 11 sent parameter 9 to 0;
+    // 12 picks up from there, from above too.
+    cc(11, 127);
+    cc(12, 100);
+    CHECK(sent(synth->calls, 9).size() == 1);   // 11's
+    cc(12, 1);    // 0.008: within 2% of 0
+    CHECK(near(sent(synth->calls, 9), 1.0 / 127.0));
+
+    // Passed on: the master's level, and the row hears CC 1 too.
+    midi = 0;
+    cc(1, 0);
+    sent(synth->calls, 0, &midi);
+    CHECK(midi == 1);
+    for (int i = 0; i < 3; ++i) out = block();
+    CHECK(out == 0.0f);
+    cc(1, 127);
+
+    // An edit keeps pick-up: 74 has picked up.
+    engine->commitSequences(sequences());
+    block();
+    synth->calls.clear();
+    cc(74, 127);
+    CHECK(near(sent(synth->calls, 7), 0.8));
+    // A song switch re-arms it, from the value compiled (0.5).
+    engine->commitSwitch(graph(), sequences(), Engine::SwitchPlan{});
+    block();
+    synth->calls.clear();
+    cc(74, 127);
+    CHECK(sent(synth->calls, 7).empty());
+    cc(74, 30);   // 0.342: crossed from above
+    CHECK(near(sent(synth->calls, 7), 0.2 + 0.6 * 30.0 / 127.0));
+
+    engine->commit(nullptr);
+    block();
+    engine->collect();
+}
+
 int main() {
     testClick();
     testCountIn();
@@ -1314,6 +1476,7 @@ int main() {
     testTransport();
     testPanic();
     testDspLoad();
+    testControlLinks();
     testGraphLifecycle();
     return test::finish("Engine");
 }

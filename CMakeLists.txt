@@ -82,7 +82,8 @@ add_library(stagehand-engine STATIC
     src/Engine/Engine.cpp
     src/Engine/EngineGraph.cpp
     src/Engine/SequenceSet.cpp
-    src/Engine/Looper.cpp)
+    src/Engine/Looper.cpp
+    src/Engine/ControlLink.cpp)
 target_link_libraries(stagehand-engine
     PUBLIC  stagehand-core
     PRIVATE stagehand-warnings)

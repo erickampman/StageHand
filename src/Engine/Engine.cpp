@@ -544,6 +544,7 @@ void Engine::adoptSequences(const AudioCallbackContext& ctx, bool switching) noe
     if (!holdSwitch && pendingSequences.load(std::memory_order_acquire) != nullptr &&
         (currentSequences == nullptr || retiredSequences.canPush())) {
         if (SequenceSet* next = pendingSequences.exchange(nullptr, std::memory_order_acq_rel)) {
+            if (currentSequences != nullptr && !switching) next->keepControlLinks(*currentSequences);   // a switch re-arms pick-up
             sequenceEventCount += next->adoptFrom(currentSequences, block, sequenceEvents, kMaxSequenceEvents);
             if (currentSequences != nullptr) retiredSequences.push(currentSequences);   // room checked above
             currentSequences = next;
@@ -572,7 +573,8 @@ void Engine::looperAction(const AudioCallbackContext& ctx, MidiSourceHandle loop
 void Engine::recordLoops() noexcept {
     if (currentSequences == nullptr || currentSequences->looperList().empty()) return;
     for (std::size_t i = 0; i < stagedCount; ++i)
-        currentSequences->recordLoops(staged[i].item.source, staged[i].item.message.message,
+        if (!staged[i].consumed)   // a control link's own
+            currentSequences->recordLoops(staged[i].item.source, staged[i].item.message.message,
                                       sequenceBlock.from(staged[i].offset));
 }
 
@@ -774,6 +776,7 @@ void Engine::takeMidi(const AudioCallbackContext& ctx) noexcept {
 
         const Nanoseconds sinceWindow = entry.item.message.captureTime - windowStart;
         entry.offset                  = 0;
+        entry.linked = entry.consumed = false;
         if (sinceWindow < 0) {
             lateMidi.fetch_add(1, std::memory_order_relaxed);
         } else {
@@ -834,6 +837,16 @@ void Engine::takeMidi(const AudioCallbackContext& ctx) noexcept {
                 }
             }
             if (matched) continue;
+            // Then the control links (docs/controls.md): applied in routeMidi(), in order.
+            // Passed on as well if any of them passes it on.
+            bool passOn = false;
+            for (const CompiledControlLink& link : currentSequences->controlLinks()) {
+                double travel = 0.0;
+                if (!link.matches(entry.item.source, m, travel)) continue;
+                entry.linked = true;
+                passOn       = passOn || link.passOn;
+            }
+            entry.consumed = entry.linked && !passOn;
             // Start on first note: the note starts the transport, and still plays.
             if (!clock.running && !countIn.active && currentSequences->startsOnNote(entry.item.source, m))
                 requestStart(ctx, entry.offset, false);   // the note is bar 1: no count-in
@@ -857,6 +870,8 @@ void Engine::routeMidi(const AudioCallbackContext& ctx) noexcept {
         return;
     }
     for (EngineGraph::SlotState& state : currentGraph->states) state.eventCount = 0;
+    for (EngineGraph::BusState& bus : currentGraph->busStates)
+        for (EngineGraph::BusState::Stage& stage : bus.stages) stage.eventCount = 0;
     applyMutes();
     sendHeldPedals();
 
@@ -875,7 +890,8 @@ void Engine::routeMidi(const AudioCallbackContext& ctx) noexcept {
     for (std::size_t i = 0; i < stagedCount; ++i) {
         routeSequencesUpTo(staged[i].offset);
         silenceFrom(staged[i].offset);
-        route(staged[i].item, staged[i].offset);
+        if (staged[i].linked) applyLinks(staged[i].item.source, staged[i].item.message.message, staged[i].offset);
+        if (!staged[i].consumed) route(staged[i].item, staged[i].offset);
     }
     routeSequencesUpTo(ctx.frameCount);
     silenceFrom(panicFrame);   // after everything before it, if nothing came after
@@ -938,6 +954,87 @@ void Engine::silence(const AudioCallbackContext& ctx, std::uint32_t offset) noex
 
     panicCut.store(cut, std::memory_order_relaxed);
     panicCount.fetch_add(1, std::memory_order_release);
+}
+
+// Control links (docs/controls.md): each link `message` is the controller of
+// moves its targets, unless it's picking up and hasn't reached them yet. A
+// target moved this way is where every other link on it now is: they pick it
+// up again.
+void Engine::applyLinks(MidiSourceHandle source, const MidiMessage& message, std::uint32_t offset) noexcept {
+    if (currentSequences == nullptr) return;
+    std::vector<CompiledControlLink>& links = currentSequences->controlLinks();
+    for (CompiledControlLink& link : links) {
+        double travel = 0.0;
+        if (!link.matches(source, message, travel)) continue;
+        for (CompiledControlLink::Target& t : link.targets) {
+            const double mapped = t.map(travel);
+            const double now = t.kind == CompiledControlLink::Target::Kind::Parameter ? t.current : linkLevel(t);
+            if (link.pickUp && !t.picked && !t.pickUpAt(mapped, now)) continue;
+            setLinkTarget(t, mapped, offset);
+            t.current = mapped;
+            for (CompiledControlLink& other : links)
+                for (CompiledControlLink::Target& o : other.targets)
+                    if (&o != &t && o.sameTarget(t)) o.moved(mapped);
+        }
+    }
+}
+
+SlotRuntime* Engine::findRuntime(const SlotRuntime* key) const noexcept {
+    for (const SlotConfig& config : currentGraph->configs)
+        if (config.runtime.get() == key) return config.runtime.get();
+    for (const BusConfig& bus : currentGraph->busConfigs)
+        if (bus.runtime.get() == key) return bus.runtime.get();
+    return nullptr;
+}
+
+double Engine::linkLevel(const CompiledControlLink::Target& t) noexcept {
+    using Kind = CompiledControlLink::Target::Kind;
+    if (t.kind == Kind::Master) return linkMasterDb;
+    const SlotRuntime* runtime = findRuntime(t.runtime);
+    if (runtime == nullptr) return t.current;
+    return t.kind == Kind::Send ? runtime->linkSendDb[std::min<std::size_t>(t.param, kBusCount - 1)] : runtime->linkGainDb;
+}
+
+void Engine::setLinkTarget(const CompiledControlLink::Target& t, double value, std::uint32_t offset) noexcept {
+    using Kind = CompiledControlLink::Target::Kind;
+    if (t.kind == Kind::Master) {
+        linkMasterDb = value;
+        return;
+    }
+    if (t.kind != Kind::Parameter) {   // a level: ramped where it's applied, as a fader is
+        if (SlotRuntime* runtime = findRuntime(t.runtime)) {
+            if (t.kind == Kind::Send) runtime->linkSendDb[std::min<std::size_t>(t.param, kBusCount - 1)] = value;
+            else runtime->linkGainDb = value;
+        }
+        return;
+    }
+    Event event;
+    event.sampleOffset = offset;
+    event.type         = EventType::ParamValue;
+    event.param.id     = t.param;
+    event.value        = value;
+    for (std::size_t i = 0; i < currentGraph->configs.size(); ++i) {   // a row's
+        if (currentGraph->configs[i].plugin.get() != t.plugin) continue;
+        EngineGraph::SlotState& state = currentGraph->states[i];
+        if (state.eventCount == state.events.size()) slotEventsFull.fetch_add(1, std::memory_order_relaxed);
+        else state.events[state.eventCount++] = event;
+    }
+    for (std::size_t b = 0; b < currentGraph->busConfigs.size(); ++b)   // or a bus effect's
+        for (std::size_t e = 0; e < BusConfig::kEffects; ++e) {
+            if (currentGraph->busConfigs[b].effects[e].get() != t.plugin) continue;
+            EngineGraph::BusState::Stage& stage = currentGraph->busStates[b].stages[e];
+            if (stage.eventCount == stage.events.size()) slotEventsFull.fetch_add(1, std::memory_order_relaxed);
+            else stage.events[stage.eventCount++] = event;
+        }
+}
+
+void Engine::parameterChanged(const HostedPlugin* plugin, std::uint32_t param, double value) noexcept {
+    if (currentSequences == nullptr) return;
+    for (CompiledControlLink& link : currentSequences->controlLinks())
+        for (CompiledControlLink::Target& t : link.targets)
+            if (t.kind == CompiledControlLink::Target::Kind::Parameter && t.plugin == plugin && t.param == param &&
+                std::fabs(value - t.current) > 1e-9)   // not the plugin echoing what a link sent
+                t.moved(value);
 }
 
 // A slot newly muted gets note-offs (at the block's start) for every note it
@@ -1168,6 +1265,8 @@ void Engine::runSlots(const AudioCallbackContext& ctx) noexcept {
             if (state.eventCount != 0)
                 currentGraph->configs[i].runtime->midiEvents.fetch_add(state.eventCount, std::memory_order_relaxed);
         }
+        for (EngineGraph::BusState& bus : currentGraph->busStates)
+            for (EngineGraph::BusState::Stage& stage : bus.stages) stage.cursor = 0;
 
         for (std::uint32_t chunkStart = 0; chunkStart < ctx.frameCount; chunkStart += kMaxPluginBlockFrames) {
             const std::uint32_t chunk = std::min(ctx.frameCount - chunkStart, kMaxPluginBlockFrames);
@@ -1197,6 +1296,8 @@ void Engine::runSlots(const AudioCallbackContext& ctx) noexcept {
                 pc.time                 = timeAt(ctx, chunkStart);
                 pc.audioOut             = AudioBuffer{state.channels.data(), state.audioChannels, chunk};
                 pc.eventsIn             = EventBlock{state.events.data() + first, state.cursor - first};
+                pc.eventsOut            = &feedback;
+                feedback.plugin         = config.plugin.get();
                 const Nanoseconds start = nowNanoseconds();
                 config.plugin->process(pc);
                 state.processNs += nowNanoseconds() - start;
@@ -1207,8 +1308,8 @@ void Engine::runSlots(const AudioCallbackContext& ctx) noexcept {
 
                 const double rate     = ctx.time.sampleRate;
                 float        constant = 1.0f;
-                const float* gains    = advanceGain(runtime.gain, runtime.targetGain.load(std::memory_order_relaxed),
-                                                    chunk, rate, currentGraph->gainRamp.data(), constant);
+                const float  target   = runtime.targetGain.load(std::memory_order_relaxed) * linkLevelGain(runtime.linkGainDb);
+                const float* gains    = advanceGain(runtime.gain, target, chunk, rate, currentGraph->gainRamp.data(), constant);
                 auto destination = [&](std::uint32_t out) {
                     return out < outputs ? ctx.output.channels[out] + chunkStart : nullptr;
                 };
@@ -1224,8 +1325,9 @@ void Engine::runSlots(const AudioCallbackContext& ctx) noexcept {
                 for (std::size_t b = 0; b < currentGraph->busStates.size(); ++b) {
                     float*       sendBuffer = currentGraph->sendRamp.data();
                     float        sendLevel  = 0.0f;
-                    const float* sends      = advanceGain(runtime.send[b], runtime.targetSend[b].load(std::memory_order_relaxed),
-                                                          chunk, rate, sendBuffer, sendLevel);
+                    const float  sendTarget = runtime.targetSend[b].load(std::memory_order_relaxed) *
+                                             linkLevelGain(runtime.linkSendDb[b]);
+                    const float* sends      = advanceGain(runtime.send[b], sendTarget, chunk, rate, sendBuffer, sendLevel);
                     if (sends == nullptr && sendLevel == 0.0f) continue;   // off
                     const float* combined   = nullptr;
                     float        level      = sendLevel * constant;
@@ -1284,8 +1386,8 @@ void Engine::runSlots(const AudioCallbackContext& ctx) noexcept {
     for (std::uint32_t chunkStart = 0; chunkStart < ctx.frameCount; chunkStart += kMaxPluginBlockFrames) {
         const std::uint32_t chunk  = std::min(ctx.frameCount - chunkStart, kMaxPluginBlockFrames);
         float               master = 1.0f;
-        const float*        gains  = advanceGain(masterRamp, masterTarget.load(std::memory_order_relaxed), chunk,
-                                                 ctx.time.sampleRate, masterGains, master);
+        const float         target = masterTarget.load(std::memory_order_relaxed) * linkLevelGain(linkMasterDb);
+        const float*        gains  = advanceGain(masterRamp, target, chunk, ctx.time.sampleRate, masterGains, master);
         if (gains == nullptr && master == 1.0f) continue;
         for (std::uint32_t c = 0; c < outputs; ++c) {
             float* out = ctx.output.channels[c] + chunkStart;
@@ -1387,14 +1489,21 @@ void Engine::runBuses(const AudioCallbackContext& ctx, std::uint32_t chunkStart,
             pc.time       = timeAt(ctx, chunkStart);
             pc.audioIn    = ConstAudioBuffer{stage.in.data(), static_cast<std::uint32_t>(stage.in.size()), chunk};
             pc.audioOut   = AudioBuffer{stage.out.data(), static_cast<std::uint32_t>(stage.out.size()), chunk};
+            const std::uint32_t first = stage.cursor;   // this chunk's events, rebased to its start
+            while (stage.cursor < stage.eventCount && stage.events[stage.cursor].sampleOffset < chunkStart + chunk)
+                stage.events[stage.cursor++].sampleOffset -= chunkStart;
+            pc.eventsIn     = EventBlock{stage.events.data() + first, stage.cursor - first};
+            pc.eventsOut    = &feedback;
+            feedback.plugin = config.effects[e].get();
             config.effects[e]->process(pc);
         }
         state.processNs += nowNanoseconds() - start;
 
         SlotRuntime& runtime = *config.runtime;
         float        level   = 1.0f;
-        const float* gains   = advanceGain(runtime.gain, runtime.targetGain.load(std::memory_order_relaxed), chunk,
-                                           ctx.time.sampleRate, currentGraph->gainRamp.data(), level);
+        const float  target  = runtime.targetGain.load(std::memory_order_relaxed) * linkLevelGain(runtime.linkGainDb);
+        const float* gains   = advanceGain(runtime.gain, target, chunk, ctx.time.sampleRate,
+                                           currentGraph->gainRamp.data(), level);
         if (state.silent) continue;
         for (std::uint32_t c = 0; c < 2; ++c) {
             const std::uint32_t out = config.firstOutput + c;

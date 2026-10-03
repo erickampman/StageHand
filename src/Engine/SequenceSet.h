@@ -9,6 +9,7 @@
 
 #include "Core/MidiMessage.h"
 #include "Core/Sequence.h"
+#include "Engine/ControlLink.h"
 #include "Engine/Looper.h"
 
 namespace stagehand {
@@ -142,13 +143,19 @@ struct TransportControl {
     // looper switch. `action` unused.
     bool                      hasPanic = false;
     CompiledSequence::Trigger panic;
+
+    // Control links (docs/controls.md): matched after every trigger.
+    std::vector<CompiledControlLink> links;
 };
 
 class SequenceSet {
 public:
     explicit SequenceSet(std::vector<CompiledSequence> sequences, TransportControl transportControl = {},
                          std::vector<CompiledLooper> loopersIn = {})
-        : all(std::move(sequences)), transport(std::move(transportControl)), loopers(std::move(loopersIn)) {}
+        : all(std::move(sequences)), transport(std::move(transportControl)), loopers(std::move(loopersIn)) {
+        for (CompiledControlLink& link : transport.links)
+            for (CompiledControlLink::Target& t : link.targets) t.current = t.initial;
+    }
 
 
     const std::vector<CompiledSequence>& sequences() const noexcept { return all; }
@@ -190,6 +197,12 @@ public:
     // engine has ended them), so their note-offs later don't end a note played
     // since. They play on.
     void forgetSounding() noexcept;
+
+    // The control links (docs/controls.md), with their pick-up state. Audio thread.
+    std::vector<CompiledControlLink>& controlLinks() noexcept { return transport.links; }
+    // An edit (not a song switch): each link target that was in `previous`
+    // keeps where it was and whether it had picked up.
+    void keepControlLinks(const SequenceSet& previous) noexcept;
 
     // Replace `previous` (null for the first set). Sounding notes whose note was
     // deleted or shortened past now end at once; a rate or length change keeps

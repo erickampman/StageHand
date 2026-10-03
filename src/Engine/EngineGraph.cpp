@@ -35,6 +35,7 @@ EngineGraph::EngineGraph(std::vector<SlotConfig> slotConfigs, std::vector<BusCon
             if (!config.effects[e]) continue;   // an empty slot passes the audio on
             BusState::Stage& stage  = state.stages[e];
             const PortLayout layout = config.effects[e]->portLayout();
+            stage.events.resize(kMaxBusEffectEvents);
             if (const int in = mainAudioInput(layout); in >= 0 && !source.empty()) {
                 const std::uint32_t channels = layout.audioInputs[static_cast<std::size_t>(in)].channelCount;
                 for (std::uint32_t c = 0; c < channels; ++c) stage.in.push_back(source[std::min<std::size_t>(c, source.size() - 1)]);

@@ -27,6 +27,10 @@ a scope. Builds on:
      effect;
    - a row's gain, a row's send to bus A or B, a bus's return, the master.
      The expression pedal as a volume pedal is the most common use there is.
+     A link drives a **link level** in series with the fader (decided while
+     building milestone 1): the fader doesn't move, the saved gain isn't
+     the pedal's position, and the two multiply, as a volume pedal after a
+     mixer channel would. 0 dB until a link moves it.
    One control with several targets is a **macro** (a fader that opens the
    filter and raises the reverb send). Each target has its own range and
    curve.
@@ -55,9 +59,10 @@ a scope. Builds on:
 ## Scope
 
 7. **Each link chooses its scope** (decided 2026-10-03):
-   - **This song:** saved in the rack, per row (`"controls"` in the slot,
-     rack-format.md). Its targets are that rack's rows, or the rig's levels
-     and bus effects while that song plays.
+   - **This song:** saved in the rack (`"controls"`, a list at the top of
+     rack.json, rack-format.md: a macro can span rows, so not per row). Its
+     targets are that rack's rows, or the rig's levels and bus effects while
+     that song plays.
    - **All songs:** saved in the rig (`"controls"` in rig.json). Targets:
      the rig's own (bus effects, returns, master), always there; and **a
      plugin's parameter wherever that plugin is a row** (by plugin id and
@@ -151,6 +156,67 @@ effect, and in a dialog, not on the rows themselves.
 4. **Learn from the editor:** gestures audio -> main, the learn sequence
    with its status messages. Tests: the engine forwarding a gesture, the
    controller's sequence.
+
+**Milestone 1 implemented (2026-10-03):** `CompiledControlLink`
+(Engine/ControlLink.h): a source (input, group, channel, controller), jump or
+pick-up, consumed or passed on, and targets: `Parameter` (keyed by the
+`HostedPlugin`, a row's or a bus effect's, and the parameter id), `Gain`,
+`Send`, `Return` (keyed by the `SlotRuntime`) and `Master`, each with bottom,
+top, a curve (linear, slow start = squared, fast start = square root) and
+steps. They're published in `TransportControl::links`, with the sequences.
+`takeMidi()` matches them after every trigger and marks the message linked,
+and consumed unless a matching link passes it on (a consumed controller isn't
+recorded by loopers either); `routeMidi()` applies them at the message's
+place, so a `ParamValue` event lands in offset order among the row's events.
+Bus effects now get events (`BusState::Stage::events`, 256 a block, split
+into chunks as a row's are). Levels are `SlotRuntime::linkGainDb` and
+`linkSendDb[]`, and the engine's `linkMasterDb`, multiplied into each
+ramp's target (-60 dB and below is silence). Pick-up: within 2% of the
+target's range, or crossing it since the control's last move;
+`Target::moved()` re-arms it when another link moves the same target, and
+when the plugin reports a change of its own through `eventsOut` (the
+engine's `ParamFeedback` sink, now passed to rows and bus effects), unless
+it's the value a link just sent (an echo). `SequenceSet::keepControlLinks()`
+carries pick-up state over an edit; a song switch doesn't, so the new song's
+links start from the values compiled (`Target::initial`). Tests:
+`testControlLinks` in the engine tests (a jump macro: reversed with a fast
+start, a stepped bus effect parameter at the message's frame, a row's level
+to silence and back; pick-up from below and above, re-armed by the plugin's
+own change but not its echo, and by another link; passed on to the row and
+to the master's level; kept by an edit, re-armed by a switch).
+
+**Milestone 2 implemented (2026-10-03):** `ControlLinkSetup` and
+`ControlLinkTarget` (Session/ControlLinks.h) as saved: `Rack::controls` and
+`Rig::controls`, read and written by Session/ControlLinkJson.h
+(rack-format.md, "Control links"). A song's targets name rows (a missing row
+fails the load); the rig's name plugins, and can't be a row's gain or send.
+`Session::setControlLinks()` and `controlLinks()` per `ControlScope` (marking
+`modified()` or `rigModified()`), inputs resolved as triggers' are (again on
+MIDI changes; `controlLinkProblem()`), `capture()` keeps the song's, and
+removing a row drops its targets (and a link left with none).
+`compileControlLinks()` builds the engine's links in `buildSequences()`: the
+song's, then the rig's unless the song has a link on the same control;
+parameter targets found in the running rows (by row, or by plugin id in every
+row) and bus effects, with the parameter's steps, its range (bottom and top
+clamped to it) and its value now (`paramValue()`) as where pick-up starts. A
+target that isn't there is left out, and a link with none is too. Links are
+compiled again whenever the graph is (they name its plugins).
+`RackController`: `rowParameters()`, `effectParameters()` (automatable ones),
+`learnControlLink(target, scope)` (the parameter's whole range or -60 to 0
+dB; a link on the same control in that scope gets another target),
+`setControlLink()`, `removeControlLink()`, `setControlLinkScope()` (for all
+songs a row's parameter becomes its plugin's; to this song, a plugin's
+becomes each row's that has it). Refused, with a notice: a key, a control a
+trigger answers (the transport's, a sequence's, the setlist's, the looper
+switch, Panic), a row's gain or send for all songs.
+`RackViewModel::controlLinks` (control, connected, mode, overridden, each
+target's text and whether it's there) and `controlLinkLearning`. Tests: the rack file (every target kind,
+both modes, failures), the rig file (a plugin target; a gain and a row
+refused), the session (`testControlLinks`: a row's parameter, all songs' in
+both rows, overridden by the song's, a bus effect's stepped parameter, an
+unknown parameter and an absent input left out, a row removed), the
+controller (`testControlLinks`: learn, a macro, the refusals, scope moved,
+overridden, saved, removed).
 
 ## Open questions
 

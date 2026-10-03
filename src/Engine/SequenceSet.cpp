@@ -265,6 +265,21 @@ bool matchOne(CompiledSequence::Trigger& t, MidiSourceHandle source, bool note, 
 
 } // namespace
 
+void SequenceSet::keepControlLinks(const SequenceSet& previous) noexcept {
+    for (CompiledControlLink& link : transport.links)
+        for (CompiledControlLink::Target& t : link.targets)
+            for (const CompiledControlLink& old : previous.transport.links) {
+                if (!old.sameSource(link)) continue;
+                for (const CompiledControlLink::Target& o : old.targets) {
+                    if (!o.sameTarget(t)) continue;
+                    t.current  = o.current;
+                    t.picked   = o.picked;
+                    t.hasLast  = o.hasLast;
+                    t.last     = o.last;
+                }
+            }
+}
+
 std::size_t SequenceSet::matchTriggers(MidiSourceHandle source, const MidiMessage& m, TriggerHit* hits,
                                        std::size_t capacity, bool& matched) noexcept {
     matched = false;
