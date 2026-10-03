@@ -31,7 +31,21 @@ constexpr float kTransportX = 280.0f;   // the toolbar's transport, left of the 
 constexpr float kPluginW    = 270.0f;
 constexpr float kMinOutputW = 330.0f;
 constexpr float kRemoveSize = 26.0f;   // the red X at each row's right end
-constexpr float kMidiW      = 34.0f;   // a MIDI control button (the DIN plug)
+constexpr float kMidiW      = 34.0f;
+constexpr float kStripeW    = 5.0f;    // a row's colour, at its left edge
+constexpr float kTintLeft   = 0.22f;   // how much of it the background takes: by the stripe,
+constexpr float kTintRight  = 0.04f;   // fading across the row
+
+// The rows' colours, in order (then again): distinct hues, alike in
+// brightness, so none shouts on a dark stage.
+constexpr UiColor kRowColors[] = {{92, 140, 230}, {64, 178, 170}, {120, 190, 90}, {214, 178, 70},
+                                  {226, 128, 72}, {220, 92, 118}, {164, 112, 222}, {200, 104, 184}};
+constexpr std::size_t kRowColorCount = sizeof kRowColors / sizeof kRowColors[0];
+
+UiColor mix(UiColor base, UiColor tint, float amount) {
+    auto channel = [amount](int a, int b) { return static_cast<int>(std::lround(a + (b - a) * amount)); };
+    return UiColor{channel(base.r, tint.r), channel(base.g, tint.g), channel(base.b, tint.b)};
+}   // a MIDI control button (the DIN plug)
 constexpr float kMinDb      = -60.0f;   // one scale for fader and meters, so they line up
 constexpr float kMaxDb      = 6.0f;
 constexpr float kKeyBarX    = kPad + 16.0f;   // 128 keys at 1 logical pixel each
@@ -648,9 +662,31 @@ void RackWidget::openMetronomeMenu(float x, float y) {
     openMenu(std::move(m));
 }
 
+UiColor RackWidget::rowColor(const std::string& rowId) const {
+    const std::vector<RowModel>& rows = controller.view().rows;
+    for (std::size_t i = 0; i < rows.size(); ++i)
+        if (rows[i].id == rowId) return kRowColors[i % kRowColorCount];
+    return kTrack;
+}
+
+void RackWidget::sourceTint(const std::vector<std::string>& targetIds, float y, UiColor base) {
+    if (targetIds.empty()) {   // plays into nothing yet: no colour
+        box(0, y, width(), kSeqRowH, base);
+        return;
+    }
+    const UiColor color = rowColor(targetIds.front());
+    gradientBox(0, y, width(), kSeqRowH, mix(base, color, kTintLeft), mix(base, color, kTintRight));
+    const float part = kSeqRowH / static_cast<float>(targetIds.size());
+    for (std::size_t i = 0; i < targetIds.size(); ++i)
+        box(0, y + part * static_cast<float>(i), kStripeW, part, rowColor(targetIds[i]));
+}
+
 void RackWidget::drawRow(const RowModel& row, std::size_t index) {
-    const float y = rowY(index);
-    box(0, y, width(), kRowH, index % 2 ? kRowB : kRowA);
+    const float   y     = rowY(index);
+    const UiColor color = kRowColors[index % kRowColorCount];
+    const UiColor base  = index % 2 ? kRowB : kRowA;
+    gradientBox(0, y, width(), kRowH, mix(base, color, kTintLeft), mix(base, color, kTintRight));
+    box(0, y, kStripeW, kRowH, color);
     box(0, y + kRowH - 1.0f, width(), 1.0f, kLine);
     box(kInputW, y + 8.0f, 1.0f, kRowH - 16.0f, kLine);
     box(outputX(), y + 8.0f, 1.0f, kRowH - 16.0f, kLine);
@@ -1111,6 +1147,7 @@ void RackWidget::drawDock() {
 }
 
 void RackWidget::drawSequenceRow(const SequenceRowModel& seq, float y) {
+    sourceTint(seq.targetIds, y, kBarBg);
     box(0, y, width(), 1.0f, kLine);
 
     // Play/Stop: a triangle or a square; a pending start or stop blinks.
@@ -1251,7 +1288,7 @@ std::string beatsText(double beats) {
 } // namespace
 
 void RackWidget::drawLooperRow(const LooperRowModel& l, float y) {
-    if (l.current) box(0, y, width(), kSeqRowH, kPanel);   // the one the looper switch drives
+    sourceTint(l.targetIds, y, l.current ? kPanel : kBarBg);   // the current one: the one the looper switch drives
     box(0, y, width(), 1.0f, kLine);
     region(0, y, width(), kSeqRowH, [this, id = l.id](const Press&) { controller.selectLooper(id); });
 

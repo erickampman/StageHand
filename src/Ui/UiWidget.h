@@ -81,6 +81,8 @@ protected:
     void  fill(UiColor c, int alpha = 255);
     void  box(float x, float y, float w, float h, UiColor c, float radius = 0);
     void  outline(float x, float y, float w, float h, UiColor c, float radius = 0);
+    // A box shading from `left` at its left edge to `right` at its right.
+    void  gradientBox(float x, float y, float w, float h, UiColor left, UiColor right);
     void  label(float x, float y, const std::string& text, float size, UiColor c, int align = ALIGN_LEFT | ALIGN_MIDDLE);
     float labelWidth(const std::string& text, float size);
     void  button(float x, float y, float w, float h, const std::string& text, bool on, bool enabled, UiColor onColor);

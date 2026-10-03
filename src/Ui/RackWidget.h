@@ -93,6 +93,13 @@ private:
     void drawToolbar();
     void drawTransport(float x);
     void drawRow(const RowModel& row, std::size_t index);
+    // Each rack row has a colour (by its place: neighbours differ), tinting
+    // its background with a stripe at its left; a sequence or looper takes the
+    // colour of the rows it plays into, so it's clear where it goes.
+    UiColor rowColor(const std::string& rowId) const;   // the neutral row colour if there's no such row
+    // The background of a sequence or looper row tinted by its first target,
+    // and the left stripe split between all its targets.
+    void    sourceTint(const std::vector<std::string>& targetIds, float y, UiColor base);
     void drawRowInput(const RowModel& row, float y);
     void drawRowPlugin(const RowModel& row, float y);
     void drawRowOutput(const RowModel& row, float y);
