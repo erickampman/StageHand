@@ -13,8 +13,10 @@ stage, with the beat large enough to read from across it. Builds on:
 
 ## Count-in
 
-1. **Per song: off, 1 bar or 2 bars,** saved with the rack beside the click
-   (`"metronome": {"countIn": 1}`; absent: off). It's the song's, as its
+1. **Per song: off, half a bar, 1 bar or 2 bars** (half a bar added
+   2026-10-03), saved with the rack beside the click
+   (`"metronome": {"countIn": 0.5 | 1 | 2}`, in bars; absent: off). Half a
+   bar is half the bar's pulses, rounded up: 4/4 two, 6/8 one, 7/8 four. It's the song's, as its
    tempo is: a ballad may want two bars, a song that starts on a held chord
    none.
 2. **Count-in is pre-roll.** Start (▶, Space, a learned trigger) begins the
@@ -63,7 +65,9 @@ stage, with the beat large enough to read from across it. Builds on:
 ## The Perform view
 
 10. **A mode of the main window,** not another window (on stage it's one
-    screen): **Perform** in the toolbar (and F5), and the same to go back.
+    screen): **Perform** in the toolbar, or **Tab** (decided 2026-10-03:
+    easy to hit, and that's safe: switching views never changes the sound or
+    the rack), and the same to go back. Not while a name is being typed.
     StageHand remembers which it was in (with the window's size, this
     machine's) and reopens in it.
 11. **What it shows**, large, for a dark stage:
@@ -85,33 +89,35 @@ stage, with the beat large enough to read from across it. Builds on:
     stray click can't change the rack. Plugin editors stay as they are.
 13. **Edge flash** (an option, off by default): the window's whole border
     flashes on each pulse, brighter on the downbeat, readable from across
-    the stage or in peripheral vision. Available in both views. Kept with
-    the window's state (this machine's).
+    the stage or in peripheral vision. Available in both views. **Kept in
+    the rig** (decided 2026-10-03), with the click's output and the looper
+    switch: the stage's setup. So it's the same in every song of a set;
+    a setlist naming another rig can have it otherwise; it travels with the
+    rig file to another machine; turning it on marks the rig modified
+    (Ctrl-S saves it); and a rack opened on its own uses the default rig's.
 14. **In time with the sound:** the beat display runs at the display's rate
     while the transport runs (not the 30 Hz tick), and is drawn ahead by
     the audio output's latency, so a flash lands with the click you hear,
     not 10–20 ms after it.
 15. **Keys:** in the Perform view, ← → are Previous and Next song, Space is
-    Start/Stop, F5 goes back. Nothing else edits.
+    Start/Stop, Tab goes back. Nothing else edits.
 
 ## Milestones (proposed)
 
 1. **Count-in, engine:** the counting state, its clicks, bar 1 after it,
    and the cases above (start on first note, a switch while running, Stop
-   and a switch during it, sequences and loopers waiting for bar 1). Tests
+   and a switch during it, sequences and loopers waiting for bar 1, half a
+   bar's pulses). Tests
    with the fake plugin: sample positions of the clicks and of bar 1, what
    plugins see during the count-in, every case in 6 to 8.
 2. **Count-in, setting:** `"countIn"` in the rack file, the ⋮ menu (Count-in:
-   off, 1 bar, 2 bars), the amber lights and the toolbar countdown. Tests:
+   off, half a bar, 1 bar, 2 bars), the amber lights and the toolbar countdown. Tests:
    the rack file, the controller.
 3. **The Perform view:** the mode, the layout above, the keys, the remembered
-   mode, the edge flash, drawing at the display's rate and ahead by the
-   output latency.
+   mode, the edge flash (in the rig), drawing at the display's rate and
+   ahead by the output latency.
 
 ## Open questions
 
-- **Count-in lengths:** off, 1 and 2 bars enough, or also half a bar (two
-  clicks in 4/4)?
-- **The edge flash:** this machine's (with the window's size, as proposed),
-  or the rig's (the stage's, with the click's output)?
-- **The Perform view's key:** F5, or something else (P, Tab)?
+None at the moment (answered 2026-10-03: half a bar as well; the edge flash
+in the rig; Tab for the Perform view).
