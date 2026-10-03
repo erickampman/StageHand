@@ -62,6 +62,13 @@ protected:
         std::string           title;
         std::vector<MenuItem> items;
         float                 scroll = 0;
+        // A long list: typing filters it (the items containing what's typed,
+        // in any case); Backspace takes a letter back, Enter chooses the first.
+        bool                  search = false;
+        std::string           typed;
+        // Opened from a subclass's panel: the panel stays (a click outside the
+        // menu closes only the menu).
+        bool                  overPanel = false;
     };
 
     // --- for subclasses
@@ -130,6 +137,8 @@ protected:
 
 private:
     void drawMenu();
+    std::vector<std::size_t> menuShown() const;   // the items a search menu shows (all, if it isn't one)
+    bool menuKey(const KeyboardEvent& ev);        // Backspace and Enter in a search menu
     void drawTextField();
 
     struct TextField {

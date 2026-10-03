@@ -130,7 +130,7 @@ void RackWidget::showNotice(const std::string& text, double now) {
 std::uint32_t RackWidget::timedLook(double now) const {
     const RackViewModel& v = controller.view();
     bool blinking          = v.transport.learning || v.setlist.learning || v.looperSwitchLearning ||
-                             v.transport.panicLearning;
+                             v.transport.panicLearning || v.controlLinkLearning;
     for (const LooperRowModel& looper : v.loopers) blinking = blinking || looper.waiting;
     for (const SequenceRowModel& seq : v.sequences)
         blinking = blinking || seq.learning || seq.state == SequenceState::Starting ||
@@ -954,6 +954,7 @@ void RackWidget::drawRowInput(const RowModel& row, float y) {
     restore();
     region(chipX, y + 33.0f, chipW, 22.0f, [this, row](const Press&) {
         closeMenu();
+        linkOpen.reset();
         if (filterId == row.id) {
             filterId.clear();
             return;
@@ -967,9 +968,10 @@ void RackWidget::drawRowInput(const RowModel& row, float y) {
 // button.
 void RackWidget::drawRowPlugin(const RowModel& row, float y) {
     const float px      = kInputW + kPad;
-    const float editorX = kInputW + kPluginW - kPad - 70.0f;
+    const float editorX = kInputW + kPluginW - kPad - 62.0f;
+    const float linkX   = editorX - 4.0f - 30.0f;   // its Control Links, beside the editor
     save();
-    scissor(px, y, editorX - px - 8.0f, kRowH);
+    scissor(px, y, linkX - px - 8.0f, kRowH);
     label(px, y + 23.0f, row.name, 16.0f, kText);
     if (row.state == RowState::Placeholder) {
         label(px, y + 44.0f, "not loaded: " + row.problem, 12.0f, kRed);
@@ -980,13 +982,16 @@ void RackWidget::drawRowPlugin(const RowModel& row, float y) {
     restore();
 
 
-    button(editorX, y + 19.0f, 70.0f, 26.0f, "Editor", row.editorOpen, row.hasEditor, kAccent);
+    LinkPlace place;
+    place.row = row.id;
+    linkButton(place, linkX, y + 19.0f, 30.0f, 26.0f);
+    button(editorX, y + 19.0f, 62.0f, 26.0f, "Editor", row.editorOpen, row.hasEditor, kAccent);
     // Its share of the period (docs/panic.md, section 9): amber past half of it.
     if (row.state != RowState::Placeholder)
-        label(editorX + 35.0f, y + 55.0f, "DSP " + std::to_string(row.loadPercent) + "%", 11.0f,
+        label(editorX + 31.0f, y + 55.0f, "DSP " + std::to_string(row.loadPercent) + "%", 11.0f,
               row.loadPercent > 50 ? kAmber : kDim, ALIGN_CENTER | ALIGN_MIDDLE);
     if (row.hasEditor)
-        region(editorX, y + 19.0f, 70.0f, 26.0f, [this, id = row.id](const Press&) {
+        region(editorX, y + 19.0f, 62.0f, 26.0f, [this, id = row.id](const Press&) {
             if (const RowModel* now = rowById(id)) now->editorOpen ? controller.closeEditor(id) : controller.openEditor(id);
         });
 }
@@ -1100,11 +1105,20 @@ void RackWidget::drawStatus() {
     float textEnd = mx0 - 12.0f;
     if (const RigModel& rig = controller.view().rig; rig.loaded) {
         const float f1 = mx0 - 14.0f, f0 = f1 - 110.0f;
+        // Right-click: its Control Links (a volume pedal on the master, say);
+        // "master" is lit while it has some.
+        LinkPlace masterPlace;
+        masterPlace.kind = LinkPlace::Kind::Master;
+        bool linked      = false;
+        for (const ControlLinkModel& link : controller.view().controlLinks)
+            for (const ControlLinkTargetModel& t : link.targets) linked = linked || linkAt(t.target, t.rows, masterPlace);
         dbFader(f0, f1, y + kStatusH / 2, rig.masterDb, false, 18.0f, "\x01master",
                 [this]() -> std::optional<float> { return controller.view().rig.masterDb; },
-                [this](float db) { controller.setMasterDb(db); });
+                [this](float db) { controller.setMasterDb(db); },
+                [this, masterPlace, f0, y](const Press&) { openLinksMenu(masterPlace, f0, y - 4.0f); });
         const std::string master = "master " + dbText(rig.masterDb);
-        label(f0 - 8.0f, y + kStatusH / 2, master, 12.0f, rig.masterDb > 0.0f ? kAmber : kDim, ALIGN_RIGHT | ALIGN_MIDDLE);
+        label(f0 - 8.0f, y + kStatusH / 2, master, 12.0f, rig.masterDb > 0.0f ? kAmber : linked ? kAccent : kDim,
+              ALIGN_RIGHT | ALIGN_MIDDLE);
         textEnd = f0 - 16.0f - labelWidth(master, 12.0f);
     }
 
@@ -1113,6 +1127,8 @@ void RackWidget::drawStatus() {
     scissor(tx, y, std::max(0.0f, textEnd - tx), kStatusH);
     if (!notice.empty() && ui::nowSeconds() < noticeUntil)
         label(tx, y + kStatusH / 2, notice, 12.0f, kAccent);
+    else if (controller.view().controlLinkLearning)
+        label(tx, y + kStatusH / 2, "Control Link: now move a knob, fader or pedal (Esc stops)", 12.0f, kAmber);
     else if (!s.preparing.empty())
         label(tx, y + kStatusH / 2, s.preparing, 12.0f, kDim);
     else if (!s.saveTarget.empty())
@@ -1125,14 +1141,19 @@ void RackWidget::drawStatus() {
 // --- the rig (docs/rig.md) ------------------------------------------------------------------
 
 void RackWidget::dbFader(float x0, float x1, float cy, float db, bool dim, float thumbH, const std::string& key,
-                         std::function<std::optional<float>()> current, std::function<void(float)> set) {
+                         std::function<std::optional<float>()> current, std::function<void(float)> set,
+                         std::function<void(const Press&)> right) {
     box(x0, cy - 3.0f, x1 - x0, 6.0f, kTrack, 3.0f);
     box(x0 + (x1 - x0) * dbToPos(0.0f) - 0.5f, cy - 7.0f, 1.0f, 14.0f, kDim);   // 0 dB mark
     const float thumb = x0 + (x1 - x0) * dbToPos(db);
     box(thumb - 5.0f, cy - thumbH / 2, 10.0f, thumbH, dim ? kDim : kText, 2.0f);
     region(
         x0 - 8.0f, cy - thumbH / 2 - 2.0f, x1 - x0 + 16.0f, thumbH + 4.0f,
-        [this, key, current, set, span = x1 - x0](const Press& p) {
+        [this, key, current, set, right, span = x1 - x0](const Press& p) {
+            if (p.button == dgl::kMouseButtonRight) {
+                right(p);
+                return;
+            }
             const std::optional<float> now = current();
             if (!now) return;
             if (key == lastFaderId && p.time - lastFaderTime < 400) {   // as a row's fader
@@ -1154,7 +1175,8 @@ void RackWidget::dbFader(float x0, float x1, float cy, float db, bool dim, float
             const std::optional<float> now = current();
             if (!now) return;
             set(std::round(std::clamp(*now + notches * 0.5f, kMinDb, kMaxDb) * 10.0f) / 10.0f);
-        });
+        },
+        static_cast<bool>(right));
 }
 
 // "A -12" lit, or "A off" dim. Below kMinDb a send is off; from off, a drag or
@@ -1227,7 +1249,8 @@ void RackWidget::drawBusStrip(const BusModel& bus, std::size_t index, float y) {
         const BusEffectModel& effect = bus.effects[e];
         const float           x      = slotsX + static_cast<float>(e) * slotW;
         const float           editW  = effect.hasEditor ? 52.0f : 0.0f;
-        const float           chipW  = slotW - 8.0f - (editW > 0.0f ? editW + 4.0f : 0.0f);
+        const float           linkW  = effect.name.empty() ? 0.0f : 30.0f;   // its Control Links
+        const float chipW = slotW - 8.0f - (editW > 0.0f ? editW + 4.0f : 0.0f) - (linkW > 0.0f ? linkW + 4.0f : 0.0f);
         const std::string     text   = std::to_string(e + 1) + "  " + (effect.name.empty() ? "empty" : effect.name) +
                                  (effect.problem.empty() ? "" : " (not loaded)") + "  \xE2\x96\xBE";
         box(x, y + 11.0f, chipW, 26.0f, kTrack, 4.0f);
@@ -1244,6 +1267,13 @@ void RackWidget::drawBusStrip(const BusModel& bus, std::size_t index, float y) {
                 open ? controller.closeBusEditor(index, e) : controller.openBusEditor(index, e);
             });
         }
+        if (linkW > 0.0f) {
+            LinkPlace place;
+            place.kind   = LinkPlace::Kind::Effect;
+            place.bus    = static_cast<int>(index);
+            place.effect = static_cast<int>(e);
+            linkButton(place, x + chipW + 4.0f + (editW > 0.0f ? editW + 4.0f : 0.0f), y + 11.0f, linkW, 26.0f);
+        }
     }
 
     const float ox = outputX() + kPad;
@@ -1251,10 +1281,16 @@ void RackWidget::drawBusStrip(const BusModel& bus, std::size_t index, float y) {
     region(ox, y + 8.0f, 30.0f, 24.0f, [this, index](const Press&) {
         controller.setBusMuted(index, !controller.view().rig.buses[index].muted);
     });
+    // The return's Control Links, where a row has its sends; the fader's right-click too.
+    LinkPlace returnPlace;
+    returnPlace.kind = LinkPlace::Kind::Return;
+    returnPlace.bus  = static_cast<int>(index);
+    linkButton(returnPlace, ox + 38.0f, y + 8.0f, 30.0f, 24.0f);
     const float x0 = faderX0(), x1 = faderX1();
     dbFader(x0, x1, y + 18.0f, bus.returnDb, bus.muted, 20.0f, "\x01bus" + std::to_string(index),
             [this, index]() -> std::optional<float> { return controller.view().rig.buses[index].returnDb; },
-            [this, index](float db) { controller.setReturnDb(index, db); });
+            [this, index](float db) { controller.setReturnDb(index, db); },
+            [this, returnPlace, x0, y](const Press& p) { openLinksMenu(returnPlace, std::max(x0, p.x - 40.0f), y + kBusH); });
     meterBars(x0, x1, y + 32.0f, bus.meterDb, bus.peakHoldDb);
     label(x1 + 30.0f, y + 17.0f, bus.muted ? "muted" : dbText(bus.returnDb), 13.0f, bus.muted ? kAmber : kText);
     const std::string out = "out " + std::to_string(bus.firstOutput + 1) + "-" + std::to_string(bus.firstOutput + 2);
@@ -2183,6 +2219,514 @@ void RackWidget::newSequence(MidiProtocol protocol, float x, float y) {
     openMenu(std::move(m));
 }
 
+// --- control links (docs/controls.md, sections 8 to 10) --------------------------------------
+
+bool RackWidget::linkAt(const ControlLinkTarget& t, const std::vector<std::string>& rows, const LinkPlace& place) {
+    using Kind = ControlLinkTarget::Kind;
+    switch (place.kind) {
+        case LinkPlace::Kind::Row:    return std::find(rows.begin(), rows.end(), place.row) != rows.end();
+        case LinkPlace::Kind::Effect: return t.kind == Kind::Parameter && t.bus == place.bus && t.effect == place.effect;
+        case LinkPlace::Kind::Return: return t.kind == Kind::Return && t.bus == place.bus;
+        case LinkPlace::Kind::Master: return t.kind == Kind::Master;
+    }
+    return false;
+}
+
+std::string RackWidget::placeName(const LinkPlace& place) const {
+    const std::string bus = place.bus == 1 ? "B" : "A";
+    switch (place.kind) {
+        case LinkPlace::Kind::Row: {
+            const RowModel* row = rowById(place.row);
+            return row != nullptr ? row->name : place.row;
+        }
+        case LinkPlace::Kind::Effect: return "Bus " + bus + " effect " + std::to_string(place.effect + 1);
+        case LinkPlace::Kind::Return: return "Bus " + bus + " return";
+        case LinkPlace::Kind::Master: return "the master";
+    }
+    return {};
+}
+
+namespace {
+
+// A target's value as the dialog and menu show it: a level in dB, a stepped
+// parameter's step, else where it is in the parameter's range.
+std::string linkValueText(const ControlLinkTargetModel& t, double value) {
+    char text[32];
+    if (t.target.kind != ControlLinkTarget::Kind::Parameter) {
+        if (value <= kMinDb) return "off";
+        std::snprintf(text, sizeof text, "%+.1f dB", value);
+    } else if (t.stepped) {
+        std::snprintf(text, sizeof text, "%.0f", value);
+    } else {
+        const double span = t.maxValue - t.minValue;
+        std::snprintf(text, sizeof text, "%.0f%%", span > 0.0 ? (value - t.minValue) / span * 100.0 : 0.0);
+    }
+    return text;
+}
+
+// Where `value` is along a target's range bar (0 to 1).
+float linkPos(const ControlLinkTargetModel& t, double value) {
+    const double span = t.maxValue - t.minValue;
+    return span > 0.0 ? static_cast<float>(std::clamp((value - t.minValue) / span, 0.0, 1.0)) : 0.0f;
+}
+
+// What the control at `travel` sets the target to, as the engine maps it.
+double linkMapped(const ControlLinkTargetModel& t, double travel) {
+    CompiledControlLink::Target m;
+    m.bottom  = t.target.bottom;
+    m.top     = t.target.top;
+    m.curve   = t.target.curve;
+    m.stepped = t.stepped;
+    return m.map(travel);
+}
+
+const char* curveText(ControlCurve curve) {
+    return curve == ControlCurve::SlowStart ? "Slow start" : curve == ControlCurve::FastStart ? "Fast start" : "Linear";
+}
+
+} // namespace
+
+void RackWidget::linkButton(const LinkPlace& place, float x, float y, float w, float h) {
+    const RackViewModel& view = controller.view();
+    bool linked = false, unconnected = false, learning = false;
+    for (const ControlLinkModel& link : view.controlLinks) {
+        const bool here = std::any_of(link.targets.begin(), link.targets.end(), [&](const ControlLinkTargetModel& t) {
+            return linkAt(t.target, t.rows, place);
+        });
+        if (!here) continue;
+        linked      = true;
+        unconnected = unconnected || !link.connected;
+        learning    = learning || link.learning;
+    }
+    if (view.controlLinkLearning) {
+        const ControlLinkTarget& t = view.controlLinkLearnTarget;
+        learning = learning || linkAt(t, t.row.empty() ? std::vector<std::string>{} : std::vector{t.row}, place);
+    }
+    const bool blinkOn = std::fmod(ui::nowSeconds(), 0.5) < 0.25;
+    midiButton(x, y, w, h, learning ? blinkOn : linked, learning || unconnected ? kAmber : kAccent);
+    region(x, y, w, h, [this, place, x, y, h](const Press&) { openLinksMenu(place, x, y + h + 2.0f); });
+}
+
+// Learn one (from the list, or a level), then a line per link acting here
+// (choose one to open it), then Remove lines. A row's links are this song's
+// when learned, the rig's levels' and effects' all songs'; the dialog changes it.
+void RackWidget::openLinksMenu(const LinkPlace& place, float x, float y) {
+    using Kind               = ControlLinkTarget::Kind;
+    const RackViewModel& view = controller.view();
+    const ControlScope   scope = place.kind == LinkPlace::Kind::Row ? ControlScope::Song : ControlScope::AllSongs;
+    Menu                 m;
+    m.x     = x;
+    m.y     = y;
+    m.w     = 440.0f;
+    m.title = "Control Links: " + placeName(place);
+    if (view.controlLinkLearning) m.items.push_back(MenuItem{"Stop learning", [this] { controller.cancelLearn(); }});
+
+    auto learnParameter = [this, place, scope, x, y](std::vector<RackController::ParameterChoice> params) {
+        openParameterMenu(params, "Control Link: which parameter of " + placeName(place) + "?", x, y, false,
+                          [this, place, scope](std::uint32_t id) {
+                              ControlLinkTarget t;
+                              t.row    = place.row;
+                              t.bus    = place.bus;
+                              t.effect = place.effect;
+                              t.param  = id;
+                              controller.learnControlLink(t, scope);
+                          });
+    };
+    auto learnLevel = [this, place, scope](Kind kind, int bus) {
+        return [this, place, scope, kind, bus] {
+            ControlLinkTarget t;
+            t.kind = kind;
+            t.row  = place.row;
+            t.bus  = bus;
+            controller.learnControlLink(t, scope);
+        };
+    };
+    switch (place.kind) {
+        case LinkPlace::Kind::Row:
+            m.items.push_back(MenuItem{"Learn a Control Link from the list...",
+                                       [this, learnParameter, id = place.row] { learnParameter(controller.rowParameters(id)); }});
+            m.items.push_back(MenuItem{"Learn the row's gain", learnLevel(Kind::Gain, -1)});
+            if (view.rig.loaded) {
+                m.items.push_back(MenuItem{"Learn the row's send A", learnLevel(Kind::Send, 0)});
+                m.items.push_back(MenuItem{"Learn the row's send B", learnLevel(Kind::Send, 1)});
+            }
+            break;
+        case LinkPlace::Kind::Effect:
+            m.items.push_back(MenuItem{"Learn a Control Link from the list...", [this, learnParameter, place] {
+                                           learnParameter(controller.effectParameters(static_cast<std::size_t>(place.bus),
+                                                                                      static_cast<std::size_t>(place.effect)));
+                                       }});
+            break;
+        case LinkPlace::Kind::Return:
+            m.items.push_back(MenuItem{"Learn a Control Link for " + placeName(place), learnLevel(Kind::Return, place.bus)});
+            break;
+        case LinkPlace::Kind::Master:
+            m.items.push_back(MenuItem{"Learn a Control Link for the master", learnLevel(Kind::Master, -1)});
+            break;
+    }
+
+    // "KeyLab 88, CC 74, ch 1 -> Cutoff 30-80%, pick-up": as much as fits.
+    std::vector<MenuItem> removes;
+    for (const ControlLinkModel& link : view.controlLinks) {
+        std::string targets;
+        std::size_t elsewhere = 0;
+        bool        waiting   = false;
+        std::vector<std::size_t> here;
+        for (std::size_t j = 0; j < link.targets.size(); ++j) {
+            const ControlLinkTargetModel& t = link.targets[j];
+            waiting                         = waiting || t.waiting;
+            if (!linkAt(t.target, t.rows, place)) {
+                ++elsewhere;
+                continue;
+            }
+            here.push_back(j);
+            std::string name = t.text;
+            if (t.target.kind == Kind::Parameter) name = t.target.paramName.empty() ? t.text : t.target.paramName;
+            else if (place.kind == LinkPlace::Kind::Row) name = t.target.kind == Kind::Gain ? "gain" : t.target.bus == 1 ? "send B" : "send A";
+            targets += (targets.empty() ? "" : ", ") + name + " " + linkValueText(t, t.target.bottom) + " to " +
+                       linkValueText(t, t.target.top);
+        }
+        if (here.empty()) continue;
+        if (elsewhere != 0) targets += " + " + std::to_string(elsewhere) + " more";
+        std::string text = link.control + " \xE2\x86\x92 " + targets + (link.pickUp ? ", pick-up" : ", jump");
+        if (link.scope == ControlScope::AllSongs) text += ", all songs";
+        if (link.overridden) text += " (overridden)";
+        if (!link.connected) text += " (not connected)";
+        else if (waiting) text += "  waiting for pick-up";
+        MenuItem open{text, [this, scope = link.scope, index = link.index] { openLink(scope, index); }};
+        open.warn = !link.connected || waiting;
+        m.items.push_back(std::move(open));
+        // Remove takes what acts here; a macro keeps its other targets.
+        ControlLinkSetup kept = link.setup();
+        for (auto j = here.rbegin(); j != here.rend(); ++j) kept.targets.erase(kept.targets.begin() + static_cast<std::ptrdiff_t>(*j));
+        removes.push_back(MenuItem{"Remove " + link.control + " \xE2\x86\x92 " + targets,
+                                   [this, scope = link.scope, index = link.index, kept] {
+                                       controller.setControlLink(scope, index, kept);   // none left: removed
+                                   },
+                                   false, true});
+    }
+    for (MenuItem& item : removes) m.items.push_back(std::move(item));
+    openMenu(std::move(m));
+}
+
+void RackWidget::openParameterMenu(const std::vector<RackController::ParameterChoice>& params, const std::string& title,
+                                   float x, float y, bool overPanel, std::function<void(std::uint32_t)> chosen) {
+    Menu m;
+    m.x         = x;
+    m.y         = y;
+    m.w         = 360.0f;
+    m.title     = title;
+    m.search    = true;
+    m.overPanel = overPanel;
+    for (const RackController::ParameterChoice& p : params)
+        m.items.push_back(MenuItem{p.name, [chosen, id = p.id] { chosen(id); }});
+    if (params.empty()) m.items.push_back(MenuItem{"No parameters to link", {}});
+    openMenu(std::move(m));
+}
+
+void RackWidget::openLink(ControlScope scope, std::size_t index) {
+    closeMenu();
+    filterId.clear();
+    linkOpen         = OpenLink{scope, index};
+    linkPending.reset();
+    linkMissingSince = -1;
+}
+
+void RackWidget::editLink(const ControlLinkSetup& link) {
+    if (!linkOpen) return;
+    linkPending      = link;
+    linkPendingUntil = ui::nowSeconds() + 1.0;
+    controller.setControlLink(linkOpen->scope, linkOpen->index, link);
+}
+
+// The source (Learn again), the scope, pick-up or jump, pass on; then each
+// target: its range bar (B, the control's bottom, and T, its top: either way
+// round), its curve, where it is now and where the control would put it
+// (amber while waiting for pick-up); + Add target.
+void RackWidget::drawLinkPanel() {
+    if (!linkOpen) return;
+    const RackViewModel& view  = controller.view();
+    const double         now   = ui::nowSeconds();
+    const auto           found = std::find_if(view.controlLinks.begin(), view.controlLinks.end(), [&](const ControlLinkModel& l) {
+        return l.scope == linkOpen->scope && l.index == linkOpen->index;
+    });
+    if (found == view.controlLinks.end()) {   // removed; or just moved, and the model hasn't caught up
+        if (linkMissingSince < 0) linkMissingSince = now;
+        if (now - linkMissingSince > 1.0) linkOpen.reset();
+        return;
+    }
+    linkMissingSince      = -1;
+    ControlLinkModel link = *found;
+    if (linkPending) {   // the last edit, until the model has it
+        if (*linkPending == link.setup() || now > linkPendingUntil) {
+            linkPending.reset();
+        } else if (linkPending->targets.size() == link.targets.size()) {
+            link.pickUp = linkPending->pickUp;
+            link.passOn = linkPending->passOn;
+            for (std::size_t j = 0; j < link.targets.size(); ++j) link.targets[j].target = linkPending->targets[j];
+        }
+    }
+    const ControlLinkSetup setup = link.setup();
+
+    constexpr float kTargetH = 58.0f;
+    const float     w        = std::min(width() - 2 * kPad, 720.0f);
+    const float     x        = kPad;
+    const float     y        = topH() + 6.0f;
+    const float     optionsY = y + 46.0f;
+    const float     noteH    = link.overridden ? 22.0f : 0.0f;
+    const float     controlY = optionsY + 38.0f + noteH;
+    const float     targetsY = controlY + 34.0f;
+    const float     h        = targetsY - y + static_cast<float>(link.targets.size()) * kTargetH + 48.0f;
+    box(x, y, w, h, kPanel, 6.0f);
+    outline(x, y, w, h, kTrack, 6.0f);
+    region(x, y, w, h, nullptr, [](float) {});
+
+    // The source, and Learn again, Remove, Done.
+    const float doneX = x + w - 16.0f - 60.0f, removeX = doneX - 8.0f - 70.0f, learnX = removeX - 8.0f - 110.0f;
+    save();
+    scissor(x, y, learnX - x - 8.0f, 44.0f);
+    label(x + 16.0f, y + 22.0f, "Control Link: " + link.control + (link.connected ? "" : " (not connected)"), 14.0f,
+          link.connected ? kText : kAmber);
+    restore();
+    const bool blinkOn = std::fmod(now, 0.5) < 0.25;
+    button(learnX, y + 10.0f, 110.0f, 24.0f, link.learning ? "Stop learning" : "Learn again",
+           link.learning && blinkOn, true, kAmber);
+    region(learnX, y + 10.0f, 110.0f, 24.0f, [this, learning = link.learning](const Press&) {
+        if (!linkOpen) return;
+        if (learning) controller.cancelLearn();
+        else controller.relearnControlLink(linkOpen->scope, linkOpen->index);
+    });
+    box(removeX, y + 10.0f, 70.0f, 24.0f, kTrack, 4.0f);   // a button with red text: it asks first
+    label(removeX + 35.0f, y + 22.0f, "Remove", 13.0f, kRed, ALIGN_CENTER | ALIGN_MIDDLE);
+    region(removeX, y + 10.0f, 70.0f, 24.0f, [this, removeX, y](const Press&) {
+        Menu m;
+        m.w         = 230.0f;
+        m.x         = removeX + 70.0f - m.w;
+        m.y         = y + 36.0f;
+        m.title     = "Remove this Control Link?";
+        m.overPanel = true;
+        m.items.push_back(MenuItem{"Remove", [this] {
+                                       if (!linkOpen) return;
+                                       controller.removeControlLink(linkOpen->scope, linkOpen->index);
+                                       linkOpen.reset();
+                                   },
+                                   false, true});
+        m.items.push_back(MenuItem{"Cancel", [] {}});
+        openMenu(std::move(m));
+    });
+    button(doneX, y + 10.0f, 60.0f, 24.0f, "Done", true, true, kAccent);
+    region(doneX, y + 10.0f, 60.0f, 24.0f, [this](const Press&) { dismissOverlays(); });
+
+    // For this song or all songs; pick-up or jump; pass the controller on.
+    float ox = x + 16.0f;
+    auto choice = [&](const char* text, float bw, bool on, std::function<void()> act) {
+        button(ox, optionsY, bw, 24.0f, text, on, true, kAccent);
+        region(ox, optionsY, bw, 24.0f, [act](const Press&) { act(); });
+        ox += bw + 4.0f;
+    };
+    auto setScope = [this](ControlScope to) {
+        return [this, to] {
+            if (!linkOpen || linkOpen->scope == to) return;
+            if (const auto index = controller.setControlLinkScope(linkOpen->scope, linkOpen->index, to)) {
+                linkOpen = OpenLink{to, *index};
+                linkPending.reset();
+                linkMissingSince = -1;
+            }
+        };
+    };
+    choice("This song", 90.0f, link.scope == ControlScope::Song, setScope(ControlScope::Song));
+    choice("All songs", 90.0f, link.scope == ControlScope::AllSongs, setScope(ControlScope::AllSongs));
+    ox += 16.0f;
+    choice("Pick-up", 76.0f, link.pickUp, [this, setup] {
+        ControlLinkSetup edited = setup;
+        edited.pickUp           = true;
+        editLink(edited);
+    });
+    choice("Jump", 60.0f, !link.pickUp, [this, setup] {
+        ControlLinkSetup edited = setup;
+        edited.pickUp           = false;
+        editLink(edited);
+    });
+    ox += 16.0f;
+    choice("Pass on too", 100.0f, link.passOn, [this, setup] {
+        ControlLinkSetup edited = setup;
+        edited.passOn           = !edited.passOn;
+        editLink(edited);
+    });
+    if (link.overridden)
+        label(x + 16.0f, optionsY + 38.0f, "This song has its own Control Link on this control: this one is off here.",
+              12.0f, kAmber);
+
+    // The control: where it is (once it has moved).
+    const float barX0 = x + 16.0f, barX1 = x + w - 16.0f - 100.0f - 8.0f - 26.0f - 8.0f;
+    label(barX0, controlY + 8.0f, "Control", 12.0f, kDim);
+    const float cx0 = barX0 + 60.0f;
+    box(cx0, controlY + 5.0f, barX1 - cx0, 6.0f, kBarBg, 3.0f);
+    if (link.travel >= 0.0) {
+        box(cx0, controlY + 5.0f, (barX1 - cx0) * static_cast<float>(link.travel), 6.0f, kTrack, 3.0f);
+        label(barX1 + 8.0f, controlY + 8.0f, std::to_string(static_cast<int>(std::lround(link.travel * 100.0))) + "%",
+              12.0f, kDim);
+    } else {
+        label(barX1 + 8.0f, controlY + 8.0f, "not moved yet", 12.0f, kDim);
+    }
+
+    for (std::size_t j = 0; j < link.targets.size(); ++j) {
+        const ControlLinkTargetModel& t  = link.targets[j];
+        const float                   ty = targetsY + static_cast<float>(j) * kTargetH;
+        box(x + 8.0f, ty - 4.0f, w - 16.0f, 1.0f, kLine);
+        // Its name; the range as values; waiting.
+        std::string right = "B " + linkValueText(t, t.target.bottom) + "   T " + linkValueText(t, t.target.top);
+        if (t.now) right = "now " + linkValueText(t, *t.now) + "     " + right;
+        const float rightW = labelWidth(right, 12.0f);
+        save();
+        scissor(barX0, ty, barX1 - barX0 - rightW - 12.0f, 20.0f);
+        label(barX0, ty + 9.0f, t.text + (t.present ? "" : " (not here)"), 13.0f, t.present ? kText : kDim);
+        if (t.waiting)
+            label(barX0 + labelWidth(t.text, 13.0f) + 12.0f, ty + 9.0f, "waiting for pick-up", 12.0f, kAmber);
+        restore();
+        label(barX1, ty + 9.0f, right, 12.0f, kDim, ALIGN_RIGHT | ALIGN_MIDDLE);
+
+        // The bar: the range between B and T, the target now (a white line),
+        // and where the control would put it (a dot; amber while waiting).
+        const float by = ty + 30.0f, span = barX1 - barX0;
+        box(barX0, by - 4.0f, span, 8.0f, kBarBg, 4.0f);
+        const float bPos = linkPos(t, t.target.bottom), tPos = linkPos(t, t.target.top);
+        box(barX0 + span * std::min(bPos, tPos), by - 4.0f, span * std::fabs(tPos - bPos), 8.0f, kTrack, 4.0f);
+        if (t.now) box(barX0 + span * linkPos(t, *t.now) - 1.0f, by - 10.0f, 2.0f, 20.0f, kText);
+        if (t.now && link.travel >= 0.0) {
+            beginPath();
+            circle(barX0 + span * linkPos(t, linkMapped(t, link.travel)), by + 13.0f, 4.0f);
+            fill(t.waiting ? kAmber : kAccent);
+            NanoVG::fill();
+        }
+        for (const auto [pos, letter] : {std::pair{bPos, "B"}, {tPos, "T"}}) {
+            const float hx = barX0 + span * pos;
+            box(hx - 7.0f, by - 11.0f, 14.0f, 22.0f, kAccent, 3.0f);
+            label(hx, by, letter, 11.0f, kBarBg, ALIGN_CENTER | ALIGN_MIDDLE);
+        }
+        region(barX0 - 8.0f, by - 12.0f, span + 16.0f, 24.0f, [this, setup, j, t, barX0, barX1](const Press& p) {
+            startRangeDrag(setup, j, t, barX0, barX1, p);
+        });
+
+        // The curve: Linear, Slow start, Fast start, in turn.
+        const float cvX = barX1 + 8.0f;
+        button(cvX, by - 12.0f, 100.0f, 24.0f, curveText(t.target.curve), false, true, kAccent);
+        region(cvX, by - 12.0f, 100.0f, 24.0f, [this, setup, j](const Press&) {
+            ControlLinkSetup edited = setup;
+            ControlCurve&    curve  = edited.targets[j].curve;
+            curve = curve == ControlCurve::Linear ? ControlCurve::SlowStart
+                    : curve == ControlCurve::SlowStart ? ControlCurve::FastStart
+                                                       : ControlCurve::Linear;
+            editLink(edited);
+        });
+        const float rx = cvX + 100.0f + 8.0f;
+        removeButton(rx, by - 13.0f, 26.0f);
+        region(rx, by - 13.0f, 26.0f, 26.0f, [this, setup, j](const Press&) {
+            if (!linkOpen) return;
+            ControlLinkSetup edited = setup;
+            edited.targets.erase(edited.targets.begin() + static_cast<std::ptrdiff_t>(j));
+            if (edited.targets.empty()) {   // the last: the link goes
+                controller.removeControlLink(linkOpen->scope, linkOpen->index);
+                linkOpen.reset();
+                return;
+            }
+            editLink(edited);
+        });
+    }
+
+    const float addY = targetsY + static_cast<float>(link.targets.size()) * kTargetH + 6.0f;
+    button(x + 16.0f, addY, 120.0f, 26.0f, "+ Add target", false, true, kAccent);
+    region(x + 16.0f, addY, 120.0f, 26.0f, [this, link, x, addY](const Press&) { openAddTargetMenu(link, x + 16.0f, addY + 28.0f); });
+    label(x + 150.0f, addY + 13.0f, "Drag B (the control's bottom) and T (its top), either way round. Shift: fine.", 11.0f,
+          kDim);
+}
+
+// Drag B or T, whichever is nearer the press (which moves it there).
+void RackWidget::startRangeDrag(const ControlLinkSetup& link, std::size_t target, const ControlLinkTargetModel& shown,
+                                float barX0, float barX1, const Press& p) {
+    if (target >= link.targets.size()) return;
+    const float span = barX1 - barX0;
+    const bool  top  = std::fabs(p.x - (barX0 + span * linkPos(shown, shown.target.top))) <
+                      std::fabs(p.x - (barX0 + span * linkPos(shown, shown.target.bottom)));
+    const double startValue = top ? shown.target.top : shown.target.bottom;
+    drag = [this, link, target, shown, barX0, span, top, startValue, startX = p.x](float x, float, std::uint32_t mod) {
+        const double range = shown.maxValue - shown.minValue;
+        const bool   fine  = (mod & dgl::kModifierShift) != 0;
+        double       value = fine ? startValue + (x - startX) / span * range * 0.1
+                                  : shown.minValue + std::clamp((x - barX0) / span, 0.0f, 1.0f) * range;
+        value = std::clamp(value, shown.minValue, shown.maxValue);
+        if (shown.stepped) value = std::round(value);
+        else if (shown.target.kind != ControlLinkTarget::Kind::Parameter) value = std::round(value * 10.0) / 10.0;
+        ControlLinkSetup edited = link;
+        (top ? edited.targets[target].top : edited.targets[target].bottom) = value;
+        editLink(edited);
+    };
+    if ((p.mod & dgl::kModifierShift) == 0) drag(p.x, p.y, p.mod);
+}
+
+// What else the control could drive: a row's parameter (from its list), gain
+// or sends (this song's links only), a bus effect's parameter, a return, the master.
+void RackWidget::openAddTargetMenu(const ControlLinkModel& link, float x, float y) {
+    using Kind               = ControlLinkTarget::Kind;
+    const RackViewModel& view = controller.view();
+    Menu                 m;
+    m.x         = x;
+    m.y         = y;
+    m.w         = 360.0f;
+    m.title     = "Add a target for " + link.control;
+    m.overPanel = true;
+    auto add = [this](ControlLinkTarget t) {
+        if (linkOpen) controller.addControlLinkTarget(linkOpen->scope, linkOpen->index, std::move(t));
+    };
+    auto parameterOf = [this, add, x, y](ControlLinkTarget base, std::string name,
+                                         std::vector<RackController::ParameterChoice> params) {
+        return [this, add, x, y, base, name, params] {
+            openParameterMenu(params, "Which parameter of " + name + "?", x, y, true, [add, base](std::uint32_t id) {
+                ControlLinkTarget t = base;
+                t.param             = id;
+                add(t);
+            });
+        };
+    };
+    for (const RowModel& row : view.rows) {
+        ControlLinkTarget t;
+        t.row = row.id;
+        if (row.state == RowState::Running)
+            m.items.push_back(MenuItem{row.name + ": a parameter...", parameterOf(t, row.name, controller.rowParameters(row.id))});
+        if (link.scope == ControlScope::AllSongs) continue;   // a row's levels are its song's
+        t.kind = Kind::Gain;
+        m.items.push_back(MenuItem{row.name + " gain", [add, t] { add(t); }});
+        for (int bus = 0; bus < static_cast<int>(kRigBuses) && view.rig.loaded; ++bus) {
+            t.kind = Kind::Send;
+            t.bus  = bus;
+            m.items.push_back(MenuItem{row.name + " send " + (bus == 0 ? "A" : "B"), [add, t] { add(t); }});
+        }
+    }
+    if (view.rig.loaded)
+        for (std::size_t b = 0; b < kRigBuses; ++b) {
+            const std::string bus = "Bus " + view.rig.buses[b].name;
+            for (std::size_t e = 0; e < RigBus::kEffects; ++e) {
+                const BusEffectModel& effect = view.rig.buses[b].effects[e];
+                if (effect.name.empty() || !effect.problem.empty()) continue;
+                ControlLinkTarget t;
+                t.bus             = static_cast<int>(b);
+                t.effect          = static_cast<int>(e);
+                const std::string name = bus + " effect " + std::to_string(e + 1) + " (" + effect.name + ")";
+                m.items.push_back(MenuItem{name + ": a parameter...", parameterOf(t, name, controller.effectParameters(b, e))});
+            }
+            ControlLinkTarget t;
+            t.kind = Kind::Return;
+            t.bus  = static_cast<int>(b);
+            m.items.push_back(MenuItem{bus + " return", [add, t] { add(t); }});
+        }
+    if (view.rig.loaded) {
+        ControlLinkTarget t;
+        t.kind = Kind::Master;
+        m.items.push_back(MenuItem{"Master", [add, t] { add(t); }});
+    }
+    openMenu(std::move(m));
+}
+
 // --- the filter panel ------------------------------------------------------------------
 
 const RowModel* RackWidget::rowById(const std::string& id) const {
@@ -2334,7 +2878,7 @@ void RackWidget::drawFilterPanel() {
 // --- input -------------------------------------------------------------------------
 
 void RackWidget::wheelUnclaimed(float, float, float notches, std::uint32_t) {
-    if (!menuOpen() && filterId.empty()) scrollY = std::clamp(scrollY - notches * kRowH / 2.0f, 0.0f, maxScroll());
+    if (!menuOpen() && !overlayOpen()) scrollY = std::clamp(scrollY - notches * kRowH / 2.0f, 0.0f, maxScroll());
 }
 
 bool RackWidget::onKeyboard(const KeyboardEvent& ev) {

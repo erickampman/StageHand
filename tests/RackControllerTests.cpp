@@ -1903,6 +1903,7 @@ void testControlLinks() {
     const RackViewModel& view = controller.view();
     rig.factory.created.at("synth")->params = {ParameterInfo{7, nullptr, "Cutoff", 0.0, 1.0, 0.5},
                                                ParameterInfo{8, nullptr, "Hidden", 0.0, 1.0, 0.5, false}};
+    rig.factory.created.at("synth")->values[7] = 0.25;
     double now  = 0.0;
     auto   tick = [&] { controller.tick(now += 0.05); };
     auto   send = [&](std::uint32_t word) {
@@ -1933,8 +1934,26 @@ void testControlLinks() {
         CHECK(l.scope == ControlScope::Song && l.pickUp && !l.passOn && l.connected && l.targets.size() == 1);
         CHECK(l.targets[0].text == "keys: Cutoff" && l.targets[0].present && l.targets[0].target.bottom == 0.0 &&
               l.targets[0].target.top == 1.0 && l.targets[0].target.paramName == "Cutoff");
+        // For the menu and dialog: the control as saved, the rows it acts on, the parameter's scale.
+        CHECK(l.number == 74 && l.channel == 0 && l.setup() == rig.session->controlLinks(ControlScope::Song)[0]);
+        CHECK(l.targets[0].rows == std::vector<std::string>{"keys"} && l.targets[0].minValue == 0.0 &&
+              l.targets[0].maxValue == 1.0 && !l.targets[0].stepped);
     }
     CHECK(rig.session->modified());
+    // Live, once the engine runs it: the parameter where it was compiled (0.25),
+    // the control at the top (CC 74 at 127 was the learn), not yet moved since.
+    runBlock(*rig.engine);
+    tick();
+    runBlock(*rig.engine);
+    tick();
+    if (view.controlLinks.size() == 1) {
+        const ControlLinkModel& l = view.controlLinks[0];
+        CHECK(l.targets[0].now == 0.25 && l.travel < 0.0 && !l.targets[0].waiting);
+    }
+    send(0x20B04A00u);   // CC 74 at 0: waiting for pick-up
+    if (view.controlLinks.size() == 1)
+        CHECK(view.controlLinks[0].travel == 0.0 && view.controlLinks[0].targets[0].waiting &&
+              view.controlLinks[0].targets[0].now == 0.25);
 
     // The same control again: the link gets a second target.
     ControlLinkTarget gain;
@@ -1944,8 +1963,44 @@ void testControlLinks() {
     send(0x20B04A7Fu);
     CHECK(view.controlLinks.size() == 1 && view.controlLinks[0].targets.size() == 2);
     if (view.controlLinks[0].targets.size() == 2)
-        CHECK(view.controlLinks[0].targets[1].text == "keys gain" && view.controlLinks[0].targets[1].target.bottom == -60.0);
+        CHECK(view.controlLinks[0].targets[1].text == "keys gain" && view.controlLinks[0].targets[1].target.bottom == -60.0 &&
+              view.controlLinks[0].targets[1].minValue == -60.0 && view.controlLinks[0].targets[1].maxValue == 6.0);
     controller.takeNotices();
+
+    // Learn again: the link's control changes, its targets stay.
+    controller.relearnControlLink(ControlScope::Song, 0);
+    tick();
+    CHECK(view.controlLinkLearning && !view.controlLinks.empty() && view.controlLinks[0].learning);
+    send(0x20B04B7Fu);   // CC 75
+    CHECK(!view.controlLinkLearning && view.controlLinks.size() == 1 && view.controlLinks[0].number == 75 &&
+          view.controlLinks[0].targets.size() == 2 && !view.controlLinks[0].learning);
+    CHECK(controller.takeNotices() ==
+          std::vector<std::string>{"Control Link: now From other apps (MIDI 2.0), CC 75, ch 1"});
+    // Not to a control another link has.
+    controller.learnControlLink(cutoff, ControlScope::Song);
+    send(0x20B04C7Fu);   // CC 76: a second link
+    controller.takeNotices();
+    controller.relearnControlLink(ControlScope::Song, 1);
+    send(0x20B04B7Fu);   // CC 75, the first's
+    CHECK(controller.takeNotices().size() == 1 && view.controlLinks.size() == 2 && view.controlLinks[1].number == 76);
+    controller.removeControlLink(ControlScope::Song, 1);
+    controller.relearnControlLink(ControlScope::Song, 0);
+    send(0x20B04A7Fu);   // back to CC 74
+    controller.takeNotices();
+    CHECK(view.controlLinks.size() == 1 && view.controlLinks[0].number == 74);
+
+    // Add a target from the list: a parameter it has already is reset to its
+    // whole range; one that isn't there is refused.
+    ControlLinkSetup narrowed = rig.session->controlLinks(ControlScope::Song)[0];
+    narrowed.targets[0].bottom = 0.3;
+    controller.setControlLink(ControlScope::Song, 0, narrowed);
+    controller.addControlLinkTarget(ControlScope::Song, 0, cutoff);
+    CHECK(rig.session->controlLinks(ControlScope::Song)[0].targets.size() == 2 &&
+          rig.session->controlLinks(ControlScope::Song)[0].targets[0].bottom == 0.0);
+    ControlLinkTarget unknown = cutoff;
+    unknown.param             = 99;
+    controller.addControlLinkTarget(ControlScope::Song, 0, unknown);
+    CHECK(controller.takeNotices().size() == 1 && rig.session->controlLinks(ControlScope::Song)[0].targets.size() == 2);
 
     // Refused: a key; a control a trigger answers; a row's gain for all songs.
     controller.learnControlLink(cutoff, ControlScope::Song);
@@ -1973,7 +2028,7 @@ void testControlLinks() {
     edited.targets.pop_back();
     edited.pickUp = false;
     controller.setControlLink(ControlScope::Song, 0, edited);
-    CHECK(controller.setControlLinkScope(ControlScope::Song, 0, ControlScope::AllSongs));
+    CHECK(controller.setControlLinkScope(ControlScope::Song, 0, ControlScope::AllSongs) == std::optional<std::size_t>{0});
     tick();
     CHECK(view.controlLinks.size() == 1 && view.controlLinks[0].scope == ControlScope::AllSongs &&
           !view.controlLinks[0].pickUp);
@@ -1982,6 +2037,9 @@ void testControlLinks() {
         CHECK(t.target.plugin == "synth" && t.target.row.empty() && t.text == "synth (every row): Cutoff" && t.present);
     }
     CHECK(rig.session->rigModified());
+    // For all songs, a row's gain is refused as a target.
+    controller.addControlLinkTarget(ControlScope::AllSongs, 0, gain);
+    CHECK(controller.takeNotices().size() == 1 && rig.session->controlLinks(ControlScope::AllSongs)[0].targets.size() == 1);
 
     // A song's link on the same control overrides it.
     controller.learnControlLink(cutoff, ControlScope::Song);

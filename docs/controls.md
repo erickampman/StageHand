@@ -218,6 +218,46 @@ unknown parameter and an absent input left out, a row removed), the
 controller (`testControlLinks`: learn, a macro, the refusals, scope moved,
 overridden, saved, removed).
 
+**Milestone 3 implemented (2026-10-03):** the Control Links button (the MIDI
+icon) beside each row's Editor, beside each loaded bus effect's Edit, and
+on each bus strip where a row has its sends (for the return); the return
+and master faders also take a right-click, and "master" in the status bar is
+lit while a link drives it. Lit when links act there, amber if one's input
+isn't connected, blinking while one is learned there. Its menu ("Control
+Links: Keys"): Learn a Control Link from the list... (the parameters,
+filtered as you type: menus can now be searchable, `UiWidget::Menu::search`),
+Learn the row's gain / send A / send B, or Learn a Control Link for a
+return or the master; a line per link acting there ("All inputs, CC 7, ch 1
+→ gain -20.0 dB to +3.0 dB + 1 more, jump", amber with "waiting for
+pick-up" or "not connected"), which opens it in the dialog; and Remove lines,
+which remove the targets acting there (a macro keeps its others). A link
+learned from a row is this song's; from a bus effect, a return or the
+master, all songs' (they're the rig's); the dialog changes it. While
+learning, the status bar says "Control Link: now move a knob, fader or pedal
+(Esc stops)". The Control Link dialog, a panel over the rack: the control
+(Learn again, Remove, Done), This song / All songs, Pick-up / Jump, Pass on
+too; the control's position; then each target: its name ("waiting for
+pick-up" in amber), "now", B and T as values (a parameter's percent of its
+range, a stepped one's step, a level's dB), a range bar with B and T handles
+(drag either, either way round; Shift: fine), a white line where the target
+is now, a dot where the control would put it (amber while waiting), the
+curve (Linear, Slow start, Fast start, in turn), a red X; + Add target (a
+row's parameter from its list, gain, sends; a bus effect's parameter; a
+return; the master). Changes apply at once. Live state comes from the
+engine: each compiled target carries an `origin` (Session's scope, link and
+target, `linkOrigin()`), and `Engine::linkStates()` publishes each one's
+value, the control's position and waiting, at the end of every block (the
+first 64 targets). `RackController`: `relearnControlLink()` (in place;
+refused if another link in its scope has that control),
+`addControlLinkTarget()`, and `setControlLinkScope()` returns where the link
+went. `ControlLinkModel` has the control as saved (`setup()`), the
+control's position, and Learn again; each target, the rows it acts on, its
+scale, where it is now and waiting; `controlLinkLearnTarget`. Tests: the
+engine (`linkStates()`: not moved, waiting, picked up, a level), the
+controller (the model's control, rows, scale, live value and waiting; Learn
+again and its refusal; a target added, reset, refused; the scope's new
+index; a gain refused for all songs). Learn from the editor is milestone 4.
+
 ## Open questions
 
 None at the moment. Answered 2026-10-03:

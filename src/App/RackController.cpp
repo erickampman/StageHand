@@ -607,29 +607,57 @@ const char* busName(int bus) {
 
 std::vector<RackController::ParameterChoice> RackController::rowParameters(const std::string& rowId) const {
     const Session::Slot* s = session.slot(rowId);
-    return choicesOf(s != nullptr ? s->plugin.get() : nullptr);
+    return parametersOf(s != nullptr ? s->plugin.get() : nullptr);
 }
 
 std::vector<RackController::ParameterChoice> RackController::effectParameters(std::size_t bus, std::size_t effect) const {
     if (!session.hasRig() || bus >= kRigBuses || effect >= RigBus::kEffects) return {};
-    return choicesOf(session.rig().effects[bus][effect].plugin.get());
+    return parametersOf(session.rig().effects[bus][effect].plugin.get());
 }
 
-void RackController::learnControlLink(ControlLinkTarget target, ControlScope scope) {
+const std::vector<RackController::ParameterChoice>& RackController::parametersOf(const HostedPlugin* plugin) const {
+    static const std::vector<ParameterChoice> none;
+    if (plugin == nullptr) return none;
+    if (engine.graphCommits() != parameterCacheAt) {   // plugins came or went: a pointer may be another's now
+        parameterCache.clear();
+        parameterCacheAt = engine.graphCommits();
+    }
+    auto known = parameterCache.find(plugin);
+    if (known == parameterCache.end()) known = parameterCache.emplace(plugin, choicesOf(plugin)).first;
+    return known->second;
+}
+
+const HostedPlugin* RackController::targetPlugin(const ControlLinkTarget& t) const {
+    if (t.kind != ControlLinkTarget::Kind::Parameter) return nullptr;
+    if (t.bus >= 0)
+        return session.hasRig() && t.bus < static_cast<int>(kRigBuses) && t.effect >= 0 &&
+                       t.effect < static_cast<int>(RigBus::kEffects)
+                   ? session.rig().effects[t.bus][t.effect].plugin.get()
+                   : nullptr;
+    if (!t.row.empty()) {
+        const Session::Slot* s = session.slot(t.row);
+        return s != nullptr ? s->plugin.get() : nullptr;
+    }
+    for (const Session::Slot& s : session.slots())   // all songs': the first row with it
+        if (s.plugin && s.saved.plugin.id == t.plugin) return s.plugin.get();
+    return nullptr;
+}
+
+bool RackController::startTarget(ControlLinkTarget& target, ControlScope scope) {
     using Kind = ControlLinkTarget::Kind;
     std::vector<ControlLinkTarget> kept;
     if (ControlLinkTarget check = target; !targetFor(scope, check, kept)) {
-        notice("Control Link: a row's gain or send belongs to its song; it can't be for all songs");
-        return;
+        notice(target.kind == Kind::Gain || target.kind == Kind::Send
+                   ? "Control Link: a row's gain or send can't be for all songs"
+                   : "Control Link: that plugin isn't in this song");
+        return false;
     }
     if (target.kind == Kind::Parameter) {   // its whole range, and its name as it is now
-        const std::vector<ParameterChoice> choices =
-            target.bus >= 0 ? effectParameters(static_cast<std::size_t>(target.bus), static_cast<std::size_t>(target.effect))
-                            : rowParameters(target.row);
+        const std::vector<ParameterChoice>& choices = parametersOf(targetPlugin(target));
         const auto p = std::find_if(choices.begin(), choices.end(), [&](const ParameterChoice& c) { return c.id == target.param; });
         if (p == choices.end()) {
             notice("Control Link: that parameter isn't there to link");
-            return;
+            return false;
         }
         target.paramName = p->name;
         target.bottom    = p->minValue;
@@ -638,10 +666,32 @@ void RackController::learnControlLink(ControlLinkTarget target, ControlScope sco
         target.bottom = -60.0;
         target.top    = 0.0;
     }
-    linkTarget = std::move(target);
-    linkScope  = scope;
-    learningId = kLinkLearn;
+    return true;
+}
+
+void RackController::learnControlLink(ControlLinkTarget target, ControlScope scope) {
+    if (!startTarget(target, scope)) return;
+    linkTarget  = std::move(target);
+    linkScope   = scope;
+    linkRelearn.reset();
+    learningId  = kLinkLearn;
     engine.armLearn();
+}
+
+void RackController::relearnControlLink(ControlScope scope, std::size_t index) {
+    if (index >= session.controlLinks(scope).size()) return;
+    linkScope   = scope;
+    linkRelearn = index;
+    learningId  = kLinkLearn;
+    engine.armLearn();
+}
+
+void RackController::addControlLinkTarget(ControlScope scope, std::size_t index, ControlLinkTarget target) {
+    const std::vector<ControlLinkSetup>& links = session.controlLinks(scope);
+    if (index >= links.size() || !startTarget(target, scope)) return;
+    ControlLinkSetup link = links[index];
+    link.targets          = {std::move(target)};
+    addLinkTarget(std::move(link), scope);   // into link `index`: it's the one on that control
 }
 
 void RackController::setControlLink(ControlScope scope, std::size_t index, ControlLinkSetup link) {
@@ -659,23 +709,25 @@ void RackController::removeControlLink(ControlScope scope, std::size_t index) {
     session.setControlLinks(scope, std::move(links));
 }
 
-bool RackController::setControlLinkScope(ControlScope scope, std::size_t index, ControlScope to) {
+std::optional<std::size_t> RackController::setControlLinkScope(ControlScope scope, std::size_t index, ControlScope to) {
     const std::vector<ControlLinkSetup>& links = session.controlLinks(scope);
-    if (index >= links.size()) return false;
-    if (scope == to) return true;
+    if (index >= links.size()) return std::nullopt;
+    if (scope == to) return index;
     ControlLinkSetup link = links[index];
     for (ControlLinkTarget t : link.targets) {
         std::vector<ControlLinkTarget> kept;
         if (targetFor(to, t, kept)) continue;
         bool present = true;
         notice("Control Link: " + targetText(t, present) +
-               (to == ControlScope::AllSongs ? " belongs to this song; it can't be for all songs"
-                                             : " isn't in this song; it can't be this song's"));
-        return false;
+               (to == ControlScope::AllSongs ? " can't be for all songs" : " isn't in this song"));
+        return std::nullopt;
     }
     removeControlLink(scope, index);
-    addLinkTarget(std::move(link), to);
-    return true;
+    addLinkTarget(link, to);
+    const std::vector<ControlLinkSetup>& moved = session.controlLinks(to);
+    const auto at = std::find_if(moved.begin(), moved.end(), [&](const ControlLinkSetup& l) { return l.sameControl(link); });
+    if (at == moved.end()) return std::nullopt;
+    return static_cast<std::size_t>(at - moved.begin());
 }
 
 bool RackController::targetFor(ControlScope scope, ControlLinkTarget& target, std::vector<ControlLinkTarget>& out) const {
@@ -804,8 +856,11 @@ std::string RackController::targetText(const ControlLinkTarget& t, bool& present
 }
 
 void RackController::buildControlLinks() {
+    using Kind = ControlLinkTarget::Kind;
     model.controlLinks.clear();
-    const std::vector<ControlLinkSetup>& own = session.controlLinks(ControlScope::Song);
+    model.controlLinkLearnTarget = learningId == kLinkLearn && !linkRelearn ? linkTarget : ControlLinkTarget{};
+    const std::vector<Engine::LinkState> live = engine.linkStates();
+    const std::vector<ControlLinkSetup>& own  = session.controlLinks(ControlScope::Song);
     for (const ControlScope scope : {ControlScope::Song, ControlScope::AllSongs}) {
         const std::vector<ControlLinkSetup>& links = session.controlLinks(scope);
         for (std::size_t i = 0; i < links.size(); ++i) {
@@ -819,10 +874,41 @@ void RackController::buildControlLinks() {
             m.passOn     = link.passOn;
             m.overridden = scope == ControlScope::AllSongs &&
                            std::any_of(own.begin(), own.end(), [&](const ControlLinkSetup& o) { return o.sameControl(link); });
-            for (const ControlLinkTarget& t : link.targets) {
-                ControlLinkTargetModel target;
+            m.source     = link.source;
+            m.group      = link.group;
+            m.channel    = link.channel;
+            m.number     = link.number;
+            m.learning   = learningId == kLinkLearn && linkRelearn == i && linkScope == scope;
+            for (std::size_t j = 0; j < link.targets.size(); ++j) {
+                const ControlLinkTarget& t = link.targets[j];
+                ControlLinkTargetModel   target;
                 target.target = t;
                 target.text   = targetText(t, target.present);
+                if (t.kind == Kind::Gain || t.kind == Kind::Send || (t.kind == Kind::Parameter && !t.row.empty()))
+                    target.rows.push_back(t.row);
+                else if (t.kind == Kind::Parameter && t.bus < 0)
+                    for (const Session::Slot& s : session.slots())
+                        if (s.saved.plugin.id == t.plugin) target.rows.push_back(s.saved.id);
+                if (t.kind == Kind::Parameter) {
+                    target.minValue = std::min(t.bottom, t.top);
+                    target.maxValue = std::max(t.bottom, t.top);
+                    for (const ParameterChoice& p : parametersOf(targetPlugin(t)))
+                        if (p.id == t.param) {
+                            target.minValue = p.minValue;
+                            target.maxValue = p.maxValue;
+                            target.stepped  = p.stepped;
+                        }
+                } else {   // the fader's scale
+                    target.minValue = -60.0;
+                    target.maxValue = 6.0;
+                }
+                const std::uint64_t origin = linkOrigin(scope, i, j);
+                const auto state = std::find_if(live.begin(), live.end(), [&](const Engine::LinkState& l) { return l.origin == origin; });
+                if (state != live.end()) {
+                    target.now     = state->value;
+                    target.waiting = state->waiting;
+                    m.travel       = state->travel;
+                }
                 m.targets.push_back(std::move(target));
             }
             model.controlLinks.push_back(std::move(m));
@@ -1521,6 +1607,23 @@ void RackController::finishLearn(const Engine::Learned& learned) {
         link.number  = static_cast<std::uint8_t>((m.words[0] >> 8) & 0x7F);
         if (const std::string user = triggerOn(link.source, link.group, link.channel, link.number); !user.empty()) {
             notice(who + ": CC " + std::to_string(link.number) + " is already " + user + "; choose another control");
+            return;
+        }
+        if (linkRelearn) {   // another control for a link
+            const std::size_t             index = *std::exchange(linkRelearn, std::nullopt);
+            std::vector<ControlLinkSetup> links = session.controlLinks(linkScope);
+            if (index >= links.size()) return;   // removed meanwhile
+            for (std::size_t i = 0; i < links.size(); ++i)
+                if (i != index && links[i].sameControl(link)) {
+                    notice(who + ": " + controlText(link) + " has a Control Link of its own; choose another control");
+                    return;
+                }
+            links[index].source  = link.source;
+            links[index].group   = link.group;
+            links[index].channel = link.channel;
+            links[index].number  = link.number;
+            session.setControlLinks(linkScope, std::move(links));
+            notice(who + ": now " + controlText(link));
             return;
         }
         link.targets = {linkTarget};

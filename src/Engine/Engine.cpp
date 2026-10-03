@@ -345,6 +345,7 @@ void Engine::process(const AudioCallbackContext& ctx) noexcept {
     routeMidi(ctx);
     runSlots(ctx);
     renderClick(ctx);
+    publishLinks();
 
     clock.stopFrame = UINT32_MAX;
     if (clock.stopPending) {   // stopped in this block: the next one starts at beat 0, stopped
@@ -966,6 +967,7 @@ void Engine::applyLinks(MidiSourceHandle source, const MidiMessage& message, std
     for (CompiledControlLink& link : links) {
         double travel = 0.0;
         if (!link.matches(source, message, travel)) continue;
+        link.travel = travel;
         for (CompiledControlLink::Target& t : link.targets) {
             const double mapped = t.map(travel);
             const double now = t.kind == CompiledControlLink::Target::Kind::Parameter ? t.current : linkLevel(t);
@@ -977,6 +979,34 @@ void Engine::applyLinks(MidiSourceHandle source, const MidiMessage& message, std
                     if (&o != &t && o.sameTarget(t)) o.moved(mapped);
         }
     }
+}
+
+void Engine::publishLinks() noexcept {
+    std::uint32_t count = 0;
+    if (currentSequences != nullptr && currentGraph != nullptr)   // linkLevel() looks in the graph
+        for (CompiledControlLink& link : currentSequences->controlLinks())
+            for (const CompiledControlLink::Target& t : link.targets) {
+                if (count == kShownLinkTargets) break;
+                ShownLinkTarget& shown = shownLinks[count++];
+                shown.origin.store(t.origin, std::memory_order_relaxed);
+                shown.value.store(t.kind == CompiledControlLink::Target::Kind::Parameter ? t.current : linkLevel(t),
+                                  std::memory_order_relaxed);
+                shown.travel.store(link.travel, std::memory_order_relaxed);
+                shown.waiting.store(link.pickUp && !t.picked && link.travel >= 0.0, std::memory_order_relaxed);
+            }
+    shownLinkCount.store(count, std::memory_order_release);
+}
+
+std::vector<Engine::LinkState> Engine::linkStates() const {
+    std::vector<LinkState> out(shownLinkCount.load(std::memory_order_acquire));
+    for (std::size_t i = 0; i < out.size(); ++i) {
+        const ShownLinkTarget& shown = shownLinks[i];
+        out[i].origin  = shown.origin.load(std::memory_order_relaxed);
+        out[i].value   = shown.value.load(std::memory_order_relaxed);
+        out[i].travel  = shown.travel.load(std::memory_order_relaxed);
+        out[i].waiting = shown.waiting.load(std::memory_order_relaxed);
+    }
+    return out;
 }
 
 SlotRuntime* Engine::findRuntime(const SlotRuntime* key) const noexcept {

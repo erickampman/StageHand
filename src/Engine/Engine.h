@@ -268,6 +268,23 @@ public:
     // further outputs folded into the second channel. take() from the main thread.
     LevelMeter& outputMeter() noexcept { return outputLevels; }
 
+    // --- control links (docs/controls.md, sections 8 and 10) ---
+    // Each running link target as the last block left it, for the Control
+    // Link dialog's live markers: its `origin` as compiled; where the target
+    // is (a parameter's plain value, or a level's dB); the control's position
+    // (0 to 1, -1 before it has moved); and whether it's waiting for pick-up
+    // (the control has moved but hasn't reached the target). The first
+    // kShownLinkTargets only. Main thread; just after a commit, a block may
+    // still show the previous set's.
+    struct LinkState {
+        std::uint64_t origin  = 0;
+        double        value   = 0.0;
+        double        travel  = -1.0;
+        bool          waiting = false;
+    };
+    std::vector<LinkState> linkStates() const;
+    static constexpr std::size_t kShownLinkTargets = 64;
+
     // How long a change of slot gain takes to arrive (docs/rack-view.md, section 3).
     static constexpr double kGainRampSeconds = 0.010;
     static constexpr double kLoadAverageSeconds = 1.0;   // the DSP load's average: about this long
@@ -476,6 +493,16 @@ private:
     };
     ParamFeedback feedback{this};
     double        linkMasterDb = 0.0;   // the master's control link level (audio thread)
+    // linkStates(): written at the end of each block.
+    struct ShownLinkTarget {
+        std::atomic<std::uint64_t> origin{0};
+        std::atomic<double>        value{0.0};
+        std::atomic<double>        travel{-1.0};
+        std::atomic<bool>          waiting{false};
+    };
+    ShownLinkTarget            shownLinks[kShownLinkTargets];
+    std::atomic<std::uint32_t> shownLinkCount{0};
+    void                       publishLinks() noexcept;
 
     // DSP load: the running average (audio thread only) and what's published.
     float                         loadAverage = 0.0f;

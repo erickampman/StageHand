@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -56,5 +57,12 @@ struct ControlLinkSetup {
     }
     bool operator==(const ControlLinkSetup&) const = default;
 };
+
+// Which saved link and target a compiled one came from
+// (CompiledControlLink::Target::origin), to show the engine's state for it.
+inline std::uint64_t linkOrigin(ControlScope scope, std::size_t link, std::size_t target) noexcept {
+    return (std::uint64_t{scope == ControlScope::AllSongs} << 48) | (std::uint64_t{link & 0xFFFFFF} << 24) |
+           (target & 0xFFFFFF);
+}
 
 } // namespace stagehand

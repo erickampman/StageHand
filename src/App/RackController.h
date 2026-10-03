@@ -265,9 +265,19 @@ public:
     // curves, targets removed; none left removes it).
     void setControlLink(ControlScope scope, std::size_t index, ControlLinkSetup link);
     void removeControlLink(ControlScope scope, std::size_t index);
-    // Move a link between this song and all songs; false (with a notice) if
-    // it can't go: a row's gain or send, or (to this song) a plugin no row has.
-    bool setControlLinkScope(ControlScope scope, std::size_t index, ControlScope to);
+    // Move a link between this song and all songs: where it is now (its
+    // index in `to`: at the end, or merged into a link there on the same
+    // control), or none (with a notice) if it can't go: a row's gain or send,
+    // or (to this song) a plugin no row has.
+    std::optional<std::size_t> setControlLinkScope(ControlScope scope, std::size_t index, ControlScope to);
+    // Learn again: the next controller moved becomes link `index`'s control
+    // (refused, with a notice, as learnControlLink() refuses, and if another
+    // link in its scope has that control).
+    void relearnControlLink(ControlScope scope, std::size_t index);
+    // One more target for link `index`, over the parameter's whole range (a
+    // level: -60 to 0 dB), as learnControlLink() makes one; a target it has
+    // already is reset to that.
+    void addControlLinkTarget(ControlScope scope, std::size_t index, ControlLinkTarget target);
     // Leading and trailing spaces go; an empty name is refused (with a notice);
     // at most kMaxNameBytes. The id stays: rows keep playing it.
     void renameSequence(const std::string& id, const std::string& name);
@@ -505,6 +515,17 @@ private:
     void           addLinkTarget(ControlLinkSetup link, ControlScope scope);   // merged with one on its control
     ControlLinkTarget linkTarget;    // learning: what the control will drive
     ControlScope      linkScope = ControlScope::Song;
+    std::optional<std::size_t> linkRelearn;   // learning again: link (in linkScope) whose control it is
+    // A target as learnControlLink() starts it: the parameter's whole range and
+    // its name now, or -60 to 0 dB. False (with a notice) if it can't be in `scope`.
+    bool              startTarget(ControlLinkTarget& target, ControlScope scope);
+    // The plugins' parameters as last asked, forgotten when the graph changes
+    // (the model's ranges, each tick).
+    const std::vector<ParameterChoice>& parametersOf(const HostedPlugin* plugin) const;
+    // The plugin whose parameter `target` is (all songs': the first row with it); null if none.
+    const HostedPlugin*                 targetPlugin(const ControlLinkTarget& target) const;
+    mutable std::map<const HostedPlugin*, std::vector<ParameterChoice>> parameterCache;
+    mutable std::uint64_t                                               parameterCacheAt = ~std::uint64_t{0};
     // The setlist's triggers that fired since the last tick, all at once
     // (pressing Next three times goes three songs on), then one switch.
     void           takeSetlistRequests();

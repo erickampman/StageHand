@@ -1346,6 +1346,13 @@ void testControlLinks() {
                      link(11, false, {cutoffish, steps, gain}),     // jump: a macro
                      link(12, true, {param(9, 0.0, 1.0, 0.5)}),     // pick-up, on 11's parameter 9
                      link(1, false, {master}, true)};               // passed on
+    control.links[0].targets[0].origin = 42;   // for linkStates()
+    control.links[1].targets[2].origin = 7;
+    auto stateOf = [&](std::uint64_t origin) {
+        for (const Engine::LinkState& s : engine->linkStates())
+            if (s.origin == origin) return s;
+        return Engine::LinkState{~std::uint64_t{0}};
+    };
     auto sequences = [&] { return std::make_unique<SequenceSet>(std::vector<CompiledSequence>{}, control); };
     engine->commitSequences(sequences());
 
@@ -1445,10 +1452,18 @@ void testControlLinks() {
     engine->commitSwitch(graph(), sequences(), Engine::SwitchPlan{});
     block();
     synth->calls.clear();
+    CHECK(stateOf(42).origin == 42 && stateOf(42).travel < 0.0 && !stateOf(42).waiting);   // not moved yet
     cc(74, 127);
     CHECK(sent(synth->calls, 7).empty());
+    // Shown: waiting for pick-up, the control at the top, the parameter at 0.5.
+    Engine::LinkState shown = stateOf(42);
+    CHECK(shown.waiting && shown.travel == 1.0 && std::fabs(shown.value - 0.5) < 1e-9);
     cc(74, 30);   // 0.342: crossed from above
     CHECK(near(sent(synth->calls, 7), 0.2 + 0.6 * 30.0 / 127.0));
+    shown = stateOf(42);
+    CHECK(!shown.waiting && std::fabs(shown.value - (0.2 + 0.6 * 30.0 / 127.0)) < 1e-9);
+    cc(11, 0);   // a level shows its dB
+    CHECK(stateOf(7).value == -60.0 && engine->linkStates().size() == 6);
 
     engine->commit(nullptr);
     block();

@@ -268,6 +268,16 @@ struct ControlLinkTargetModel {
     ControlLinkTarget target;        // as saved: its range, curve, and what it names
     std::string       text;          // "Keys: Cutoff", "Keys gain", "Bus A return", "Master"
     bool              present = true; // there now (else left out until it is)
+    std::vector<std::string> rows;   // the rows it acts on (a row's; all songs': every row with its plugin)
+    // The scale its range bar shows: the parameter's (as last seen, else its
+    // own bottom and top), or the fader's in dB for a level.
+    double                minValue = 0.0, maxValue = 1.0;
+    bool                  stepped  = false;
+    // Live (the engine's): where it is now, in the same units; none if it
+    // isn't running (overridden, its input or plugin not there). Waiting: the
+    // control has moved but not reached it yet (pick-up).
+    std::optional<double> now;
+    bool                  waiting = false;
 
     bool operator==(const ControlLinkTargetModel&) const = default;
 };
@@ -279,7 +289,24 @@ struct ControlLinkModel {
     bool          pickUp     = true;
     bool          passOn     = false;
     bool          overridden = false; // all songs', with a song's own link on the same control
+    // The control, as saved (with `pickUp`, `passOn` and the targets', the link to edit).
+    MidiSourceRef source;
+    std::uint8_t  group = 0, channel = 0, number = 0;
+    double        travel   = -1.0;    // live: the control's position (0 to 1), -1 not moved yet
+    bool          learning = false;   // its control is being learned again
     std::vector<ControlLinkTargetModel> targets;
+
+    ControlLinkSetup setup() const {   // as saved
+        ControlLinkSetup link;
+        link.source  = source;
+        link.group   = group;
+        link.channel = channel;
+        link.number  = number;
+        link.pickUp  = pickUp;
+        link.passOn  = passOn;
+        for (const ControlLinkTargetModel& t : targets) link.targets.push_back(t.target);
+        return link;
+    }
 
     bool operator==(const ControlLinkModel&) const = default;
 };
@@ -304,6 +331,7 @@ struct RackViewModel {
     // Control links (docs/controls.md): this song's, then all songs'.
     std::vector<ControlLinkModel> controlLinks;
     bool                          controlLinkLearning = false;
+    ControlLinkTarget             controlLinkLearnTarget;   // while learning a new one: what it will drive
 
     bool operator==(const RackViewModel&) const = default;
 };

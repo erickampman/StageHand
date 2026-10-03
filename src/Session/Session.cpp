@@ -714,7 +714,8 @@ double Session::sequencePosition(const std::string& id) const noexcept {
 void Session::compileControlLinks(std::vector<CompiledControlLink>& out) const {
     using Kind = ControlLinkTarget::Kind;
     std::map<const HostedPlugin*, std::vector<ParameterInfo>> parameters;   // asked once per plugin
-    auto addParameter = [&](CompiledControlLink& c, const ControlLinkTarget& t, const HostedPlugin* plugin) {
+    auto addParameter = [&](CompiledControlLink& c, const ControlLinkTarget& t, const HostedPlugin* plugin,
+                            std::uint64_t origin) {
         auto known = parameters.find(plugin);
         if (known == parameters.end()) known = parameters.emplace(plugin, plugin->parameters()).first;
         const auto info = std::find_if(known->second.begin(), known->second.end(),
@@ -728,11 +729,13 @@ void Session::compileControlLinks(std::vector<CompiledControlLink>& out) const {
         target.curve   = t.curve;
         target.stepped = info->isStepped;
         target.initial = plugin->paramValue(t.param);
+        target.origin  = origin;
         c.targets.push_back(target);
     };
-    auto add = [&](CompiledControlLink& c, const ControlLinkTarget& t) {
+    auto add = [&](CompiledControlLink& c, const ControlLinkTarget& t, std::uint64_t origin) {
         CompiledControlLink::Target target;
         target.kind   = t.kind;
+        target.origin = origin;
         target.bottom = t.bottom;
         target.top    = t.top;
         target.curve  = t.curve;
@@ -741,12 +744,13 @@ void Session::compileControlLinks(std::vector<CompiledControlLink>& out) const {
                 if (t.bus >= 0) {
                     if (rigLoaded && t.bus < static_cast<int>(kRigBuses) && t.effect >= 0 &&
                         t.effect < static_cast<int>(RigBus::kEffects))
-                        if (const auto& effect = rigState.effects[t.bus][t.effect].plugin) addParameter(c, t, effect.get());
+                        if (const auto& effect = rigState.effects[t.bus][t.effect].plugin)
+                            addParameter(c, t, effect.get(), origin);
                     return;
                 }
                 for (const Slot& s : loaded)   // the row, or (all songs) every row with the plugin
                     if (s.plugin && (t.row.empty() ? s.saved.plugin.id == t.plugin : s.saved.id == t.row))
-                        addParameter(c, t, s.plugin.get());
+                        addParameter(c, t, s.plugin.get(), origin);
                 return;
             case Kind::Gain:
             case Kind::Send:
@@ -781,7 +785,8 @@ void Session::compileControlLinks(std::vector<CompiledControlLink>& out) const {
             c.number  = link.number;
             c.pickUp  = link.pickUp;
             c.passOn  = link.passOn;
-            for (const ControlLinkTarget& t : link.targets) add(c, t);
+            for (std::size_t j = 0; j < link.targets.size(); ++j)
+                add(c, link.targets[j], linkOrigin(rig ? ControlScope::AllSongs : ControlScope::Song, i, j));
             if (!c.targets.empty()) out.push_back(std::move(c));
         }
     };

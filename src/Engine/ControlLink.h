@@ -49,6 +49,9 @@ struct CompiledControlLink {
         ControlCurve curve   = ControlCurve::Linear;
         bool         stepped = false;   // a stepped parameter: the nearest step
         double       initial = 0.0;     // Parameter: its value when compiled (paramValue())
+        // What it was compiled from, for showing it (Engine::linkStates()):
+        // opaque to the engine (the Session's scope, link and target).
+        std::uint64_t origin = 0;
 
         // --- audio thread: where the parameter is, and picking up
         double current  = 0.0;
@@ -67,6 +70,7 @@ struct CompiledControlLink {
         bool sameTarget(const Target& other) const noexcept;
     };
     std::vector<Target> targets;
+    double              travel = -1.0;   // audio thread: the control's last position (0 to 1), -1 not moved yet
 
     // Is `message` this link's controller? `travel`: its value, 0 to 1 (7-bit,
     // or MIDI 2.0's 32-bit).

@@ -1,6 +1,7 @@
 #include "Ui/UiWidget.h"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 
 namespace stagehand {
@@ -156,8 +157,8 @@ void UiWidget::onNanoDisplay() {
         // A click anywhere else dismisses the overlay (and does nothing else).
         region(0, 0, width(), height(),
                [this](const Press&) {
+                   if (!menu || !menu->overPanel) dismissOverlays();
                    menu.reset();
-                   dismissOverlays();
                },
                [](float) {}, true);
         drawOverlays();
@@ -246,6 +247,7 @@ void UiWidget::drawTextField() {
 }
 
 bool UiWidget::onKeyboard(const KeyboardEvent& ev) {
+    if (menuKey(ev)) return true;
     if (!field) return false;
     if (!ev.press) return true;
     TextField& f = *field;
@@ -296,6 +298,13 @@ bool UiWidget::onKeyboard(const KeyboardEvent& ev) {
 }
 
 bool UiWidget::onCharacterInput(const CharacterInputEvent& ev) {
+    if (menu && menu->search && !field) {   // filtering a long menu
+        if (ev.character < 32 || ev.character == 127 || (ev.mod & dgl::kModifierControl) != 0) return false;
+        if (menu->typed.size() < 64) menu->typed += ev.string;
+        menu->scroll = 0;
+        repaint();
+        return true;
+    }
     if (!field) return false;
     if (ev.character < 32 || ev.character == 127 || (ev.mod & dgl::kModifierControl) != 0) return true;
     TextField&        f   = *field;
@@ -316,16 +325,35 @@ bool UiWidget::onCharacterInput(const CharacterInputEvent& ev) {
 // --- menus ---------------------------------------------------------------------------
 
 void UiWidget::openMenu(Menu m) {
-    dismissOverlays();
+    if (!m.overPanel) dismissOverlays();
     m.x  = std::clamp(m.x, 4.0f, std::max(4.0f, width() - m.w - 4.0f));
     menu = std::move(m);
 }
 
+namespace {
+
+bool containsFolded(const std::string& text, const std::string& part) {
+    auto fold = [](char c) { return static_cast<char>(std::tolower(static_cast<unsigned char>(c))); };
+    return std::search(text.begin(), text.end(), part.begin(), part.end(),
+                       [&](char a, char b) { return fold(a) == fold(b); }) != text.end();
+}
+
+} // namespace
+
+std::vector<std::size_t> UiWidget::menuShown() const {
+    std::vector<std::size_t> shown;
+    if (!menu) return shown;
+    for (std::size_t i = 0; i < menu->items.size(); ++i)
+        if (!menu->search || menu->typed.empty() || containsFolded(menu->items[i].label, menu->typed)) shown.push_back(i);
+    return shown;
+}
+
 void UiWidget::drawMenu() {
     if (!menu) return;
-    Menu&       m      = *menu;
-    const float titleH = m.title.empty() ? 0.0f : 28.0f;
-    const float totalH = titleH + static_cast<float>(m.items.size()) * kMenuItemH + 8.0f;
+    Menu&                          m      = *menu;
+    const std::vector<std::size_t> shown  = menuShown();
+    const float                    titleH = (m.title.empty() ? 0.0f : 28.0f) + (m.search ? 28.0f : 0.0f);
+    const float totalH = titleH + static_cast<float>(std::max<std::size_t>(shown.size(), m.search ? 1 : 0)) * kMenuItemH + 8.0f;
     const float bottom = height() - 8.0f;
     if (m.y + totalH > bottom) m.y = std::max(8.0f, bottom - totalH);   // flip up if there's room
     const float visibleH = std::min(totalH, bottom - m.y);
@@ -336,19 +364,35 @@ void UiWidget::drawMenu() {
     region(m.x, m.y, m.w, visibleH, nullptr, [this, maxScroll = totalH - visibleH](float notches) {
         menu->scroll = std::clamp(menu->scroll - notches * kMenuItemH, 0.0f, maxScroll);
     });
-    if (titleH > 0.0f) {
+    if (!m.title.empty()) {
         save();
-        scissor(m.x, m.y, m.w - 8.0f, titleH);
-        label(m.x + 12.0f, m.y + titleH / 2 + 2.0f, m.title, 12.0f, kDim);
+        scissor(m.x, m.y, m.w - 8.0f, 28.0f);
+        label(m.x + 12.0f, m.y + 16.0f, m.title, 12.0f, kDim);
+        restore();
+    }
+    if (m.search) {   // what's typed, as a field
+        const float fy = m.y + titleH - 26.0f;
+        box(m.x + 8.0f, fy, m.w - 16.0f, 22.0f, kBarBg, 4.0f);
+        save();
+        scissor(m.x + 8.0f, fy, m.w - 16.0f, 22.0f);
+        if (m.typed.empty()) {
+            label(m.x + 14.0f, fy + 11.0f, "Type to filter", 13.0f, kDim);
+        } else {
+            label(m.x + 14.0f, fy + 11.0f, m.typed, 13.0f, kText);
+            if (std::fmod(nowSeconds(), 1.0) < 0.6)
+                box(m.x + 15.0f + labelWidth(m.typed, 13.0f), fy + 4.0f, 1.5f, 14.0f, kText);
+        }
         restore();
     }
 
     const float listTop = m.y + titleH, listBottom = m.y + visibleH;
     save();
     scissor(m.x, listTop, m.w, listBottom - listTop);
-    for (std::size_t i = 0; i < m.items.size(); ++i) {
-        const MenuItem& item = m.items[i];
-        const float     iy   = listTop + 4.0f + static_cast<float>(i) * kMenuItemH - m.scroll;
+    if (m.search && shown.empty())
+        label(m.x + 30.0f, listTop + 4.0f + kMenuItemH / 2 - m.scroll, "Nothing matches", 14.0f, kDim);
+    for (std::size_t row = 0; row < shown.size(); ++row) {
+        const MenuItem& item = m.items[shown[row]];
+        const float     iy   = listTop + 4.0f + static_cast<float>(row) * kMenuItemH - m.scroll;
         if (iy + kMenuItemH < listTop || iy > listBottom) continue;
         if (item.checked) label(m.x + 12.0f, iy + kMenuItemH / 2, "\xE2\x9C\x93", 14.0f, kAccent);   // U+2713
         label(m.x + 30.0f, iy + kMenuItemH / 2, item.label, 14.0f,
@@ -361,6 +405,25 @@ void UiWidget::drawMenu() {
         });
     }
     restore();
+}
+
+bool UiWidget::menuKey(const KeyboardEvent& ev) {
+    if (!menu || !menu->search || !ev.press) return false;
+    if (ev.key == dgl::kKeyBackspace) {
+        menu->typed.erase(previousChar(menu->typed, menu->typed.size()));   // a whole UTF-8 character
+        menu->scroll = 0;
+    } else if (ev.key == dgl::kKeyEnter) {   // the first that can be chosen
+        for (std::size_t i : menuShown())
+            if (const auto action = menu->items[i].action) {
+                menu.reset();
+                action();
+                break;
+            }
+    } else {
+        return false;
+    }
+    repaint();
+    return true;
 }
 
 // --- input ---------------------------------------------------------------------------

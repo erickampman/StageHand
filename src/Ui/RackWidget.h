@@ -57,9 +57,16 @@ public:
 
 protected:
     void draw() override;
-    bool overlayOpen() const override { return !filterId.empty(); }
-    void drawOverlays() override { drawFilterPanel(); }
-    void dismissOverlays() override { filterId.clear(); }
+    bool overlayOpen() const override { return !filterId.empty() || linkOpen.has_value(); }
+    void drawOverlays() override {
+        drawFilterPanel();
+        drawLinkPanel();
+    }
+    void dismissOverlays() override {
+        filterId.clear();
+        linkOpen.reset();
+        linkPending.reset();
+    }
     void wheelUnclaimed(float x, float y, float notches, std::uint32_t mod) override;
     bool onKeyboard(const KeyboardEvent& ev) override;
 
@@ -91,8 +98,10 @@ private:
     // A horizontal dB fader centred on `cy`: drag (Shift: fine), the wheel
     // (half a dB a notch), double-click for 0 dB. `current` reads the value at
     // event time; `key` tells double-clicks on different faders apart.
+    // `right`, if set, takes a right-click (its Control Links menu).
     void dbFader(float x0, float x1, float cy, float db, bool dim, float thumbH, const std::string& key,
-                 std::function<std::optional<float>()> current, std::function<void(float)> set);
+                 std::function<std::optional<float>()> current, std::function<void(float)> set,
+                 std::function<void(const Press&)> right = {});
     // A row's send to a bus (docs/rig.md): drag up or down, the wheel, double-click on/off.
     void sendBox(const RowModel& row, std::size_t bus, float x, float y);
     void drawRig();
@@ -126,6 +135,33 @@ private:
     void openLooperTargetsMenu(const std::string& id, float x, float y);
     void openLooperSwitchMenu(float x, float y);
     void drawFilterPanel();
+
+    // --- control links (docs/controls.md, sections 8 to 10)
+    // What a Control Links button and menu belong to: a row (its parameters,
+    // gain and sends), a bus effect, a bus's return, or the master.
+    struct LinkPlace {
+        enum class Kind : std::uint8_t { Row, Effect, Return, Master };
+        Kind        kind = Kind::Row;
+        std::string row;
+        int         bus = -1, effect = -1;
+    };
+    // Does a target (acting on `rows`) belong to `place`?
+    static bool linkAt(const ControlLinkTarget& target, const std::vector<std::string>& rows, const LinkPlace& place);
+    std::string placeName(const LinkPlace& place) const;   // "Keys", "Bus A effect 1", "Bus A return", "the master"
+    // The MIDI icon: lit when links act on `place`, amber if one's input
+    // isn't connected, blinking while one is learned there. Opens the menu.
+    void linkButton(const LinkPlace& place, float x, float y, float w, float h);
+    void openLinksMenu(const LinkPlace& place, float x, float y);
+    // A plugin's parameters, filtered as you type; `chosen` gets one's id.
+    void openParameterMenu(const std::vector<RackController::ParameterChoice>& params, const std::string& title,
+                           float x, float y, bool overPanel, std::function<void(std::uint32_t)> chosen);
+    // The Control Link dialog: one link, a panel over the rack. Changes apply at once.
+    void openLink(ControlScope scope, std::size_t index);
+    void drawLinkPanel();
+    void editLink(const ControlLinkSetup& link);   // the dialog's link, as edited
+    void openAddTargetMenu(const ControlLinkModel& link, float x, float y);
+    void startRangeDrag(const ControlLinkSetup& link, std::size_t target, const ControlLinkTargetModel& shown,
+                        float barX0, float barX1, const Press& p);
 
     // --- actions
     // The red X: Remove / Cancel, right-aligned to `right` (the X's right edge).
@@ -178,6 +214,14 @@ private:
 
     std::string   filterId;   // the row whose filter panel is open
     MidiFilter    panelFilter;
+    struct OpenLink {
+        ControlScope scope = ControlScope::Song;
+        std::size_t  index = 0;
+    };
+    std::optional<OpenLink>         linkOpen;           // the Control Link dialog's
+    std::optional<ControlLinkSetup> linkPending;        // its last edit, shown until the model has it
+    double                          linkPendingUntil = 0;
+    double                          linkMissingSince = -1;   // not in the model (yet: a scope just changed)
     float         scrollY    = 0;
     float         dockScroll = 0;   // the dock's sequence rows
     std::string   lastFaderId;      // double-click on a fader
