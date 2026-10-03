@@ -57,6 +57,7 @@ struct MetronomeSettings {
     bool        click        = false;
     float       clickLevelDb = -12.0f;
     double      countInBars  = 0.0;      // before bar 1 at a start: 0 (none), 0.5, 1 or 2 bars (docs/perform.md)
+    bool        flash        = false;    // the window's edge flashes on each pulse (docs/perform.md, decision 13)
     // Where it plays is the rig's (Rig::clickOutput). Read from older racks
     // only, which kept it here: taken into the rig if it has none.
     std::string clickOutput;

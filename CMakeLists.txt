@@ -101,6 +101,7 @@ target_link_libraries(stagehand-session
 
 # --- stagehand-app: the rack view's controller and model (no DGL, X11 or JACK) ---
 add_library(stagehand-app STATIC
+    src/App/BeatNow.cpp
     src/App/FileDialog.cpp
     src/App/RackController.cpp
     src/App/SequenceEditor.cpp)
@@ -171,4 +172,5 @@ stagehand_add_test(test-rigfile tests/RigFileTests.cpp stagehand-session)
 stagehand_add_test(test-session  tests/SessionTests.cpp  stagehand-session)
 stagehand_add_test(test-rackcontroller tests/RackControllerTests.cpp stagehand-app)
 stagehand_add_test(test-sequenceeditor tests/SequenceEditorTests.cpp stagehand-app)
+stagehand_add_test(test-beatnow tests/BeatNowTests.cpp stagehand-app)
 stagehand_add_test(test-filedialog tests/FileDialogTests.cpp stagehand-app)

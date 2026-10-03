@@ -12,6 +12,7 @@
 #include <utility>
 #include <vector>
 
+#include "App/BeatNow.h"
 #include "App/RackViewModel.h"
 #include "Audio/AuxRouting.h"
 #include "Engine/Engine.h"
@@ -77,6 +78,10 @@ public:
         // hardware inputs are at start (all inputs listen to them), unless
         // --midi chose the inputs. `openNewSoftware` (--midi all): app and
         // software sources too.
+        // From a block's start to its sound at the outputs (AudioBackend::
+        // outputLatencySeconds()): the beat display draws what's heard.
+        double outputLatencySeconds = 0.0;
+
         bool openNewInputs   = true;
         bool openNewSoftware = false;
 
@@ -103,6 +108,9 @@ public:
     void tick(double nowSeconds);
 
     const RackViewModel& view() const noexcept { return model; }
+    // The beat heard at `now` (nowNanoseconds()), between ticks: for the beat
+    // display and the edge flash, drawn at the display's rate (App/BeatNow.h).
+    BeatNow heardBeat(Nanoseconds now) const;
     // Messages for the user since the last call ("Saved to ...", problems).
     std::vector<std::string> takeNotices();
 
@@ -239,6 +247,9 @@ public:
     // Before bar 1 at a start: 0 (none), 0.5, 1 or 2 bars (docs/perform.md);
     // saved with the rack. It clicks whether the click is on or not.
     void setCountIn(double bars);
+    // The window's edge flashes on each pulse (docs/perform.md, decision 13);
+    // saved with the rack. The count-in flashes whatever it's set to.
+    void setFlash(bool on);
     void testClick();                         // one blip now, on the click's output (connected for it if need be)
     void refreshPlaybackDevices();            // for the menu; call when it opens
 

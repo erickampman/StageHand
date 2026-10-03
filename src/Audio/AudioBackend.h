@@ -83,6 +83,11 @@ public:
     // The negotiated configuration (valid between open() and close()).
     virtual AudioConfig config() const = 0;
 
+    // From a block's start (its period) to its sound reaching the outputs,
+    // in seconds: the device's and the server's buffering. 0 if unknown. For
+    // drawing the beat with the sound (docs/perform.md, decision 14).
+    virtual double outputLatencySeconds() const { return 0.0; }
+
     // Human-readable backend name, e.g. "JACK". For UI and logging.
     virtual const char* name() const = 0;
 };

@@ -46,6 +46,7 @@ public:
     void        stop() override;
     void        close() override;
     AudioConfig config() const override;
+    double      outputLatencySeconds() const override;   // the main outputs' playback latency
     const char* name() const override { return "JACK"; }
 
     // --- AuxRouting: physical playback ports, grouped by device (client name).

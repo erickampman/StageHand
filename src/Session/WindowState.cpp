@@ -35,6 +35,7 @@ bool loadWindowSize(const std::string& path, WindowSize& size) {
         WindowSize s;
         s.width  = doc.at("width").get<double>();
         s.height = doc.at("height").get<double>();
+        s.perform = doc.value("perform", false);
         if (!(s.width > 0.0) || !(s.height > 0.0)) return false;
         size = s;
         return true;
@@ -47,6 +48,7 @@ bool saveWindowSize(const std::string& path, const WindowSize& size) {
     Json doc;
     doc["width"]  = std::lround(size.width);
     doc["height"] = std::lround(size.height);
+    if (size.perform) doc["perform"] = true;
     std::string error;
     return writeTextAtomically(path, doc.dump(2) + "\n", error);
 }
@@ -54,7 +56,7 @@ bool saveWindowSize(const std::string& path, const WindowSize& size) {
 WindowSize fitWindowSize(WindowSize wanted, WindowSize minimum, WindowSize monitor) {
     if (monitor.width > 0.0) wanted.width = std::min(wanted.width, monitor.width * kMonitorShare);
     if (monitor.height > 0.0) wanted.height = std::min(wanted.height, monitor.height * kMonitorShare);
-    return WindowSize{std::max(wanted.width, minimum.width), std::max(wanted.height, minimum.height)};
+    return WindowSize{std::max(wanted.width, minimum.width), std::max(wanted.height, minimum.height), wanted.perform};
 }
 
 } // namespace stagehand

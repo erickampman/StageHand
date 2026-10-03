@@ -182,6 +182,9 @@ void testWindowSize(const fs::path& dir) {
     CHECK(loadWindowSize(path, s) && s == (WindowSize{1180.0, 906.0}));
     writeText(dir / "state/stagehand/window.json", R"({"width": 0, "height": 700})");
     CHECK(!loadWindowSize(path, s) && s == (WindowSize{1180.0, 906.0}));   // unchanged
+    CHECK(saveWindowSize(path, WindowSize{1000.0, 800.0, true}));   // in the Perform view
+    CHECK(loadWindowSize(path, s) && s.perform && s.width == 1000.0);
+    CHECK(fitWindowSize(s, WindowSize{930.0, 300.0}, WindowSize{}).perform);   // kept when fitted
 
     CHECK(defaultWindowStatePath() == appStateDir() + "/window.json");
 

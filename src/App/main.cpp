@@ -632,6 +632,7 @@ int runPlay(const Options& options) {
     config.saveTarget         = saveTarget.empty() ? std::string{} : resolveRackPath(saveTarget);
     config.savingOff          = options.noSaveRack;
     config.clickRouting       = &backend;
+    config.outputLatencySeconds = backend.outputLatencySeconds();   // started and connected by now
     config.lastPositionPath   = defaultLastPositionPath();
     // Devices plugged in later are opened as at start: hardware, or everything
     // with --midi all; not when --midi named the inputs.

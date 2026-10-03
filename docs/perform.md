@@ -1,6 +1,6 @@
 # StageHand — Count-in and the Perform view (design)
 
-Proposed 2026-10-03; milestones 1 and 2 built (notes under "Milestones"). A count-in before a song starts,
+Proposed 2026-10-03; milestones 1 to 3 built (notes under "Milestones"). A count-in before a song starts,
 chosen per song, and a Perform view: the main window as it should look on
 stage, with the beat large enough to read from across it. Builds on:
 - sequences.md, section 7: Start and Stop, At Start, start on first note,
@@ -147,6 +147,29 @@ The engine publishes how far into the count-in it is
 lights are all amber. Tests: the rack file (round trip, a bad value), the
 controller (the setting saved, the countdown and the lights through a
 half-bar count-in, bar 1).
+
+**Milestone 3 implemented (2026-10-03):** `RackWidget::setPerforming()`: the
+toolbar's **Perform** button or Tab switches (not with a name being typed or a
+menu open); "Edit (Tab)" at the top right goes back. It shows the song (number,
+name, "next: …"), big ◀ ▶, a box per pulse (the downbeat amber) or the
+count-in's digit in amber, "bar · beat", the tempo and time signature, a large
+▶/■ (green running, amber counting, grey stopped), the current looper's state
+and progress, and the status bar; the boxes and the digit grow with a taller
+window. ← → switch songs there, Space starts and stops. The mode is saved in
+window.json (`"perform": true`) and reopened. The edge flash:
+`MetronomeSettings::flash` (`"flash"` in the rack's metronome, rack-format.md),
+`RackController::setFlash()`, the ⋮ menu's "Flash the window's edge on each
+beat"; a 14-pixel border for 0.18 s from each pulse, amber on the downbeat and
+during the count-in, in both views. In time with the sound: the engine
+publishes when its position applies (`Transport::at`, the next block's start,
+and `countInPulses`), the backend its output latency
+(`AudioBackend::outputLatencySeconds()`, JACK's playback latency), and
+`beatNow()` (App/BeatNow.h) extrapolates the beat as heard now from them;
+`RackController::heardBeat()` gives it to the UI, which repaints at 60 Hz
+while it moves. Tests: `test-beatnow` (stopped, running across a bar line, the
+latency, not yet heard, 6/8 counted and every note, the count-in's half bar and
+two bars), the rack file (`flash`), window.json (`perform` saved and kept when
+fitted), the controller (`setFlash`, `heardBeat` at bar 1).
 
 ## Open questions
 

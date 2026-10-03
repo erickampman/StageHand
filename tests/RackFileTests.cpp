@@ -79,6 +79,7 @@ Rack sampleRack() {
     rack.metronome.click             = true;
     rack.metronome.clickLevelDb      = -18.0f;
     rack.metronome.countInBars       = 0.5;
+    rack.metronome.flash             = true;
     rack.metronome.clickOutput       = "Built-in Audio Analog Stereo";
     rack.transport.triggers          = {pedal};
     rack.transport.startOnNote       = true;

@@ -166,6 +166,15 @@ void JackBackend::setProcessor(AudioProcessor* audioProcessor) {
     processor = audioProcessor;
 }
 
+// JACK's playback latency of our first output: from a period's start to its
+// frames reaching the hardware (the later of its range).
+double JackBackend::outputLatencySeconds() const {
+    if (client == nullptr || outputPorts.empty() || negotiatedConfig.sampleRate <= 0.0) return 0.0;
+    jack_latency_range_t range{};
+    jack_port_get_latency_range(outputPorts.front(), JackPlaybackLatency, &range);
+    return static_cast<double>(range.max) / negotiatedConfig.sampleRate;
+}
+
 bool JackBackend::start() {
     if (client == nullptr || running) return false;
     if (jack_activate(client) != 0) {

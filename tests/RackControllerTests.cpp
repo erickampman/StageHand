@@ -312,6 +312,14 @@ void testTransport() {
     CHECK(view.transport.running && view.transport.countIn == 0 && view.transport.beatInBar == 0);   // bar 1
     controller.setCountIn(0.0);
     CHECK(rig.session->capture().metronome.countInBars == 0.0);
+
+    // The edge flash (docs/perform.md, decision 13): the rack's.
+    controller.setFlash(true);
+    controller.tick(1.7);
+    CHECK(view.transport.flash && rig.session->capture().metronome.flash);
+    // The beat heard now, from the engine: running, past bar 1's downbeat.
+    const BeatNow heard = controller.heardBeat(rig.engine->transport().at);
+    CHECK(heard.state == BeatNow::State::Running && heard.bar == 1);
 }
 
 void testDock() {
