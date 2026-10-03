@@ -143,7 +143,10 @@ The inputs opened, and where each landed, are printed at startup.
 | `--midi-protocol 1\|2` | MIDI 2.0 protocol preference (default 2). With 1, every source is received as MIDI 1.0 |
 
 Rack sources and sequence triggers name devices by their `--list-midi` id,
-for example `KeyLab 88:KeyLab 88 MIDI 1`.
+for example `KeyLab 88:KeyLab 88 MIDI 1`. A device that isn't there under
+that id (a rack from another machine, or a port renamed by an update) is
+looked for by name: the same device name first, then the same port name if
+only one device has it (docs/macos.md, decision 5). The rack keeps its id.
 
 ### MIDI devices coming and going
 

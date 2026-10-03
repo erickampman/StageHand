@@ -6,6 +6,7 @@
 #include <utility>
 #include <vector>
 
+#include "Core/Denormals.h"
 #include "Core/Ump.h"
 
 namespace stagehand {
@@ -313,6 +314,7 @@ void Engine::onMidi(MidiSourceHandle source, const TimedMidiMessage& msg) noexce
 // --- audio thread ----------------------------------------------------------------
 
 void Engine::process(const AudioCallbackContext& ctx) noexcept {
+    const ScopedFlushDenormals flush;   // for the whole block, plugins included; restored after
     const bool switching = takeSwitch(ctx);
     if (!holdSwitch) adoptPendingGraph();
     advanceTransport(ctx);

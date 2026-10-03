@@ -22,6 +22,15 @@ namespace stagehand {
 
 class PreparedRack;
 
+// A MIDI device a rack names that isn't there under its id, found by name
+// among `listed` (docs/macos.md, decision 5): ids are "<device>:<port>" on
+// both platforms, but a rack made on Linux names ALSA's, and a kernel or
+// firmware update can rename a port. First the device's name (the port of the
+// same name if it has one, else its first port); then, if no device has that
+// name, the port's name, if exactly one device has a port of that name.
+// "" if neither finds it, or the id is an address ("14:0").
+std::string findDeviceByName(const std::string& id, const std::vector<MidiSourceInfo>& listed);
+
 // Runs a Rack: instantiates and activates its plugins, resolves each slot's MIDI
 // source, and publishes the resulting EngineGraph. The rack can then be edited
 // live (docs/rack-view.md, section 1), and capture() turns the running setup
