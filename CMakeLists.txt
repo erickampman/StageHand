@@ -1,4 +1,7 @@
 cmake_minimum_required(VERSION 3.21)
+# macOS (docs/macos.md): set before project(), and ignored elsewhere.
+set(CMAKE_OSX_DEPLOYMENT_TARGET 15.0 CACHE STRING "macOS 15 or later (docs/macos.md, decision 9)")
+set(CMAKE_OSX_ARCHITECTURES arm64 CACHE STRING "arm64 only (docs/macos.md, decision 13)")
 project(StageHand VERSION 0.0.1 LANGUAGES C CXX)   # C: DGL's pugl and NanoVG
 
 set(CMAKE_CXX_STANDARD 20)
@@ -11,16 +14,32 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
 endif()
 
+# --- Platforms (docs/macos.md) -----------------------------------------------------
+# Linux builds everything. Elsewhere (macOS, so far: milestone 1) only the
+# platform-free libraries and the test suites build; the app needs backends
+# that aren't written yet. STAGEHAND_APP=OFF does the same on Linux.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(stagehand_linux ON)
+else()
+    set(stagehand_linux OFF)
+endif()
+option(STAGEHAND_APP "Build the app (Linux only, for now), not just the libraries and tests" ${stagehand_linux})
+if(STAGEHAND_APP AND NOT stagehand_linux)
+    message(FATAL_ERROR "The app builds on Linux only, so far (docs/macos.md); configure with -DSTAGEHAND_APP=OFF")
+endif()
+
 # --- System dependencies (docs/architecture.md, dependency summary) -----------
 # JACK API headers from libjack-jackd2-dev; at runtime the calls are served by
 # PipeWire (pipewire-jack) — run under `pw-jack`. ALSA's sequencer (UMP mode,
-# alsa-lib 1.2.10+) provides MIDI input.
-find_package(PkgConfig REQUIRED)
-pkg_check_modules(JACK REQUIRED IMPORTED_TARGET jack)
-pkg_check_modules(ALSA REQUIRED IMPORTED_TARGET alsa>=1.2.10)
-pkg_check_modules(X11 REQUIRED IMPORTED_TARGET x11)   # plugin editor windows (M4)
-pkg_check_modules(XRANDR IMPORTED_TARGET xrandr)       # optional: the monitor a window opens on
+# alsa-lib 1.2.10+) provides MIDI input. The app's only.
 find_package(Threads REQUIRED)
+if(STAGEHAND_APP)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(JACK REQUIRED IMPORTED_TARGET jack)
+    pkg_check_modules(ALSA REQUIRED IMPORTED_TARGET alsa>=1.2.10)
+    pkg_check_modules(X11 REQUIRED IMPORTED_TARGET x11)   # plugin editor windows (M4)
+    pkg_check_modules(XRANDR IMPORTED_TARGET xrandr)       # optional: the monitor a window opens on
+endif()
 
 # --- CLAP SDK: header-only, vendored submodule pinned to PMU's tag (1.2.10) ----
 add_library(clap-sdk INTERFACE)
@@ -32,17 +51,20 @@ target_include_directories(nlohmann-json SYSTEM INTERFACE external)
 
 # --- DPF's DGL (pugl + NanoVG over OpenGL): StageHand's own UI. Vendored from PMU
 # (external/dpf/README.StageHand.md); only the DGL library, no plugin wrappers.
-set(DPF_LIBRARIES OFF CACHE BOOL "" FORCE)
-set(DPF_EXAMPLES OFF CACHE BOOL "" FORCE)
-add_subdirectory(external/dpf EXCLUDE_FROM_ALL)
-dpf__add_dgl_opengl(TRUE FALSE FALSE)   # shared resources (the font); no file browser, no web view
-# Its headers are third-party: no warnings from them in our code (like clap-sdk).
-foreach(dgl_target dgl-opengl dgl-opengl-definitions)
-    get_target_property(dgl_includes ${dgl_target} INTERFACE_INCLUDE_DIRECTORIES)
-    if(dgl_includes)
-        set_target_properties(${dgl_target} PROPERTIES INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${dgl_includes}")
-    endif()
-endforeach()
+# The app's only.
+if(STAGEHAND_APP)
+    set(DPF_LIBRARIES OFF CACHE BOOL "" FORCE)
+    set(DPF_EXAMPLES OFF CACHE BOOL "" FORCE)
+    add_subdirectory(external/dpf EXCLUDE_FROM_ALL)
+    dpf__add_dgl_opengl(TRUE FALSE FALSE)   # shared resources (the font); no file browser, no web view
+    # Its headers are third-party: no warnings from them in our code (like clap-sdk).
+    foreach(dgl_target dgl-opengl dgl-opengl-definitions)
+        get_target_property(dgl_includes ${dgl_target} INTERFACE_INCLUDE_DIRECTORIES)
+        if(dgl_includes)
+            set_target_properties(${dgl_target} PROPERTIES INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${dgl_includes}")
+        endif()
+    endforeach()
+endif()
 
 # --- Warnings for our own code (not vendored/system headers) -------------------
 add_library(stagehand-warnings INTERFACE)
@@ -75,17 +97,6 @@ target_link_libraries(stagehand-session
     PUBLIC  stagehand-engine
     PRIVATE nlohmann-json stagehand-warnings)
 
-# --- stagehand-lib: seam implementations (everything except main) --------------
-add_library(stagehand-lib STATIC
-    src/Audio/JackBackend.cpp
-    src/Midi/AlsaSeqInput.cpp
-    src/Plugin/Clap/ClapModule.cpp
-    src/Plugin/Clap/ClapPlugin.cpp
-    src/Plugin/Clap/ClapPluginFactory.cpp)
-target_link_libraries(stagehand-lib
-    PUBLIC  stagehand-engine PkgConfig::JACK PkgConfig::ALSA Threads::Threads ${CMAKE_DL_LIBS}
-    PRIVATE clap-sdk stagehand-warnings)
-
 # --- stagehand-app: the rack view's controller and model (no DGL, X11 or JACK) ---
 add_library(stagehand-app STATIC
     src/App/FileDialog.cpp
@@ -95,31 +106,47 @@ target_link_libraries(stagehand-app
     PUBLIC  stagehand-session
     PRIVATE stagehand-warnings)
 
-# --- stagehand-ui: the rack window (DGL). Only this library sees DGL. -------------
-add_library(stagehand-ui STATIC
-    src/Ui/RackUi.cpp
-    src/Ui/RackWidget.cpp
-    src/Ui/UiWidget.cpp
-    src/Ui/SequenceEditorWidget.cpp
-    src/Ui/Monitor.cpp)
-target_link_libraries(stagehand-ui
-    PUBLIC  stagehand-app
-    PRIVATE dgl-opengl dgl-opengl-definitions PkgConfig::X11 stagehand-warnings)
-if(XRANDR_FOUND)
-    target_compile_definitions(stagehand-ui PRIVATE STAGEHAND_HAVE_XRANDR)
-    target_link_libraries(stagehand-ui PRIVATE PkgConfig::XRANDR)
-else()
-    message(STATUS "xrandr not found: a new window fits the whole X screen, not its monitor")
-endif()
+# --- The Linux seams, the UI and the app (STAGEHAND_APP) ---------------------------
+if(STAGEHAND_APP)
 
-# --- The app --------------------------------------------------------------------
-add_executable(stagehand
-    src/App/main.cpp
-    src/App/AppHost.cpp
-    src/App/EditorWindow.cpp
-    src/App/MainLoop.cpp
-    src/App/MidiMonitor.cpp)
-target_link_libraries(stagehand PRIVATE stagehand-lib stagehand-app stagehand-ui PkgConfig::X11 stagehand-warnings)
+    # --- stagehand-lib: seam implementations (everything except main) --------------
+    add_library(stagehand-lib STATIC
+        src/Audio/JackBackend.cpp
+        src/Midi/AlsaSeqInput.cpp
+        src/Plugin/Clap/ClapModule.cpp
+        src/Plugin/Clap/ClapPlugin.cpp
+        src/Plugin/Clap/ClapPluginFactory.cpp)
+    target_link_libraries(stagehand-lib
+        PUBLIC  stagehand-engine PkgConfig::JACK PkgConfig::ALSA Threads::Threads ${CMAKE_DL_LIBS}
+        PRIVATE clap-sdk stagehand-warnings)
+
+    # --- stagehand-ui: the rack window (DGL). Only this library sees DGL. -------------
+    add_library(stagehand-ui STATIC
+        src/Ui/RackUi.cpp
+        src/Ui/RackWidget.cpp
+        src/Ui/UiWidget.cpp
+        src/Ui/SequenceEditorWidget.cpp
+        src/Ui/Monitor.cpp)
+    target_link_libraries(stagehand-ui
+        PUBLIC  stagehand-app
+        PRIVATE dgl-opengl dgl-opengl-definitions PkgConfig::X11 stagehand-warnings)
+    if(XRANDR_FOUND)
+        target_compile_definitions(stagehand-ui PRIVATE STAGEHAND_HAVE_XRANDR)
+        target_link_libraries(stagehand-ui PRIVATE PkgConfig::XRANDR)
+    else()
+        message(STATUS "xrandr not found: a new window fits the whole X screen, not its monitor")
+    endif()
+
+    # --- The app --------------------------------------------------------------------
+    add_executable(stagehand
+        src/App/main.cpp
+        src/App/AppHost.cpp
+        src/App/EditorWindow.cpp
+        src/App/MainLoop.cpp
+        src/App/MidiMonitor.cpp)
+    target_link_libraries(stagehand PRIVATE stagehand-lib stagehand-app stagehand-ui PkgConfig::X11 stagehand-warnings)
+
+endif()
 
 # --- Tests (tests/Check.h; one executable per suite, no third-party framework) ---
 enable_testing()

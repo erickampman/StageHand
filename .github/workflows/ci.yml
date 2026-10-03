@@ -1,0 +1,44 @@
+# Build and run the test suites on every push and pull request (docs/macos.md,
+# milestone 1). Linux builds everything, the app included; macOS builds the
+# libraries and the tests only, until its backends exist. The suites use
+# fakes: no audio, MIDI or display needed.
+name: CI
+
+on:
+  push:
+    branches: [main, rack-view]
+  pull_request:
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04   # alsa-lib 1.2.11 (1.2.10+ needed)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build pkg-config libjack-jackd2-dev libasound2-dev \
+            libx11-dev libxrandr-dev libgl-dev
+      - name: Configure
+        run: cmake -S . -B build -G Ninja
+      - name: Build
+        run: cmake --build build
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  macos:
+    runs-on: macos-15   # Apple Silicon, macOS 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Install build dependencies
+        run: brew install ninja
+      - name: Configure (libraries and tests only)
+        run: cmake -S . -B build -G Ninja -DSTAGEHAND_APP=OFF
+      - name: Build
+        run: cmake --build build
+      - name: Test
+        run: ctest --test-dir build --output-on-failure

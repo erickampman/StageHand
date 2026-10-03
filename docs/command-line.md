@@ -11,6 +11,9 @@ cmake --build build -j16
 ```
 
 The binary is `build/stagehand`. The tests run with `ctest` from `build/`.
+`-DSTAGEHAND_APP=OFF` builds only the libraries and the tests (no JACK, ALSA,
+X11 or DPF needed); that's how macOS builds, so far (docs/macos.md). CI runs
+the tests on Linux and macOS for every pull request.
 With `libxrandr-dev` installed (optional), the rack window opens sized for the
 monitor it's on; without it, for the whole X screen (every monitor together).
 

@@ -87,8 +87,9 @@ bool FileDialog::start(Mode mode, const std::string& title, const std::string& f
     for (std::string& a : args) argv.push_back(a.data());
     argv.push_back(nullptr);
 
+    // pipe() and FD_CLOEXEC rather than pipe2(), which macOS lacks.
     int fds[2];
-    if (::pipe2(fds, O_CLOEXEC) != 0) {
+    if (::pipe(fds) != 0 || ::fcntl(fds[0], F_SETFD, FD_CLOEXEC) != 0 || ::fcntl(fds[1], F_SETFD, FD_CLOEXEC) != 0) {
         problem = std::string("couldn't start ") + program + ": " + std::strerror(errno);
         return false;
     }
