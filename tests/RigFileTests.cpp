@@ -11,6 +11,7 @@
 #include <string>
 
 #include "Check.h"
+#include "Session/AppPaths.h"
 #include "Session/RigFile.h"
 
 using namespace stagehand;
@@ -105,10 +106,15 @@ void testPaths(const fs::path& dir) {
     CHECK(rigBundleOf((dir / "Stage.rig").string()) == fs::canonical(dir / "Stage.rig").string());
     CHECK(rigBundleOf((dir / "Stage.rig/rig.json").string()) == fs::canonical(dir / "Stage.rig").string());
     CHECK(rigBundleOf((dir / "Nothing.rig").string()).empty());
+#ifdef __APPLE__
+    CHECK(defaultRigPath() == appDataDir() + "/Default.rig" &&
+          appDataDir().find("/Library/Application Support/StageHand") != std::string::npos);
+#else
     setenv("XDG_DATA_HOME", "/x/data", 1);
     CHECK(defaultRigPath() == "/x/data/stagehand/Default.rig");
     unsetenv("XDG_DATA_HOME");
     CHECK(defaultRigPath().find("/.local/share/stagehand/Default.rig") != std::string::npos);
+#endif
 }
 
 } // namespace

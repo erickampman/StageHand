@@ -11,6 +11,7 @@
 #include <ctime>
 #include <poll.h>
 
+#include "Core/Clock.h"
 #include "Core/Ump.h"
 
 namespace stagehand {
@@ -20,12 +21,6 @@ namespace {
 // Below PipeWire's audio threads (rtkit's default for them is 88), so MIDI
 // capture never preempts audio.
 constexpr int kMidiThreadPriority = 60;
-
-Nanoseconds monotonicNow() noexcept {
-    timespec ts{};
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return static_cast<Nanoseconds>(ts.tv_sec) * 1'000'000'000 + ts.tv_nsec;
-}
 
 const char* midiVersionName(int version) {
     switch (version) {
@@ -322,7 +317,7 @@ void AlsaSeqInput::drain(int clientIndex) {
         }
         if (result < 0) return;
 
-        const Nanoseconds captured = monotonicNow();
+        const Nanoseconds captured = nowNanoseconds();
         if (!snd_seq_ev_is_ump(event)) {   // non-MIDI sequencer events: hotplug announcements counted
             switch (event->type) {
                 case SND_SEQ_EVENT_CLIENT_START:

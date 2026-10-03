@@ -257,8 +257,8 @@ Constraints carried from the spike and the DGL notes in architecture.md:
   colour of the rows it plays into (its stripe split between them when there
   are several; the tint from the first), and none when it plays into none.
 - **The window's size** (2026-10-02) is kept as it closes, in
-  `$XDG_STATE_HOME/stagehand/window.json` (default `~/.local/state/...`; this
-  machine's, not a rack's or the rig's), and reopened at. The first time,
+  `$XDG_STATE_HOME/stagehand/window.json` (default `~/.local/state/...`; on
+  macOS in `~/Library/Application Support/StageHand`; this machine's, not a rack's or the rig's), and reopened at. The first time,
   it's 1100 wide and tall enough for the rack (`RackWidget::wantedHeight()`:
   its rows, the buses, the dock). Either way it's fitted to the monitor under
   the pointer (XRandR; the whole X screen without it), at most 92% of it, so

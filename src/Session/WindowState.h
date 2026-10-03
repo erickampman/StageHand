@@ -13,7 +13,7 @@ struct WindowSize {
     bool operator==(const WindowSize&) const = default;
 };
 
-// $XDG_STATE_HOME/stagehand/window.json (default ~/.local/state/...).
+// window.json in appStateDir() (Session/AppPaths.h).
 std::string defaultWindowStatePath();
 bool        loadWindowSize(const std::string& path, WindowSize& size);   // false: none, or unreadable
 bool        saveWindowSize(const std::string& path, const WindowSize& size);

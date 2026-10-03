@@ -116,7 +116,8 @@ effects' saved state (`state/A1.bin` is bus A's first effect).
 - **A setlist names its rig** with `"rig"`, relative to the setlist like its
   racks. No `"rig"`: the default rig.
 - **The default rig** is `$XDG_DATA_HOME/stagehand/Default.rig` (default
-  `~/.local/share/stagehand/Default.rig`), created empty on first use. A rack
+  `~/.local/share/stagehand/Default.rig`; on macOS in
+  `~/Library/Application Support/StageHand`), created empty on first use. A rack
   on its own uses it.
 - **Sends:** a rack's slots gain `"sends": [dbA, dbB]`, `null` for off (absent:
   both off). An additive change to the rack format (rack-format.md).

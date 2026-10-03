@@ -22,10 +22,14 @@ struct AudioConfig {
 };
 
 // Everything handed to the real-time callback for one block. `blockStartTime`
-// is the CLOCK_MONOTONIC time at which this processing cycle began. The engine
-// maps MIDI captured during the previous cycle onto this block, one period
-// behind, so relative timing stays sample-exact (domain-model.md, sample-accurate
-// alignment).
+// is the time this processing cycle began, on nowNanoseconds()'s clock
+// (Core/Clock.h), the one MIDI is timestamped by. The engine maps MIDI
+// captured during the previous cycle onto this block, one period behind, so
+// relative timing stays sample-exact (domain-model.md, sample-accurate
+// alignment). Every backend keeps this convention (docs/macos.md, decision 4;
+// testCaptureToBlock): JACK's cycle start; on CoreAudio the IOProc's "now",
+// not the output's time, which is later by the buffer and the device's
+// latency and would put every message a block late.
 struct AudioCallbackContext {
     std::uint32_t    frameCount     = 0;
     Nanoseconds      blockStartTime = 0;

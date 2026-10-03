@@ -19,7 +19,7 @@ RackFileResult saveRig(const std::string& bundlePath, const Rig& rig);
 std::string rigBundleOf(const std::string& chosen);
 
 // The default rig, used by a rack on its own and a setlist that names none:
-// $XDG_DATA_HOME/stagehand/Default.rig (default ~/.local/share/...).
+// Default.rig in appDataDir() (Session/AppPaths.h).
 std::string defaultRigPath();
 
 } // namespace stagehand

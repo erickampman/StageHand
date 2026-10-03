@@ -9,15 +9,11 @@
 #include <string>
 #include <utility>
 
+#include "Core/Clock.h"
+
 namespace stagehand {
 
 namespace {
-
-Nanoseconds monotonicNow() noexcept {
-    timespec ts{};
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return static_cast<Nanoseconds>(ts.tv_sec) * 1'000'000'000 + ts.tv_nsec;
-}
 
 void silentJackMessage(const char*) {}
 void printJackMessage(const char* message) {   // what libjack does by default
@@ -152,10 +148,10 @@ bool JackBackend::open(const AudioConfig& requested, AudioConfig& negotiated) {
         std::fprintf(stderr, "JackBackend: requested %.0f Hz, server runs %.0f Hz\n",
                      requested.sampleRate, negotiatedConfig.sampleRate);
 
-    // Measure JACK's clock against CLOCK_MONOTONIC, bracketing the read.
-    const Nanoseconds before    = monotonicNow();
+    // Measure JACK's clock against nowNanoseconds() (CLOCK_MONOTONIC), bracketing the read.
+    const Nanoseconds before    = nowNanoseconds();
     const jack_time_t jackUsecs = jack_get_time();
-    const Nanoseconds after     = monotonicNow();
+    const Nanoseconds after     = nowNanoseconds();
     jackClockOffset = static_cast<Nanoseconds>(jackUsecs) * 1000 - (before + after) / 2;
 
     negotiated = negotiatedConfig;
@@ -315,7 +311,7 @@ int JackBackend::processCallback(std::uint32_t nframes, void* arg) {
                              &periodUsecs) == 0)
         ctx.blockStartTime = static_cast<Nanoseconds>(cycleUsecs) * 1000 - self->jackClockOffset;
     else
-        ctx.blockStartTime = monotonicNow();   // vDSO clock read: no syscall, RT-safe
+        ctx.blockStartTime = nowNanoseconds();   // vDSO clock read: no syscall, RT-safe
 
     ctx.time.sampleRate     = self->negotiatedConfig.sampleRate;
     ctx.time.samplePosition = position;

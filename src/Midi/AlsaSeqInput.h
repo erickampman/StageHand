@@ -24,8 +24,9 @@ namespace stagehand {
 // preference. Each opened source gets its own input port on the chosen client,
 // and a message's handle comes from the port it arrived on.
 //
-// Timestamps use CLOCK_MONOTONIC (the same clock as JackBackend's block start
-// times), taken as each event is read on the MIDI thread. The thread asks for
+// Timestamps use nowNanoseconds() (Core/Clock.h: the same clock as
+// JackBackend's block start times), taken as each event is read on the MIDI
+// thread. The thread asks for
 // SCHED_FIFO; without real-time permission it runs at normal priority, and the
 // timestamps jitter by its wake-up latency.
 class AlsaSeqInput final : public MidiInput {

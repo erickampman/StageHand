@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 
+#include "Session/AppPaths.h"
 #include "Session/BundleFiles.h"
 
 namespace stagehand {
@@ -23,9 +24,7 @@ constexpr double kMonitorShare = 0.92;   // room for the desktop's panels and th
 } // namespace
 
 std::string defaultWindowStatePath() {
-    const char*    state = std::getenv("XDG_STATE_HOME");
-    const fs::path base  = state != nullptr && *state != '\0' ? fs::path(state) : fs::path(homeDir()) / ".local/state";
-    return (base / "stagehand" / "window.json").string();
+    return (fs::path(appStateDir()) / "window.json").string();
 }
 
 bool loadWindowSize(const std::string& path, WindowSize& size) {

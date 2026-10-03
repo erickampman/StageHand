@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 
+#include "Session/AppPaths.h"
 #include "Session/BundleFiles.h"
 
 namespace stagehand {
@@ -184,9 +185,7 @@ std::string rigBundleOf(const std::string& chosen) {
 }
 
 std::string defaultRigPath() {
-    const char*    data = std::getenv("XDG_DATA_HOME");
-    const fs::path base = data != nullptr && *data != '\0' ? fs::path(data) : fs::path(homeDir()) / ".local/share";
-    return (base / "stagehand" / "Default.rig").string();
+    return (fs::path(appDataDir()) / "Default.rig").string();
 }
 
 } // namespace stagehand
