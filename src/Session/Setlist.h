@@ -26,7 +26,7 @@ struct SwitchSettings {
     enum class When { Now, NextBar };
     enum class OldRack { RingOut, Cut };
     Transport transport = Transport::Keep;
-    When      when      = When::Now;
+    When      when      = When::NextBar;   // the default since 2026-10-03 (was Now): in time
     OldRack   oldRack   = OldRack::RingOut;
 
     bool operator==(const SwitchSettings&) const = default;

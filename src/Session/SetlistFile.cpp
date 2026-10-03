@@ -36,8 +36,8 @@ std::string rackPathText(const fs::path& rack, const fs::path& folder) {
 
 constexpr std::pair<const char*, SwitchSettings::Transport> kTransports[] = {
     {"keep", SwitchSettings::Transport::Keep}, {"stop", SwitchSettings::Transport::Stop}};
-constexpr std::pair<const char*, SwitchSettings::When> kWhens[] = {
-    {"now", SwitchSettings::When::Now}, {"nextBar", SwitchSettings::When::NextBar}};
+constexpr std::pair<const char*, SwitchSettings::When> kWhens[] = {   // the first is the default
+    {"nextBar", SwitchSettings::When::NextBar}, {"now", SwitchSettings::When::Now}};
 constexpr std::pair<const char*, SwitchSettings::OldRack> kOldRacks[] = {
     {"ringOut", SwitchSettings::OldRack::RingOut}, {"cut", SwitchSettings::OldRack::Cut}};
 

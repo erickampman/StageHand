@@ -1673,10 +1673,10 @@ void RackWidget::openSwitchMenu(float x, float y) {
     choice("stops: the song starts from bar 1", s.transport == S::Transport::Stop, next);
     next = s;
     m.items.push_back(MenuItem{"A switch happens", {}});
-    next.when = S::When::Now;
-    choice("at once", s.when == S::When::Now, next);
     next.when = S::When::NextBar;
     choice("at the next bar (while it runs)", s.when == S::When::NextBar, next);
+    next.when = S::When::Now;
+    choice("at once (as soon as it's ready)", s.when == S::When::Now, next);
     next = s;
     m.items.push_back(MenuItem{"The old song", {}});
     next.oldRack = S::OldRack::RingOut;

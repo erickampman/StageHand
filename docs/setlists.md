@@ -129,7 +129,7 @@ A setlist is one file that refers to racks; it doesn't contain them.
     { "rack": "Racks/Blue in green.rack", "name": "Blue in green (ballad)" },
     { "rack": "Racks/So what.rack" }
   ],
-  "switching": { "transport": "keep", "at": "now", "oldRack": "ringOut" },
+  "switching": { "transport": "keep", "at": "nextBar", "oldRack": "ringOut" },
   "triggers": [ { "action": "next", "source": "device:FCB1010:FCB1010 MIDI 1",
                   "controller": 80, "channel": 1 },
                 { "action": "song", "source": "all", "channel": 16 } ]
@@ -336,11 +336,13 @@ whole setlist (`"switching"` in the file, section 1), set from File →
 | Setting | Values | Default |
 |---|---|---|
 | Transport across a switch | keep running (medleys), stop | keep running |
-| When a switch happens | at once, at the next bar | at once |
+| When a switch happens | at the next bar, at once | at the next bar (since 2026-10-03; was at once) |
 | The old rack | ring out (section 3), cut | ring out |
 
 "At the next bar" applies only while the transport runs; stopped, a switch is
-always at once.
+always at once. It became the default on 2026-10-03, so a switch lands in
+time unless "at once" is chosen; a setlist file without `"at"` switches at
+the next bar.
 
 ## 6. Saving while in a setlist
 
