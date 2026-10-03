@@ -190,6 +190,7 @@ std::unique_ptr<RackUi> RackUi::open(RackController& controller, const std::stri
     impl->window.setResizable(true);
     impl->window.setGeometryConstraints(px(minimum.width), px(minimum.height));
     impl->window.setSize(px(size.width), px(size.height));
+    impl->widget->setPerforming(size.perform);   // as it was left (docs/perform.md, decision 10)
     impl->window.show();
     return std::unique_ptr<RackUi>(new RackUi(std::move(impl)));
 }
@@ -199,8 +200,8 @@ RackUi::RackUi(std::unique_ptr<Impl> ui) : impl(std::move(ui)) {}
 RackUi::~RackUi() {
     if (!impl->windowStatePath.empty()) {
         const double sf = impl->window.getScaleFactor();
-        saveWindowSize(impl->windowStatePath,
-                       WindowSize{impl->window.getWidth() / sf, impl->window.getHeight() / sf});
+        saveWindowSize(impl->windowStatePath, WindowSize{impl->window.getWidth() / sf, impl->window.getHeight() / sf,
+                                                         impl->widget->performing()});
     }
     // Editors first, then the rack window, then put the Application in
     // quitting state (DGL's teardown order).
@@ -212,6 +213,9 @@ RackUi::~RackUi() {
 
 void RackUi::idle() {
     impl->app.idle();
+    // The beat moving (the Perform view, the edge flash): drawn at this rate,
+    // not only when the view model changes (docs/perform.md, decision 14).
+    if (impl->window.isVisible() && impl->widget->animating()) impl->widget->repaint();
 
     // The file chooser's answer.
     if (std::string path; impl->dialog.poll(path)) {

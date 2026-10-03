@@ -145,6 +145,7 @@ struct TransportModel {
     bool                     click          = false;
     float                    clickLevelDb   = -12.0f;
     double                   countInBars    = 0.0;     // 0, 0.5, 1 or 2
+    bool                     flash          = false;   // the window's edge flashes on each pulse
     std::string              clickOutput;              // chosen device; "" = none
     bool                     clickConnected = false;   // to it, now
     std::vector<std::string> playbackDevices;          // as of refreshPlaybackDevices()

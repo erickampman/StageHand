@@ -46,6 +46,15 @@ public:
     // Another rack replaced the running one: close menus and panels.
     void rackReplaced();
 
+    // The Perform view (docs/perform.md, decisions 10 to 15): the main window
+    // for the stage, the song and the beat large, nothing to edit. Tab or the
+    // toolbar's Perform switches; RackUi keeps it with the window's size.
+    bool performing() const noexcept { return perform; }
+    void setPerforming(bool on);
+    // The beat moves on screen (the Perform view, or the edge flash, while
+    // the transport runs or counts in): RackUi repaints at the display's rate.
+    bool animating() const;
+
 protected:
     void draw() override;
     bool overlayOpen() const override { return !filterId.empty(); }
@@ -55,6 +64,7 @@ protected:
     bool onKeyboard(const KeyboardEvent& ev) override;
 
 private:
+    bool perform = false;   // the Perform view
     // --- geometry (logical pixels)
     float toolbarY() const;   // below the setlist row, when one is open
     float topH() const;       // where the rows start
@@ -90,6 +100,8 @@ private:
     void openEffectMenu(std::size_t bus, std::size_t slot, float x, float y);
     void openBusOutputMenu(std::size_t bus, float x, float y);
     void drawSetlistRow();
+    void drawPerform();                     // the Perform view, the whole window
+    void drawEdgeFlash();                   // over either view, on each pulse
     void drawToolbar();
     void drawTransport(float x);
     void drawRow(const RowModel& row, std::size_t index);

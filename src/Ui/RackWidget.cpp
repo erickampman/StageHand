@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <filesystem>
 
+#include "Core/Clock.h"
 #include "Core/Ump.h"
 #include "Session/RackFile.h"
 #include "Session/SetlistFile.h"
@@ -33,6 +34,12 @@ constexpr float kMinOutputW = 330.0f;
 constexpr float kRemoveSize = 26.0f;   // the red X at each row's right end
 constexpr float kMidiW      = 34.0f;
 constexpr float kStripeW    = 5.0f;    // a row's colour, at its left edge
+// The beat display (docs/perform.md): a pulse is lit (and the edge flashes)
+// for this long, fading; and drawn this far ahead, for the time a frame takes
+// to reach the screen.
+constexpr double kPulseLitSeconds = 0.18;
+constexpr double kDisplayLagSeconds = 1.0 / 60.0;
+constexpr float  kEdgeFlashW = 14.0f;
 constexpr float kTintLeft   = 0.22f;   // how much of it the background takes: by the stripe,
 constexpr float kTintRight  = 0.04f;   // fading across the row
 
@@ -225,6 +232,11 @@ void RackWidget::meterBars(float x0, float x1, float y, const float db[2], const
 void RackWidget::draw() {
     if (!editingText()) renamingId.clear();   // the rename ended (Enter, Escape, or a click)
     box(0, 0, width(), height(), kBg);
+    if (perform) {
+        drawPerform();
+        drawEdgeFlash();
+        return;
+    }
 
     const RackViewModel& view = controller.view();
     scrollY = std::clamp(scrollY, 0.0f, maxScroll());
@@ -248,6 +260,167 @@ void RackWidget::draw() {
     endShift(toolbarY());
     if (view.setlist.open) drawSetlistRow();
     drawStatus();
+    drawEdgeFlash();
+}
+
+// --- the Perform view (docs/perform.md, decisions 10 to 15) --------------------------------
+
+void RackWidget::setPerforming(bool on) {
+    if (on == perform) return;
+    perform = on;
+    closeMenu();
+    dismissOverlays();
+    repaint();
+}
+
+bool RackWidget::animating() const {
+    const TransportModel& t = controller.view().transport;
+    return (t.running || t.countIn > 0) && (perform || t.flash);
+}
+
+// The song large, with Previous and Next as big buttons; the beat as one box
+// a pulse, or the count-in's countdown; bar · beat, the tempo; the transport;
+// the current looper; the status bar. Nothing that edits the rack.
+void RackWidget::drawPerform() {
+    const RackViewModel&  view = controller.view();
+    const TransportModel& t    = view.transport;
+    const SetlistModel&   set  = view.setlist;
+    const BeatNow b = controller.heardBeat(nowNanoseconds() + static_cast<Nanoseconds>(kDisplayLagSeconds * 1e9));
+    const float   w = width(), cx = w / 2;
+    region(0, 0, w, height(), nullptr);   // nothing under it takes a click
+
+    // Back to the rack (Tab).
+    button(w - kPad - 110.0f, 10.0f, 110.0f, 30.0f, "Edit (Tab)", false, true, kAccent);
+    region(w - kPad - 110.0f, 10.0f, 110.0f, 30.0f, [this](const Press&) { setPerforming(false); });
+
+    // The song, and where Next goes.
+    float y = 54.0f;
+    if (set.open && set.current >= 0 && set.current < static_cast<int>(set.songs.size())) {
+        const SongModel& song = set.songs[static_cast<std::size_t>(set.current)];
+        label(cx, y + 12.0f, std::to_string(set.current + 1) + " / " + std::to_string(set.songs.size()), 20.0f, kDim,
+              ALIGN_CENTER | ALIGN_MIDDLE);
+        label(cx, y + 54.0f, song.name, 46.0f, song.problems.empty() ? kText : kAmber, ALIGN_CENTER | ALIGN_MIDDLE);
+        if (set.next >= 0) {
+            const SongModel& next = set.songs[static_cast<std::size_t>(set.next)];
+            label(cx, y + 100.0f, "next: " + next.name, 22.0f, next.problems.empty() ? kDim : kAmber,
+                  ALIGN_CENTER | ALIGN_MIDDLE);
+        }
+    } else {
+        label(cx, y + 54.0f, view.rackName.empty() ? std::string("Untitled rack") : view.rackName, 46.0f, kText,
+              ALIGN_CENTER | ALIGN_MIDDLE);
+    }
+    if (set.open) {   // big, touch-sized ◀ ▶
+        const float bw = 110.0f, bh = 110.0f;
+        auto arrow = [&](float x, bool left, bool enabled) {
+            box(x, y, bw, bh, enabled ? kPanel : kBarBg, 10.0f);
+            beginPath();
+            const float mx = x + bw / 2, my = y + bh / 2, s = 26.0f;
+            if (left) {
+                moveTo(mx + s / 2, my - s);
+                lineTo(mx - s, my);
+                lineTo(mx + s / 2, my + s);
+            } else {
+                moveTo(mx - s / 2, my - s);
+                lineTo(mx + s, my);
+                lineTo(mx - s / 2, my + s);
+            }
+            closePath();
+            fill(enabled ? kText : kTrack);
+            NanoVG::fill();
+        };
+        arrow(kPad, true, set.previous >= 0);
+        arrow(w - kPad - bw, false, set.next >= 0);
+        if (set.previous >= 0)
+            region(kPad, y, bw, bh, [this](const Press&) { switchSong([this] { controller.previousSong(); }); });
+        if (set.next >= 0)
+            region(w - kPad - bw, y, bw, bh, [this](const Press&) { switchSong([this] { controller.nextSong(); }); });
+    }
+
+    // The beat: a box a pulse, the one sounding lit (the downbeat amber); or
+    // the count-in's countdown, very large, in amber.
+    // A taller window gives the beat the room: it's what's read from afar.
+    y = 190.0f;
+    const float extra = std::max(0.0f, height() - kStatusH - 600.0f);
+    const float boxH  = std::min(130.0f + extra * 0.7f, 320.0f);
+    if (b.state == BeatNow::State::CountingIn) {
+        label(cx, y + boxH / 2, std::to_string(b.countIn), std::min(150.0f + extra * 0.6f, 300.0f), kAmber,
+              ALIGN_CENTER | ALIGN_MIDDLE);
+    } else {
+        const int   n    = std::clamp(b.pulsesInBar, 1, 12);
+        const float gap  = 14.0f, room = w - 2 * kPad - 240.0f;
+        const float boxW = std::min(150.0f, (room - gap * static_cast<float>(n - 1)) / static_cast<float>(n));
+        const float x0   = cx - (boxW * static_cast<float>(n) + gap * static_cast<float>(n - 1)) / 2;
+        for (int i = 0; i < n; ++i) {
+            const float x   = x0 + static_cast<float>(i) * (boxW + gap);
+            const bool  lit = b.state == BeatNow::State::Running && i == b.pulse && b.sincePulse >= 0.0 &&
+                             b.sincePulse < kPulseLitSeconds * 2.5;
+            box(x, y, boxW, boxH, !lit ? kTrack : i == 0 ? kAmber : kGreen, 10.0f);
+            if (i == 0 && !lit) outline(x, y, boxW, boxH, kAmber, 10.0f);   // where the bar starts
+        }
+    }
+
+    // Bar · beat, large; the tempo and the time signature beside.
+    y += boxH + 26.0f;
+    char text[48];
+    if (b.state == BeatNow::State::Running) std::snprintf(text, sizeof text, "%d \xC2\xB7 %d", b.bar, b.beat);
+    else std::snprintf(text, sizeof text, "%s", b.state == BeatNow::State::CountingIn ? "count-in" : "stopped");
+    label(cx, y + 30.0f, text, b.state == BeatNow::State::Running ? 56.0f : 30.0f,
+          b.state == BeatNow::State::Running ? kText : kDim, ALIGN_CENTER | ALIGN_MIDDLE);
+    std::snprintf(text, sizeof text, "%.1f BPM   %d/%d", t.tempoBpm, t.numerator, t.denominator);
+    label(cx, y + 76.0f, text, 22.0f, kDim, ALIGN_CENTER | ALIGN_MIDDLE);
+
+    // The transport, large: stopped, counting in and running each its own colour.
+    y += 108.0f;
+    const float tw = 180.0f, th = 70.0f, tx = cx - tw / 2;
+    const UiColor face = b.state == BeatNow::State::Running ? kGreen : b.state == BeatNow::State::CountingIn ? kAmber : kPanel;
+    box(tx, y, tw, th, face, 10.0f);
+    beginPath();
+    if (b.state == BeatNow::State::Stopped) {
+        moveTo(cx - 16.0f, y + 16.0f);
+        lineTo(cx + 22.0f, y + th / 2);
+        lineTo(cx - 16.0f, y + th - 16.0f);
+        closePath();
+    } else {
+        rect(cx - 18.0f, y + 17.0f, 36.0f, 36.0f);
+    }
+    fill(b.state == BeatNow::State::Stopped ? kText : kBarBg);
+    NanoVG::fill();
+    region(tx, y, tw, th, [this](const Press&) { controller.toggleTransport(); });
+
+    // The current looper: its state and its place in the loop, one wide bar.
+    y += th + 24.0f;
+    for (const LooperRowModel& l : view.loopers) {
+        if (!l.current) continue;
+        static constexpr const char* kStates[] = {"empty", "armed", "recording", "playing", "overdubbing", "stopped"};
+        const std::string state = kStates[std::clamp(static_cast<int>(l.state), 0, 5)];
+        const float       lw = std::min(w - 2 * kPad, 700.0f), lx = cx - lw / 2;
+        label(lx, y + 10.0f, l.name + ": " + state, 20.0f,
+              l.state == LooperState::Recording || l.state == LooperState::Overdubbing ? kRed : kText);
+        box(lx, y + 26.0f, lw, 16.0f, kTrack, 4.0f);
+        if (l.lengthBeats > 0.0)
+            box(lx, y + 26.0f, lw * static_cast<float>(std::clamp(l.position / l.lengthBeats, 0.0, 1.0)), 16.0f,
+                l.state == LooperState::Playing || l.state == LooperState::Overdubbing ? kGreen : kAccent, 4.0f);
+        break;
+    }
+
+    drawStatus();
+}
+
+// The window's edge, on each pulse (docs/perform.md, decision 13): the song's
+// setting, and always during a count-in; brighter on the downbeat, fading.
+void RackWidget::drawEdgeFlash() {
+    const TransportModel& t = controller.view().transport;
+    const BeatNow b = controller.heardBeat(nowNanoseconds() + static_cast<Nanoseconds>(kDisplayLagSeconds * 1e9));
+    if (b.state == BeatNow::State::Stopped || (!t.flash && b.state != BeatNow::State::CountingIn)) return;
+    if (b.sincePulse < 0.0 || b.sincePulse >= kPulseLitSeconds) return;
+    const float fade = 1.0f - static_cast<float>(b.sincePulse / kPulseLitSeconds);
+    globalAlpha(fade * (b.downbeat ? 1.0f : 0.6f));
+    const UiColor c = b.downbeat || b.state == BeatNow::State::CountingIn ? kAmber : kText;
+    box(0, 0, width(), kEdgeFlashW, c);
+    box(0, height() - kEdgeFlashW, width(), kEdgeFlashW, c);
+    box(0, 0, kEdgeFlashW, height(), c);
+    box(width() - kEdgeFlashW, 0, kEdgeFlashW, height(), c);
+    globalAlpha(1.0f);
 }
 
 // --- the setlist row (docs/setlists.md, "The setlist row") ----------------------------------
@@ -529,6 +702,11 @@ void RackWidget::drawToolbar() {
     const float addX = fileX - 10.0f - 118.0f;
     button(addX, 8.0f, 118.0f, 28.0f, "+ Add plugin", false, true, kAccent);
     region(addX, 8.0f, 118.0f, 28.0f, [this, addX](const Press&) { openAddMenu(addX, topH()); });
+
+    // The Perform view (Tab).
+    const float performX = addX - 10.0f - 96.0f;
+    button(performX, 8.0f, 96.0f, 28.0f, "Perform", false, true, kAccent);
+    region(performX, 8.0f, 96.0f, 28.0f, [this](const Press&) { setPerforming(true); });
 }
 
 // Tempo (drag up/down, Shift for fine; wheel; double-click for 120), Tap, time
@@ -649,6 +827,9 @@ void RackWidget::openMetronomeMenu(float x, float y) {
     for (const auto [bars, text] : {std::pair{0.0, "No count-in"}, {0.5, "Count-in: half a bar"}, {1.0, "Count-in: 1 bar"},
                                     {2.0, "Count-in: 2 bars"}})
         m.items.push_back(MenuItem{text, [this, b = bars] { controller.setCountIn(b); }, t.countInBars == bars});
+    // The edge flash (docs/perform.md): this song's.
+    m.items.push_back(MenuItem{"Flash the window's edge on each beat", [this, on = t.flash] { controller.setFlash(!on); },
+                               t.flash});
     // Why it's silent, where it's plain to see.
     if (t.click && t.clickOutput.empty()) m.items.push_back(MenuItem{"   Silent: choose an output below", {}});
     else if (t.click && !t.clickConnected) m.items.push_back(MenuItem{"   Silent: its output isn't connected", {}});
@@ -2113,6 +2294,18 @@ bool RackWidget::onKeyboard(const KeyboardEvent& ev) {
         controller.cancelLearn();
         closeMenu();
         dismissOverlays();
+        repaint();
+        return true;
+    }
+    // Tab: the Perform view and back (a text field took its keys above).
+    if (ev.key == dgl::kKeyTab && (ev.mod & dgl::kModifierControl) == 0 && !menuOpen()) {
+        setPerforming(!perform);
+        return true;
+    }
+    // In the Perform view, the arrows are Previous and Next song.
+    if (perform && (ev.key == dgl::kKeyLeft || ev.key == dgl::kKeyRight) && !menuOpen()) {
+        if (ev.key == dgl::kKeyLeft) switchSong([this] { controller.previousSong(); });
+        else switchSong([this] { controller.nextSong(); });
         repaint();
         return true;
     }

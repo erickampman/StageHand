@@ -100,6 +100,10 @@ void RackController::service() {
     for (const auto& [bundle, ahead] : prepared) ahead.rack->idle();
 }
 
+BeatNow RackController::heardBeat(Nanoseconds now) const {
+    return beatNow(engine.transport(), now, config.outputLatencySeconds, session.metronome().everyNote);
+}
+
 void RackController::tick(double now) {
     ticking = true;
     if (Engine::Learned learned; !learningId.empty() && engine.takeLearned(learned)) finishLearn(learned);
@@ -174,6 +178,7 @@ void RackController::tick(double now) {
     transport.click           = metronome.click;
     transport.clickLevelDb    = metronome.clickLevelDb;
     transport.countInBars     = metronome.countInBars;
+    transport.flash           = metronome.flash;
     transport.clickOutput     = session.clickOutput();
     transport.clickConnected  = !clickDevice.empty();
     transport.playbackDevices = deviceNames;
@@ -1005,6 +1010,12 @@ void RackController::setClickLevel(float db) {
 void RackController::setCountIn(double bars) {
     MetronomeSettings m = session.metronome();
     m.countInBars       = bars <= 0.0 ? 0.0 : bars < 1.0 ? 0.5 : bars < 2.0 ? 1.0 : 2.0;
+    setMetronome(m);
+}
+
+void RackController::setFlash(bool on) {
+    MetronomeSettings m = session.metronome();
+    m.flash             = on;
     setMetronome(m);
 }
 

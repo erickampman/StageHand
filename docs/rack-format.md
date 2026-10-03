@@ -300,7 +300,7 @@ Written only when it differs from the defaults.
 ## Metronome
 
 ```json
-"metronome": {"count": "beats", "click": true, "clickLevel": -12, "countIn": 1}
+"metronome": {"count": "beats", "click": true, "clickLevel": -12, "countIn": 1, "flash": true}
 ```
 
 | Field | Default | Meaning |
@@ -309,6 +309,7 @@ Written only when it differs from the defaults.
 | `click` | `false` | The click, on its own outputs |
 | `clickLevel` | `-12` | dB, -60 to 0 |
 | `countIn` | none | Bars counted in before bar 1 at a start: `0.5`, `1` or `2` (docs/perform.md). It clicks whether `click` is on or not |
+| `flash` | `false` | The window's edge flashes on each pulse, in either view (docs/perform.md, decision 13). The count-in flashes whatever this says |
 | `clickOutput` | `""` | Older racks only: where the click played. Read, and given to the rig if it has no click output (docs/rig.md: the rig holds it since 2026-10-03); not written any more |
 
 Written only when it differs from the defaults.

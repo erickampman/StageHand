@@ -201,6 +201,11 @@ public:
         bool         running       = false;
         int          countIn       = 0;     // counting in: the pulses still to count (4, 3, 2, 1); 0: not
         double       countInBeat   = 0.0;   // counting in: beats into it (for the lights)
+        int          countInPulses = 0;     // counting in: its pulses in all
+        // When beatPosition (and countInBeat) is the transport's position, on
+        // nowNanoseconds()'s clock: the next block's start, so the display can
+        // carry the beat on between ticks (docs/perform.md, decision 14).
+        Nanoseconds  at            = 0;
     };
     Transport transport() const noexcept;   // any thread
 
@@ -478,6 +483,8 @@ private:
     std::atomic<double> countInBars{0.0};
     std::atomic<int>    publishedCountIn{0};
     std::atomic<double> publishedCountInBeat{0.0};
+    std::atomic<int>    publishedCountInPulses{0};
+    std::atomic<Nanoseconds> publishedAt{0};
 
     std::atomic<bool>  clickOn{false};
     std::atomic<bool>  clickEveryNote{false};
