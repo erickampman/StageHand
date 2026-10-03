@@ -465,7 +465,9 @@ void testRig() {
     rig.buses[1].returnDb   = -6.0f;
     session.loadRig(rig, 48000.0, report);
     CHECK(session.hasRig() && !session.rigModified() && report.warnings.size() == 1);
-    auto* fx = dynamic_cast<FakePlugin*>(session.rig().effects[0][0].plugin.get());
+    // Held here too, so it can be checked after the rig lets go of it.
+    const std::shared_ptr<HostedPlugin> held = session.rig().effects[0][0].plugin;
+    auto* fx = dynamic_cast<FakePlugin*>(held.get());
     CHECK(fx != nullptr && fx->active && fx->state == bytes("verb-state"));
     CHECK(!session.rig().effects[1][1].plugin && !session.rig().effects[1][1].problem.empty());
     CHECK(std::fabs(session.rig().returns[1]->targetGain.load() - 0.501f) < 0.001f);

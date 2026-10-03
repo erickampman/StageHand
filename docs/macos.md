@@ -1,7 +1,7 @@
 # StageHand — macOS (plan)
 
-Proposed 2026-10-03, reviewed the same day (notes under "Review"); nothing
-built yet. StageHand on macOS 15 (Sequoia) and later, keeping DGL for the UI
+Proposed 2026-10-03, reviewed the same day (notes under "Review");
+milestone 1 built (notes under "Milestones"). StageHand on macOS 15 (Sequoia) and later, keeping DGL for the UI
 (no native Cocoa interface). Builds on:
 - architecture.md, sections 1 to 3: MIDI, audio and plugins sit behind seams
   (`MidiInput`, `AudioBackend`, `PluginFactory`) so CoreMIDI and CoreAudio
@@ -108,13 +108,8 @@ lock-free on arm64.
     toolchain for a window with nothing of its own; Swift with AppKit works
     but costs the same for 80 lines. On Linux the editor window becomes a DGL
     window too, so the raw X11 code goes.
-12. **The main output device** is the system's default output when StageHand
-    starts, unless one is chosen: `--device NAME`, or a choice in the window
-    (the transport's menu, beside the click's output), kept with the rig (the
-    stage's, as the click's output is). StageHand doesn't follow the system
-    default while it runs: a Bluetooth headset connecting mid-set mustn't
-    move the PA. On Linux, PipeWire's default sink stays the main device, as
-    now.
+12. **The main output device:** deferred to milestone 4 (decided
+    2026-10-03); see "Open questions".
 13. **arm64 only.** An arm64 process can't load x86_64 plugins (Rosetta
     doesn't mix architectures in one process), so a universal StageHand
     wouldn't help its plugins. The scan lists a plugin built only for Intel
@@ -196,8 +191,9 @@ lock-free on arm64.
   `~/Library/Application Support/StageHand` (and `~/Library/Preferences` is
   left alone: these aren't preferences).
 - **`main.cpp`:** the pw-jack restart and the PipeWire quantum are Linux
-  only; `--quantum` sets the CoreAudio buffer size instead; `--device`
-  (decision 12); `--list-midi` and `--monitor` work as they do.
+  only; `--quantum` sets the CoreAudio buffer size instead; choosing the
+  main device is decision 12's; `--list-midi` and `--monitor` work as they
+  do.
 - **Files in protected folders:** StageHand isn't sandboxed, so racks in
   `~/Documents` or on the Desktop get macOS's one-time "allow access"
   prompt, as any such app does.
@@ -240,7 +236,7 @@ lock-free on arm64.
    devices by name (decision 5, both platforms). Tests: the name fallback in
    the Session tests; the backend on a Mac.
 4. **CoreAudio backend:** a HAL IOProc on the main device (decision 12,
-   `--device` and the choice in the window, kept with the rig), denormals
+   settled first), denormals
    flushed (and in JACK's callback), the buses' channel pairs, then the click
    on its own pair or another device through the private aggregate
    (decision 3), the buffer size, sample-rate changes, sleep and unplugging.
@@ -255,6 +251,17 @@ lock-free on arm64.
 Milestones 3 to 5 are the real work, each about the size of a setlist
 milestone. Everything past milestone 1 needs a Mac to try: CI can build and
 run the tests, but not play audio or MIDI.
+
+**Milestone 1 implemented (2026-10-03):** `STAGEHAND_APP` (on by default on
+Linux, off elsewhere, and refused off Linux) builds the Linux seams, DGL, the
+UI and the app; without it only the platform-free libraries (core, engine,
+session, app) and the 12 test suites build, with no JACK, ALSA, X11 or DPF.
+`CMAKE_OSX_DEPLOYMENT_TARGET` 15.0 and `CMAKE_OSX_ARCHITECTURES` arm64.
+`FileDialog` uses `pipe()` and `FD_CLOEXEC` (macOS has no `pipe2()`). CI
+(`.github/workflows/ci.yml`): Linux (Ubuntu 24.04) builds everything and runs
+the suites; macOS 15 (Apple Silicon) builds the libraries and runs the
+suites, on every pull request and on pushes to main and rack-view. Linux's
+build is otherwise unchanged: the same targets, with the same dependencies.
 
 ## Review (2026-10-03)
 
@@ -278,6 +285,13 @@ The first draft, read again against the code and Apple's APIs:
 
 ## Open questions
 
-None at the moment (answered 2026-10-03: macOS 15 or later; DPF's file
-dialogs on Linux too; the click can go to another interface, through a
-private aggregate device on macOS).
+- **The main output device** (decision 12), before milestone 4: which device
+  by default (proposed: the system's default output at start, not followed
+  afterwards, so a headset connecting mid-set can't move the PA), how it's
+  chosen (proposed: `--device NAME`, and a choice in the window), and where
+  it's kept (the rig, as the click's output, or per machine). Deferred
+  2026-10-03: nothing needs it until the CoreAudio backend.
+
+Answered 2026-10-03: macOS 15 or later; DPF's file dialogs on Linux too; the
+click can go to another interface, through a private aggregate device on
+macOS.
