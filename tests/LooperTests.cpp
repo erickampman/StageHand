@@ -437,6 +437,37 @@ void testFatFingers() {
     CHECK(rig.heardAt(true, 61, 13.0) && rig.heardOns(13.0, 13.5) == 2);
 }
 
+// Armed while stopped with a count-in (docs/perform.md): the count-in, then
+// the recording from bar 1; Stop during the count-in leaves it empty.
+void testArmWithCountIn() {
+    CompiledLooper settings;
+    settings.atBar       = true;
+    settings.quantize    = 0.0;
+    settings.fixedLength = 1;
+    Rig rig(settings, false);
+    rig.engine->setCountIn(1.0);   // a bar: beats 0 to 4
+    rig.engine->sendLooperCommand(kLoop, LooperCommand::Press);
+    rig.block();
+    CHECK(!rig.engine->transport().running && rig.engine->transport().countIn > 0 &&
+          rig.state() == LooperState::Armed);
+    rig.play(62, 2.0, 2.5);   // played during the count-in: not recorded
+    rig.runTo(4.0);
+    rig.block();
+    CHECK(rig.engine->transport().running && rig.state() == LooperState::Recording);
+    rig.play(60, 4.5, 5.0);
+    rig.runTo(9.0);
+    CHECK(rig.rt->length.load() == 4.0 && rig.heardAt(true, 60, 8.5) && rig.rt->noteCount.load() == 1);
+
+    Rig cancelled(settings, false);
+    cancelled.engine->setCountIn(2.0);
+    cancelled.engine->sendLooperCommand(kLoop, LooperCommand::Press);
+    cancelled.block();
+    CHECK(cancelled.state() == LooperState::Armed);
+    cancelled.engine->sendTransportCommand(Engine::TransportCommand::Stop);
+    cancelled.runTo(12.0);
+    CHECK(!cancelled.engine->transport().running && cancelled.state() == LooperState::Empty);
+}
+
 } // namespace
 
 int main() {
@@ -446,6 +477,7 @@ int main() {
     testOverdubAcrossTheEnd();
     testCancelClearAndTransport();
     testArmStartsTheTransport();
+    testArmWithCountIn();
     testCap();
     testLoopToSequence();
     testRequantize();

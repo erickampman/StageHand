@@ -604,6 +604,80 @@ void testStartOnNote() {
     CHECK(at(trig.find(true, 60), 5500));   // beat 1 at the pad, not the next bar
 }
 
+// The count-in (docs/perform.md): bar 1 lands after it, and everything that
+// starts with the transport starts there. A trigger counts in from its own
+// frame; a sequence started while stopped starts on bar 1; start on first
+// note never counts in (the note is bar 1); a song switch cancels it. One bar
+// of 4/4 at 120 BPM: 96000 frames.
+void testCountIn() {
+    {   // At Start, from a transport trigger at frame 5800: bar 1 at 101800.
+        Rig      rig(false, false);
+        Sequence armed = midi1({{0, 1, 60, 100}});
+        armed.atStart  = true;
+        TransportControl transport;
+        transport.triggers = {trigger(SequenceTrigger::Control::Note, 9, 36)};
+        rig.set(armed, {}, transport);
+        rig.engine->setCountIn(1.0);
+        rig.run(4800);
+        rig.midi(1, midi1Message(0x90, 9, 36, 100), 1000);
+        rig.run(4800);
+        CHECK(!rig.engine->transport().running && rig.engine->transport().countIn > 0);
+        rig.run(4800 * 19);   // to 100800: still counting
+        CHECK(rig.runtime->state.load() == SequenceState::Stopped && rig.find(true, 60) == nullptr);
+        rig.run(4800 * 2);
+        CHECK(rig.engine->transport().running && at(rig.find(true, 60), 101800));
+    }
+    {   // A sequence started while stopped: the count-in, then it on bar 1.
+        Rig      rig(false, false);
+        Sequence s = midi1({{0, 1, 60, 100}});
+        s.launch   = LaunchQuantize::Bar;
+        rig.set(s);
+        rig.engine->setCountIn(1.0);
+        rig.run(14400);
+        rig.engine->sendSequenceCommand(kSeq, SequenceCommand::Start);
+        rig.run(4800 * 19);   // to 105600: still counting
+        CHECK(!rig.engine->transport().running && rig.find(true, 60) == nullptr);
+        rig.run(4800 * 2);
+        CHECK(rig.engine->transport().running && at(rig.find(true, 60), 14400 + 96000));
+    }
+    {   // Start on first note: no count-in, whatever it's set to.
+        Rig      rig(true, false);
+        Sequence armed = midi1({{0, 1, 60, 100}});
+        armed.atStart  = true;
+        TransportControl transport;
+        transport.startOnNote = true;
+        rig.set(armed, {}, transport);
+        rig.engine->setCountIn(2.0);
+        rig.run(4800);
+        rig.midi(1, midi1Message(0x90, 0, 64, 100), 500);
+        rig.run(4800);
+        CHECK(rig.engine->transport().running && rig.engine->transport().countIn == 0 && at(rig.find(true, 64), 5300));
+    }
+    {   // A song switch during the count-in cancels it: the new song is stopped.
+        Rig      rig(false, false);
+        Sequence armed = midi1({{0, 1, 60, 100}});
+        armed.atStart  = true;
+        rig.set(armed);
+        rig.engine->setCountIn(1.0);
+        rig.run(4800);
+        rig.engine->sendTransportCommand(Engine::TransportCommand::Start);
+        rig.run(4800 * 4);
+        CHECK(rig.engine->transport().countIn > 0);
+        auto next = std::make_shared<SequenceRuntime>();
+        Sequence song = midi1({{0, 1, 62, 100}});
+        song.atStart  = true;
+        std::vector<CompiledSequence> list{CompiledSequence::compile(song, kSeq, next)};
+        SlotConfig slot;
+        slot.plugin          = rig.plugin;
+        slot.sequenceSources = {kSeq};
+        rig.engine->commitSwitch(std::make_unique<EngineGraph>(std::vector<SlotConfig>{slot}),
+                                 std::make_unique<SequenceSet>(std::move(list)), Engine::SwitchPlan{});
+        rig.run(4800 * 30);
+        CHECK(!rig.engine->transport().running && rig.engine->transport().countIn == 0);
+        CHECK(rig.find(true, 60) == nullptr && rig.find(true, 62) == nullptr);
+    }
+}
+
 } // namespace
 
 int main() {
@@ -623,5 +697,6 @@ int main() {
     testSequenceStartsTransport();
     testAtStart();
     testStartOnNote();
+    testCountIn();
     return test::finish("Sequence");
 }

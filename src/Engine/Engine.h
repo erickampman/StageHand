@@ -199,8 +199,20 @@ public:
         double       barStartBeats = 0.0;
         std::int32_t barNumber     = 0;
         bool         running       = false;
+        int          countIn       = 0;     // counting in: the pulses still to count (4, 3, 2, 1); 0: not
     };
     Transport transport() const noexcept;   // any thread
+
+    // --- the count-in (docs/perform.md, decisions 1 to 8) ---
+    // Bars clicked before bar 1 when the transport is started: 0 (none), 0.5
+    // (half the bar's pulses, rounded up), 1 or 2. A start (Start, Toggle, a
+    // sequence or a looper started while stopped) counts in first, and bar 1
+    // lands right after: plugins see the transport stopped until then, and At
+    // Start sequences, loopers and the sequences started meanwhile start
+    // there. Start on first note never counts in. Stop or a song switch
+    // during it cancels it. It clicks whether the click is on or not, at the
+    // click's level. Main thread (an atomic, read when a count-in begins).
+    void setCountIn(double bars) noexcept;
 
     // --- the click (docs/sequences.md, section 7) ---
     // A short blip on each metronome pulse (metronomePulse(): counted beats, or
@@ -306,6 +318,11 @@ private:
     void                 advanceTransport(const AudioCallbackContext& ctx) noexcept;
     void                 makeSequenceBlock(const AudioCallbackContext& ctx) noexcept;
     void                 renderClick(const AudioCallbackContext& ctx) noexcept;
+    // A start: counts in first if the count-in is set and `countIn` (not for
+    // start on first note); else starts at once.
+    void                 requestStart(const AudioCallbackContext& ctx, std::uint32_t frame, bool countIn) noexcept;
+    void                 advanceCountIn(const AudioCallbackContext& ctx) noexcept;   // bar 1, if it's in this block
+    void                 cancelCountIn(std::uint32_t frame) noexcept;
     void                 startTransport(const AudioCallbackContext& ctx, std::uint32_t frame) noexcept;
     void                 stopTransport(std::uint32_t frame) noexcept;
     void                 transportAction(const AudioCallbackContext& ctx, TransportCommand command,
@@ -440,6 +457,25 @@ private:
         bool         stopPending   = false; // stopped in this block: back to beat 0 after it
         std::uint32_t stopFrame    = UINT32_MAX;   // where, in this block
     } clock;                                // audio thread only
+
+    // The count-in (audio thread only, but `countInBars`).
+    struct CountIn {
+        bool          active     = false;   // counting
+        bool          inBlock    = false;   // it counted during this block (its clicks to render)
+        double        position   = 0.0;     // beats counted at this block's first frame (< 0: it begins in this block)
+        double        pulseBeats = 1.0;
+        int           perBar     = 4;
+        int           pulses     = 0;       // in all
+        std::uint32_t endFrame   = UINT32_MAX;   // where it ended in this block (bar 1, or cancelled)
+        struct Deferred {
+            MidiSourceHandle source;
+            SequenceCommand  command;
+        };
+        Deferred      deferred[16];         // sequences started meanwhile: they start on bar 1
+        std::size_t   deferredCount = 0;
+    } countIn;
+    std::atomic<double> countInBars{0.0};
+    std::atomic<int>    publishedCountIn{0};
 
     std::atomic<bool>  clickOn{false};
     std::atomic<bool>  clickEveryNote{false};

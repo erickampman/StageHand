@@ -447,7 +447,7 @@ Implemented 2026-09-30 (milestone 6):
      port registration), it connects.
 - A device on another clock than the mains is bridged by PipeWire's
   resampler: a few ms of latency on the click, fine for a click.
-- Later: a count-in bar, MIDI click out, MIDI clock out.
+- Later: MIDI click out, MIDI clock out. (The count-in: docs/perform.md.)
 - Implemented 2026-09-30: `Engine::setClick()`, `AudioConfig::auxOutputChannels`
   and `AuxRouting` (JackBackend), `findPlaybackDevice()` and the routing in
   RackController; tests in EngineTests (timing, pitch, counts) and

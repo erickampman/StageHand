@@ -1,6 +1,6 @@
 # StageHand — Count-in and the Perform view (design)
 
-Proposed 2026-10-03; nothing built yet. A count-in before a song starts,
+Proposed 2026-10-03; milestone 1 built (notes under "Milestones"). A count-in before a song starts,
 chosen per song, and a Perform view: the main window as it should look on
 stage, with the beat large enough to read from across it. Builds on:
 - sequences.md, section 7: Start and Stop, At Start, start on first note,
@@ -116,6 +116,23 @@ stage, with the beat large enough to read from across it. Builds on:
 3. **The Perform view:** the mode, the layout above, the keys, the remembered
    mode, the edge flash (per song, in the rack), drawing at the display's rate and
    ahead by the output latency.
+
+**Milestone 1 implemented (2026-10-03):** `Engine::setCountIn()` (0, 0.5, 1
+or 2 bars) and `Engine::requestStart()`, which Start, Toggle, a sequence and
+a looper started while stopped now go through (start on first note bypasses
+it). Counting keeps its own position in beats (so a tempo change while
+counting holds), and at the frame its last pulse ends calls the same
+`startTransport()` as before, so At Start sequences and armed loopers start
+there unchanged; sequences started while counting are held
+(`CountIn::deferred`) and started on bar 1. `renderClick()` clicks the
+count-in whether the click is on or not, at its level, a downbeat where one
+would fall in the bars before bar 1. Start again does nothing; Stop and
+Toggle cancel it (armed loopers back to empty); a song switch cancels it.
+`Transport::countIn` publishes the pulses left (the one sounding, counted
+down). Tests: `testCountIn` in the engine tests (onsets, pitch, what plugins
+see, half a bar, 6/8, Start again, Toggle as Stop) and the sequence tests (At
+Start from a trigger's frame, a sequence started while stopped, start on
+first note, a song switch), `testArmWithCountIn` (looper).
 
 ## Open questions
 
