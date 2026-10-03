@@ -78,6 +78,13 @@ struct Rig {
     }
 };
 
+// A scratch folder under the system's temp folder, as its real path: on macOS
+// the temp folder is under /var, a symlink to /private/var, and racks and
+// setlists are kept by their real paths.
+std::filesystem::path scratchDir(const char* name) {
+    return std::filesystem::canonical(std::filesystem::temp_directory_path()) / name;
+}
+
 Rack testRack() {
     Rack rack;
     rack.name  = "Test";
@@ -634,7 +641,7 @@ void testRenameSequence() {
 }
 
 void testSave() {
-    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "stagehand-controller-test";
+    const std::filesystem::path dir = scratchDir("stagehand-controller-test");
     std::filesystem::remove_all(dir);
     std::filesystem::create_directories(dir);
     const std::string target = (dir / "Saved.rack").string();
@@ -667,7 +674,7 @@ void testSave() {
 // New, Open and Save As: switching racks while running, the save-first rule,
 // and what Save As will and won't replace.
 void testFiles() {
-    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "stagehand-files-test";
+    const std::filesystem::path dir = scratchDir("stagehand-files-test");
     std::filesystem::remove_all(dir);
     std::filesystem::create_directories(dir / "notes.rack");   // exists, but isn't a rack
 
@@ -751,7 +758,7 @@ void testFiles() {
 // song, the last position, and leaving it by opening a rack on its own.
 void testSetlist() {
     namespace fs = std::filesystem;
-    const fs::path dir = fs::temp_directory_path() / "stagehand-setlist-test";
+    const fs::path dir = scratchDir("stagehand-setlist-test");
     fs::remove_all(dir);
     for (const char* name : {"A", "B", "C"}) {
         Rack rack;
@@ -883,7 +890,7 @@ void testSetlist() {
 // (`Rig` here is the test harness; the rig model is stagehand::Rig.)
 void testRigs() {
     namespace fs = std::filesystem;
-    const fs::path dir = fs::temp_directory_path() / "stagehand-rigs-test";
+    const fs::path dir = scratchDir("stagehand-rigs-test");
     fs::remove_all(dir);
     Rack song;
     song.name  = "Song";
@@ -941,7 +948,7 @@ void testRigs() {
 // waiting for it while the current one plays (only the last request counts).
 void testPreparedRacks() {
     namespace fs = std::filesystem;
-    const fs::path dir = fs::temp_directory_path() / "stagehand-prepared-test";
+    const fs::path dir = scratchDir("stagehand-prepared-test");
     fs::remove_all(dir);
     auto makeRack = [&](const std::string& name, std::size_t plugins) {
         Rack rack;
@@ -1047,7 +1054,7 @@ void testPreparedRacks() {
 // pedal reported when it's switched to.
 void testSetlistTriggers() {
     namespace fs = std::filesystem;
-    const fs::path dir = fs::temp_directory_path() / "stagehand-setlist-triggers-test";
+    const fs::path dir = scratchDir("stagehand-setlist-triggers-test");
     fs::remove_all(dir);
     std::vector<std::string> racks;
     for (const char* name : {"A", "B", "C", "D"}) {
@@ -1155,7 +1162,7 @@ void testSetlistTriggers() {
 // effect's editor staying open when the rack changes.
 void testRigControls() {
     namespace fs = std::filesystem;
-    const fs::path dir = fs::temp_directory_path() / "stagehand-rig-controls-test";
+    const fs::path dir = scratchDir("stagehand-rig-controls-test");
     fs::remove_all(dir);
     stagehand::Rig stage;
     stage.name = "Stage";
@@ -1237,7 +1244,7 @@ void testRigControls() {
 // and its At Start sequences; Stop stops it; Cut mutes the old song.
 void testSwitchSettings() {
     namespace fs = std::filesystem;
-    const fs::path dir = fs::temp_directory_path() / "stagehand-switch-settings-test";
+    const fs::path dir = scratchDir("stagehand-switch-settings-test");
     fs::remove_all(dir);
     std::vector<std::string> racks;
     for (const auto [name, bpm] : {std::pair{"A", 100.0}, {"B", 140.0}, {"C", 80.0}}) {
@@ -1308,7 +1315,7 @@ void testSwitchSettings() {
 // rack; closing the set saves them too.
 void testSavingInASet() {
     namespace fs = std::filesystem;
-    const fs::path dir = fs::temp_directory_path() / "stagehand-saving-test";
+    const fs::path dir = scratchDir("stagehand-saving-test");
     fs::remove_all(dir);
     std::vector<std::string> racks;
     for (const char* name : {"A", "B", "C"}) {
@@ -1382,7 +1389,7 @@ void testSavingInASet() {
 // the new rack's loopers empty.
 void testLoopers() {
     namespace fs = std::filesystem;
-    const fs::path dir = fs::temp_directory_path() / "stagehand-loopers-test";
+    const fs::path dir = scratchDir("stagehand-loopers-test");
     fs::remove_all(dir);
     Rig rig;
     rig.session->addOpenSource(MidiSourceRef{MidiSourceRef::Kind::Virtual, "MIDI 2.0 In"}, 7);
@@ -1585,7 +1592,7 @@ void testLoopNumbers() {
 // notice; switching to a song replaces its problems with what the switch says.
 void testCheckSetlist() {
     namespace fs = std::filesystem;
-    const fs::path dir = fs::temp_directory_path() / "stagehand-check-test";
+    const fs::path dir = scratchDir("stagehand-check-test");
     fs::remove_all(dir);
     auto make = [&](const char* name, std::vector<RackSlot> slots) {
         Rack rack;
