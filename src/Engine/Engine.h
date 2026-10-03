@@ -200,6 +200,7 @@ public:
         std::int32_t barNumber     = 0;
         bool         running       = false;
         int          countIn       = 0;     // counting in: the pulses still to count (4, 3, 2, 1); 0: not
+        double       countInBeat   = 0.0;   // counting in: beats into it (for the lights)
     };
     Transport transport() const noexcept;   // any thread
 
@@ -476,6 +477,7 @@ private:
     } countIn;
     std::atomic<double> countInBars{0.0};
     std::atomic<int>    publishedCountIn{0};
+    std::atomic<double> publishedCountInBeat{0.0};
 
     std::atomic<bool>  clickOn{false};
     std::atomic<bool>  clickEveryNote{false};

@@ -236,6 +236,9 @@ public:
     void setClick(bool on);
     void setClickLevel(float db);             // -60 to 0; also turns the click on
     void setClickOutput(const std::string& device);   // also turns the click on
+    // Before bar 1 at a start: 0 (none), 0.5, 1 or 2 bars (docs/perform.md);
+    // saved with the rack. It clicks whether the click is on or not.
+    void setCountIn(double bars);
     void testClick();                         // one blip now, on the click's output (connected for it if need be)
     void refreshPlaybackDevices();            // for the menu; call when it opens
 

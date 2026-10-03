@@ -659,6 +659,7 @@ void Session::setMetronome(const MetronomeSettings& settings) {
 
 void Session::applyMetronome() {
     engine.setClick(metronomeSetup.click, metronomeSetup.everyNote, dbToGain(metronomeSetup.clickLevelDb));
+    engine.setCountIn(metronomeSetup.countInBars);
 }
 
 void Session::startTransport() {

@@ -300,7 +300,7 @@ Written only when it differs from the defaults.
 ## Metronome
 
 ```json
-"metronome": {"count": "beats", "click": true, "clickLevel": -12}
+"metronome": {"count": "beats", "click": true, "clickLevel": -12, "countIn": 1}
 ```
 
 | Field | Default | Meaning |
@@ -308,6 +308,7 @@ Written only when it differs from the defaults.
 | `count` | `"beats"` | `"beats"`: the counted beats (6/8: 2, 7/8: 7); `"notes"`: every note (6/8: 6) |
 | `click` | `false` | The click, on its own outputs |
 | `clickLevel` | `-12` | dB, -60 to 0 |
+| `countIn` | none | Bars counted in before bar 1 at a start: `0.5`, `1` or `2` (docs/perform.md). It clicks whether `click` is on or not |
 | `clickOutput` | `""` | Older racks only: where the click played. Read, and given to the rig if it has no click output (docs/rig.md: the rig holds it since 2026-10-03); not written any more |
 
 Written only when it differs from the defaults.

@@ -145,6 +145,15 @@ void RackController::tick(double now) {
     transport.beatInBar   = std::clamp(beat, 0, std::max(0, transport.beatsInBar - 1));
     transport.running     = clock.running;
     transport.onBeat      = clock.running && intoBar - beat * beatLen < 0.15 * std::max(beatLen, 1.0);
+    // Counting in (docs/perform.md): the countdown, and the lights (amber)
+    // counting the pulses where they'd fall in the bars before bar 1.
+    transport.countIn = clock.countIn;
+    if (clock.countIn > 0 && !clock.running) {
+        const int k         = static_cast<int>(std::floor(clock.countInBeat / beatLen + 1e-9));   // the pulse sounding
+        const int perBar    = std::max(pulse.perBar, 1);
+        transport.beatInBar = (perBar - clock.countIn % perBar) % perBar;   // its place in its bar
+        transport.onBeat    = clock.countInBeat - k * beatLen < 0.15 * std::max(beatLen, 1.0);
+    }
     const TransportSettings& settings = session.transportSettings();
     transport.triggers.clear();
     for (std::size_t i = 0; i < settings.triggers.size(); ++i) {
@@ -164,6 +173,7 @@ void RackController::tick(double now) {
     transport.everyNote       = metronome.everyNote;
     transport.click           = metronome.click;
     transport.clickLevelDb    = metronome.clickLevelDb;
+    transport.countInBars     = metronome.countInBars;
     transport.clickOutput     = session.clickOutput();
     transport.clickConnected  = !clickDevice.empty();
     transport.playbackDevices = deviceNames;
@@ -992,6 +1002,12 @@ void RackController::setClickLevel(float db) {
 }
 
 // Where it plays is the rig's (every song's); whether this song clicks is the rack's.
+void RackController::setCountIn(double bars) {
+    MetronomeSettings m = session.metronome();
+    m.countInBars       = bars <= 0.0 ? 0.0 : bars < 1.0 ? 0.5 : bars < 2.0 ? 1.0 : 2.0;
+    setMetronome(m);
+}
+
 void RackController::setClickOutput(const std::string& device) {
     session.setClickOutput(device);
     MetronomeSettings m = session.metronome();
