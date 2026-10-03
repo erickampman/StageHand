@@ -257,6 +257,10 @@ void Engine::setClick(bool on, bool everyNote, float gain) noexcept {
     clickOn.store(on, std::memory_order_relaxed);
 }
 
+void Engine::setCountIn(double bars) noexcept {
+    countInBars.store(bars <= 0.0 ? 0.0 : bars < 1.0 ? 0.5 : std::min(std::round(bars), 2.0), std::memory_order_relaxed);
+}
+
 bool Engine::sendTransportCommand(TransportCommand command) noexcept {
     return transportCommands.push(command);
 }
@@ -299,6 +303,7 @@ Engine::Transport Engine::transport() const noexcept {
     t.barStartBeats    = publishedBarStart.load(std::memory_order_relaxed);
     t.barNumber        = publishedBar.load(std::memory_order_relaxed);
     t.running          = publishedRunning.load(std::memory_order_relaxed);
+    t.countIn          = publishedCountIn.load(std::memory_order_relaxed);
     return t;
 }
 
@@ -318,8 +323,11 @@ void Engine::process(const AudioCallbackContext& ctx) noexcept {
     const bool switching = takeSwitch(ctx);
     if (!holdSwitch) adoptPendingGraph();
     advanceTransport(ctx);
+    countIn.inBlock  = countIn.active;
+    countIn.endFrame = UINT32_MAX;
     adoptSequences(ctx, switching);
     takeMidi(ctx);
+    advanceCountIn(ctx);
     recordLoops();
     generateSequences(ctx);
     routeMidi(ctx.frameCount);
@@ -336,6 +344,13 @@ void Engine::process(const AudioCallbackContext& ctx) noexcept {
     } else if (clock.running) {
         clock.beat += static_cast<double>(ctx.frameCount) * clock.beatsPerFrame;
     }
+    int countingLeft = 0;
+    if (countIn.active) {
+        countIn.position += static_cast<double>(ctx.frameCount) * clock.beatsPerFrame;
+        const int counted = static_cast<int>(std::floor(std::max(countIn.position, 0.0) / countIn.pulseBeats + 1e-9));
+        countingLeft      = std::max(1, countIn.pulses - counted);
+    }
+    publishedCountIn.store(countingLeft, std::memory_order_relaxed);
     publishedRunning.store(clock.running, std::memory_order_relaxed);
     const TimeInfo now = timeAt(ctx, 0);   // the next block's start (the clock has moved)
     publishedBeat.store(now.beatPosition, std::memory_order_relaxed);
@@ -415,19 +430,75 @@ void Engine::stopTransport(std::uint32_t frame) noexcept {
 }
 
 void Engine::transportAction(const AudioCallbackContext& ctx, TransportCommand command, std::uint32_t frame) noexcept {
+    if (countIn.active) {   // Start again: nothing; Stop or Toggle: cancelled
+        if (command != TransportCommand::Start) cancelCountIn(frame);
+        return;
+    }
     const bool running = clock.running && !clock.stopPending;
     if (command == TransportCommand::Start || (command == TransportCommand::Toggle && !running))
-        startTransport(ctx, frame);
+        requestStart(ctx, frame, true);
     else
         stopTransport(frame);
+}
+
+void Engine::requestStart(const AudioCallbackContext& ctx, std::uint32_t frame, bool counted) noexcept {
+    if (clock.running && !clock.stopPending) return;
+    if (countIn.active) return;   // already counting: it starts at bar 1
+    const double bars = countInBars.load(std::memory_order_relaxed);
+    if (!counted || bars <= 0.0 || clock.beatsPerFrame <= 0.0) {
+        startTransport(ctx, frame);
+        return;
+    }
+    // The click's pulses (6/8: two a bar); half a bar is half of them, rounded up.
+    const MetronomePulse pulse =
+        metronomePulse(clock.numerator, clock.denominator, clickEveryNote.load(std::memory_order_relaxed));
+    countIn.active        = true;
+    countIn.inBlock       = true;
+    countIn.pulseBeats    = pulse.beats;
+    countIn.perBar        = std::max(pulse.perBar, 1);
+    countIn.pulses        = bars < 1.0 ? (countIn.perBar + 1) / 2 : countIn.perBar * static_cast<int>(bars);
+    countIn.position      = -static_cast<double>(frame) * clock.beatsPerFrame;
+    countIn.endFrame      = UINT32_MAX;
+    countIn.deferredCount = 0;
+}
+
+// Bar 1, if the count-in's last pulse ends in this block: the transport
+// starts at that frame as a Start does, and the sequences started meanwhile
+// start with it.
+void Engine::advanceCountIn(const AudioCallbackContext& ctx) noexcept {
+    if (!countIn.active || clock.beatsPerFrame <= 0.0) return;
+    const double end   = static_cast<double>(countIn.pulses) * countIn.pulseBeats;
+    const double frame = std::ceil((end - countIn.position) / clock.beatsPerFrame - 1e-6);
+    if (frame >= static_cast<double>(ctx.frameCount)) return;
+    const auto at    = static_cast<std::uint32_t>(std::max(frame, 0.0));
+    countIn.active   = false;
+    countIn.endFrame = at;
+    startTransport(ctx, at);
+    for (std::size_t i = 0; i < countIn.deferredCount; ++i)
+        sequenceCommand(ctx, countIn.deferred[i].source, countIn.deferred[i].command, at);
+    countIn.deferredCount = 0;
+}
+
+// Stopped before bar 1: nothing starts; armed loopers go back to empty.
+void Engine::cancelCountIn(std::uint32_t frame) noexcept {
+    countIn.active        = false;
+    countIn.endFrame      = frame;
+    countIn.deferredCount = 0;
+    if (currentSequences != nullptr) currentSequences->stopLoopers(sequenceBlock.from(frame));
 }
 
 void Engine::sequenceCommand(const AudioCallbackContext& ctx, MidiSourceHandle source, SequenceCommand command,
                              std::uint32_t frame) noexcept {
     if (currentSequences == nullptr) return;
     if ((!clock.running || clock.stopPending) && source != kInvalidMidiSource &&
-        currentSequences->wouldStart(source, command))
-        startTransport(ctx, frame);   // on beat 1, with no quantize wait
+        currentSequences->wouldStart(source, command)) {
+        requestStart(ctx, frame, true);   // on beat 1, with no quantize wait
+        if (countIn.active) {             // counting in: it starts on bar 1, after it
+            if (countIn.deferredCount < std::size(countIn.deferred))
+                countIn.deferred[countIn.deferredCount++] = CountIn::Deferred{source, command};
+            return;
+        }
+    }
     currentSequences->command(source, command, sequenceBlock.from(frame));
 }
 
@@ -446,6 +517,7 @@ void Engine::adoptSequences(const AudioCallbackContext& ctx, bool switching) noe
             currentSequences = next;
         }
     }
+    if (switching && countIn.active) cancelCountIn(0);   // the old song's count-in
     if (switching) applySwitch(ctx);   // before this block's commands: they act on the new song
     TransportCommand transport;
     while (transportCommands.pop(transport)) transportAction(ctx, transport, 0);
@@ -460,7 +532,7 @@ void Engine::looperAction(const AudioCallbackContext& ctx, MidiSourceHandle loop
     const bool running = clock.running && !clock.stopPending;
     if (currentSequences->looperCommand(looper, command, sequenceBlock.from(frame), running) &&
         !currentSequences->hasTransportStart())
-        startTransport(ctx, frame);   // armed while stopped: the recording starts on its first beat
+        requestStart(ctx, frame, true);   // armed while stopped: the recording starts on its first beat (after a count-in)
 }
 
 // The loopers record what they hear of this block's input, each message at
@@ -724,8 +796,8 @@ void Engine::takeMidi(const AudioCallbackContext& ctx) noexcept {
             }
             if (matched) continue;
             // Start on first note: the note starts the transport, and still plays.
-            if (!clock.running && currentSequences->startsOnNote(entry.item.source, m))
-                startTransport(ctx, entry.offset);
+            if (!clock.running && !countIn.active && currentSequences->startsOnNote(entry.item.source, m))
+                requestStart(ctx, entry.offset, false);   // the note is bar 1: no count-in
         }
         ++stagedCount;
     }
@@ -1133,6 +1205,22 @@ void Engine::renderClick(const AudioCallbackContext& ctx) noexcept {
     if (clickTest.exchange(false, std::memory_order_relaxed)) startBlip(true, clickGain.load(std::memory_order_relaxed));
 
     std::uint32_t done = 0;
+    // The count-in's pulses, before bar 1 (or until it's cancelled), whether
+    // the click is on or not. A pulse is a downbeat where it would be in the
+    // bars before bar 1: half a bar in 4/4 counts "3, 4".
+    if (countIn.inBlock && clock.beatsPerFrame > 0.0) {
+        const float gain = clickGain.load(std::memory_order_relaxed);
+        for (int k = std::max(0, static_cast<int>(std::ceil(countIn.position / countIn.pulseBeats - 1e-9)));
+             k < countIn.pulses; ++k) {
+            const double at = std::floor((k * countIn.pulseBeats - countIn.position) / clock.beatsPerFrame + 1e-6);
+            if (at >= static_cast<double>(frames) || at >= static_cast<double>(countIn.endFrame)) break;
+            const auto frame = static_cast<std::uint32_t>(std::max(at, 0.0));
+            play(done, frame);
+            done                = frame;
+            const int inBar     = ((k - countIn.pulses) % countIn.perBar + countIn.perBar) % countIn.perBar;
+            startBlip(inBar == 0, gain);
+        }
+    }
     if (clickOn.load(std::memory_order_relaxed) && clock.running && clock.beatsPerFrame > 0.0) {
         const MetronomePulse pulse =
             metronomePulse(clock.numerator, clock.denominator, clickEveryNote.load(std::memory_order_relaxed));

@@ -963,6 +963,104 @@ void testClick() {
     engine->collect();
 }
 
+// The count-in (docs/perform.md): its pulses click before bar 1 whether the
+// click is on or not, the downbeats where they'd be in the bars before bar
+// 1, and bar 1 lands right after them; plugins see the transport stopped
+// until then. Half a bar is half the pulses (4/4: "3, 4"; 6/8: one). Start
+// again during it does nothing; Stop cancels it.
+void testCountIn() {
+    auto engine = std::make_unique<Engine>();
+    auto plugin = std::make_shared<FakePlugin>();
+    engine->commit(graphOf({slotFor(plugin)}));
+    std::vector<float> aux[2] = {std::vector<float>(144000), std::vector<float>(144000)};
+    auto run = [&](std::uint32_t frames) {
+        Block  block(frames, 48000.0, T);
+        float* channels[2] = {aux[0].data(), aux[1].data()};
+        block.ctx.aux      = AudioBuffer{channels, 2, frames};
+        engine->process(block.ctx);
+    };
+    auto onsets = [&](std::uint32_t frames) {
+        std::vector<std::uint32_t> at;
+        for (std::uint32_t f = 0; f < frames; ++f)
+            if (aux[0][f] != 0.0f && (f == 0 || aux[0][f - 1] == 0.0f)) at.push_back(f);
+        return at;
+    };
+    auto crossings = [&](std::uint32_t from) {   // the downbeat is higher: more crossings
+        int n = 0;
+        for (std::uint32_t f = from + 1; f < from + 480; ++f) n += (aux[0][f - 1] < 0.0f) != (aux[0][f] < 0.0f);
+        return n;
+    };
+
+    // One bar of 4/4 at 120 BPM (a beat: 24000 frames), the click off: four
+    // count-in clicks, then nothing (the song's click is off), bar 1 at 96000.
+    engine->setClick(false, false, 0.5f);
+    engine->setCountIn(1.0);
+    engine->sendTransportCommand(Engine::TransportCommand::Start);
+    run(48000);
+    CHECK(engine->transport().countIn == 2 && !engine->transport().running);
+    run(48000);   // ends at 96000, the next block's first frame: bar 1 starts there
+    CHECK(engine->transport().countIn == 1 && !engine->transport().running);
+    CHECK(!plugin->calls.empty() && !plugin->calls.back().time.playing);   // stopped as it counted
+    run(480);
+    CHECK(engine->transport().countIn == 0 && engine->transport().running && plugin->calls.back().time.playing);
+    // The two blocks together, as one buffer: re-run into one 96000-frame view.
+    engine->sendTransportCommand(Engine::TransportCommand::Stop);
+    run(480);
+    engine->sendTransportCommand(Engine::TransportCommand::Start);
+    run(144000);   // the count-in and half of bar 1
+    CHECK((onsets(144000) == std::vector<std::uint32_t>{1, 24001, 48001, 72001}));
+    CHECK(crossings(0) > crossings(24000) + 8);   // the count-in's first pulse is a downbeat
+    CHECK(engine->transport().running && std::fabs(engine->transport().beatPosition - 2.0) < 1e-9);   // bar 1 at 96000
+
+    // With the click on, it carries on from bar 1 with the song's own clicks.
+    engine->sendTransportCommand(Engine::TransportCommand::Stop);
+    run(480);
+    engine->setClick(true, false, 0.5f);
+    engine->sendTransportCommand(Engine::TransportCommand::Start);
+    run(144000);
+    CHECK((onsets(144000) == std::vector<std::uint32_t>{1, 24001, 48001, 72001, 96001, 120001}));
+    CHECK(crossings(96000) > crossings(72000) + 8);   // bar 1's downbeat
+
+    // Half a bar of 4/4: two pulses, "3, 4" (neither a downbeat), bar 1 at 48000.
+    engine->sendTransportCommand(Engine::TransportCommand::Stop);
+    run(480);
+    engine->setClick(false, false, 0.5f);
+    engine->setCountIn(0.5);
+    engine->sendTransportCommand(Engine::TransportCommand::Start);
+    run(96000);
+    CHECK((onsets(96000) == std::vector<std::uint32_t>{1, 24001}));
+    CHECK(std::abs(crossings(0) - crossings(24000)) <= 2);
+    CHECK(engine->transport().running && std::fabs(engine->transport().beatPosition - 2.0) < 1e-9);
+
+    // 6/8 counts its dotted beats: half a bar is one pulse (36000 frames).
+    engine->sendTransportCommand(Engine::TransportCommand::Stop);
+    run(480);
+    engine->setTimeSignature(6, 8);
+    engine->sendTransportCommand(Engine::TransportCommand::Start);
+    run(48000);
+    CHECK(onsets(48000) == std::vector<std::uint32_t>{1});
+    CHECK(engine->transport().running && std::fabs(engine->transport().beatPosition - 0.5) < 1e-9);   // bar 1 at 36000
+
+    // Start during the count-in: nothing; Stop: cancelled, stopped at bar 1.
+    engine->sendTransportCommand(Engine::TransportCommand::Stop);
+    run(480);
+    engine->setTimeSignature(4, 4);
+    engine->setCountIn(2.0);
+    engine->sendTransportCommand(Engine::TransportCommand::Start);
+    run(24000);   // the pulse in progress, counted down: the second of eight
+    CHECK(engine->transport().countIn == 7);
+    engine->sendTransportCommand(Engine::TransportCommand::Start);
+    run(24000);
+    CHECK(engine->transport().countIn == 6 && !engine->transport().running);
+    engine->sendTransportCommand(Engine::TransportCommand::Toggle);   // a Stop, while counting
+    run(48000);
+    CHECK(engine->transport().countIn == 0 && !engine->transport().running);
+    CHECK(onsets(48000).empty());
+    run(144000);
+    CHECK(!engine->transport().running);   // nothing started later
+    engine->collect();
+}
+
 void testGraphLifecycle() {
     auto engine = std::make_unique<Engine>();
     auto first  = std::make_shared<FakePlugin>();
@@ -1011,6 +1109,7 @@ void testGraphLifecycle() {
 
 int main() {
     testClick();
+    testCountIn();
     testOnePeriodBehind();
     testCaptureToBlock();
     testBlockSplitting();
