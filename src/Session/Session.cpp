@@ -98,11 +98,14 @@ std::vector<std::string> Session::syncMidi() {
     const bool                          wasDirty       = sequencesDirty;
     const std::vector<MidiSourceHandle> setlistBefore  = setlistSources;
     const MidiSourceHandle              switchBefore   = looperSwitchSource;
+    const MidiSourceHandle              panicBefore    = panicSource;
     const bool                          rigWasModified = rigDirty;
     setSetlistTriggers(std::vector<SetlistTrigger>(setlistControls));
     setLooperSwitch(rigState.saved.looperSwitch);
-    rigDirty         = rigWasModified;   // the same switch: not an edit
-    sequencesChanged = sequencesChanged || setlistSources != setlistBefore || looperSwitchSource != switchBefore;
+    setPanicControl(rigState.saved.panic);
+    rigDirty         = rigWasModified;   // the same controls: not an edit
+    sequencesChanged = sequencesChanged || setlistSources != setlistBefore || looperSwitchSource != switchBefore ||
+                       panicSource != panicBefore;
     sequencesDirty   = wasDirty || sequencesChanged;
     return changes;
 }
@@ -361,6 +364,7 @@ void Session::loadRig(const Rig& rig, double rate, LoadReport& report) {
     }
     rigState  = std::move(next);   // the old effects live on in the old graph until it's collected
     setLooperSwitch(rigState.saved.looperSwitch);   // resolved; sent with the sequences
+    setPanicControl(rigState.saved.panic);
     adoptClickOutput();
     rigLoaded = true;
     rigRate   = rate;
@@ -714,6 +718,12 @@ std::unique_ptr<SequenceSet> Session::buildSequences() const {
         transport.looperSwitch    = CompiledSequence::Trigger{looperSwitchSource, t->action, t->control, t->group,
                                                            t->channel, t->number};
     }
+    if (const auto& t = rigState.saved.panic;
+        rigLoaded && t && (panicSource != kInvalidMidiSource || t->source.kind == MidiSourceRef::Kind::All)) {
+        transport.hasPanic = true;
+        transport.panic    = CompiledSequence::Trigger{panicSource, t->action, t->control, t->group, t->channel,
+                                                    t->number};
+    }
     for (std::size_t i = 0; i < setlistControls.size() && i < setlistSources.size(); ++i) {
         const SetlistTrigger& t = setlistControls[i];
         if (setlistSources[i] == kInvalidMidiSource && t.source.kind != MidiSourceRef::Kind::All) continue;
@@ -852,6 +862,15 @@ void Session::setLooperSwitch(const std::optional<SequenceTrigger>& trigger) {
     looperSwitchIssue.clear();
     if (trigger && trigger->source.kind != MidiSourceRef::Kind::All)
         looperSwitchSource = resolve(trigger->source, looperSwitchIssue);
+    sequencesDirty = true;
+}
+
+void Session::setPanicControl(const std::optional<SequenceTrigger>& trigger) {
+    if (trigger != rigState.saved.panic) rigDirty = true;
+    rigState.saved.panic = trigger;
+    panicSource          = kInvalidMidiSource;
+    panicIssue.clear();
+    if (trigger && trigger->source.kind != MidiSourceRef::Kind::All) panicSource = resolve(trigger->source, panicIssue);
     sequencesDirty = true;
 }
 

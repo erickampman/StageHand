@@ -1107,6 +1107,192 @@ void testGraphLifecycle() {
 
 } // namespace
 
+// Panic (docs/panic.md): a note-off for every sounding note, at the note
+// each plugin got; the pedals up and All Notes Off on 16 channels to every row
+// (a muted one too), in its port's protocol; the held pedals forgotten; the
+// transport and sequences running on. A second Panic within 2 s also sends All
+// Sound Off and resets every row and bus effect. The learned control does the
+// same at its own frame, and goes nowhere else.
+void testPanic() {
+    auto engine = std::make_unique<Engine>();
+    auto midi1  = std::make_shared<FakePlugin>(2, NoteDialect::Midi);    // a MIDI 1.0 port
+    auto midi2  = std::make_shared<FakePlugin>(2, NoteDialect::Midi2);   // MIDI 2.0 only
+    auto muted  = std::make_shared<FakePlugin>(2, NoteDialect::Midi);
+    auto reverb = std::make_shared<FakeEffect>();
+    const MidiSourceHandle riffSource = kSequenceSourceBase + 1;
+    SlotConfig a                      = slotFor(midi1);
+    a.midiFilter.transpose            = 2;
+    a.sequenceSources                 = {riffSource};
+    SlotConfig b                      = slotFor(midi2);
+    SlotConfig c                      = slotFor(muted);
+    c.runtime                         = std::make_shared<SlotRuntime>(1.0f);
+    c.runtime->targetGain.store(0.0f);
+    c.runtime->muted.store(true);
+    BusConfig bus;
+    bus.effects[0] = reverb;
+    bus.runtime    = std::make_shared<SlotRuntime>(1.0f);
+    auto graph     = [&](std::vector<SlotConfig> slots) {
+        return std::make_unique<EngineGraph>(std::move(slots), std::vector<BusConfig>{bus});
+    };
+    engine->commit(graph({a, b, c}));
+
+    // A riff of two half-bar notes (MIDI 1.0: pitch is the note number), from the start.
+    Sequence riff;
+    riff.id       = "riff";
+    riff.protocol = MidiProtocol::Midi1;
+    riff.atStart  = true;
+    riff.notes    = {{0, 8, 60, 100}, {8, 8, 64, 100}};
+    TransportControl control;
+    control.hasPanic = true;
+    control.panic    = CompiledSequence::Trigger{kInvalidMidiSource, SequenceTrigger::Action::Toggle,
+                                                 SequenceTrigger::Control::Controller, 0, 0, 90};
+    std::vector<CompiledSequence> list{CompiledSequence::compile(riff, riffSource, std::make_shared<SequenceRuntime>())};
+    engine->commitSequences(std::make_unique<SequenceSet>(std::move(list), control));
+
+    Nanoseconds now   = T;
+    auto        block = [&] {
+        Block blk(480, 48000.0, now);
+        engine->process(blk.ctx);
+        now += 10 * ms;
+    };
+    auto send = [&](std::uint32_t word) {   // MIDI 1.0 from input 1, in the coming block
+        TimedMidiMessage m;
+        m.captureTime       = now - 5 * ms;
+        m.message.words[0]  = word;
+        m.message.wordCount = 1;
+        engine->onMidi(1, m);
+    };
+    auto events = [](const FakePlugin& p) {
+        std::vector<Event> all;
+        for (const FakePlugin::Call& call : p.calls) all.insert(all.end(), call.events.begin(), call.events.end());
+        return all;
+    };
+    auto isCc = [](const MidiMessage& m, std::uint8_t number) {
+        return ump::isChannelVoice(m) && ump::status(m) == ump::Status::ControlChange &&
+               ((m.words[0] >> 8) & 0x7F) == number;
+    };
+    auto count = [&](const FakePlugin& p, auto&& match) {
+        std::size_t n = 0;
+        for (const Event& e : events(p)) n += match(e.midi) ? 1 : 0;
+        return n;
+    };
+    auto clear = [&] {
+        midi1->calls.clear();
+        midi2->calls.clear();
+        muted->calls.clear();
+    };
+
+    // Playing: the riff's 60 (62 after the transpose), a live 50 (52) and the sustain pedal down.
+    engine->sendTransportCommand(Engine::TransportCommand::Start);
+    send(0x20903264u);   // note 50 on
+    send(0x20B0407Fu);   // sustain down
+    block();
+    block();
+    CHECK(count(*midi1, [](const MidiMessage& m) { return ump::isNoteOn(m) && ump::noteNumber(m) == 62; }) == 1);
+    CHECK(count(*midi1, [](const MidiMessage& m) { return ump::isNoteOn(m) && ump::noteNumber(m) == 52; }) == 1);
+    CHECK(count(*midi2, [](const MidiMessage& m) { return ump::isNoteOn(m) && ump::noteNumber(m) == 50; }) == 1);
+
+    // The button: at the next block's start, note-offs at the notes each got, then the CCs.
+    clear();
+    engine->panic();
+    block();
+    std::vector<Event> got = events(*midi1);
+    CHECK(got.size() == 2 + 16 * 4);
+    if (got.size() == 2 + 16 * 4) {
+        CHECK(ump::isNoteOff(got[0].midi) && ump::isNoteOff(got[1].midi));
+        CHECK(ump::noteNumber(got[0].midi) + ump::noteNumber(got[1].midi) == 52 + 62);
+        const std::uint8_t order[] = {64, 66, 67, 123};
+        for (std::size_t i = 0; i < 64; ++i) {
+            const MidiMessage& m = got[2 + i].midi;
+            CHECK(isCc(m, order[i % 4]) && (m.words[0] & 0x7F) == 0 && ump::channel(m) == i / 4);
+            CHECK(ump::messageType(m) == ump::MessageType::Midi1ChannelVoice && got[2 + i].sampleOffset == 0);
+        }
+    }
+    got = events(*midi2);   // the same in MIDI 2.0
+    CHECK(got.size() == 1 + 16 * 4);
+    for (const Event& e : got) CHECK(ump::messageType(e.midi) == ump::MessageType::Midi2ChannelVoice);
+    if (!got.empty()) CHECK(ump::isNoteOff(got[0].midi) && ump::noteNumber(got[0].midi) == 50);
+    CHECK(events(*muted).size() == 16 * 4);   // muted: no notes held, but the CCs
+    CHECK(count(*midi1, [&](const MidiMessage& m) { return isCc(m, 120); }) == 0);
+    CHECK(midi1->resets == 0 && reverb->resets == 0);
+    CHECK(engine->panics().count == 1 && !engine->panics().cut);
+    CHECK(engine->transport().running);
+
+    // The learned control, 0.03 s later: it cuts the sound, at its own frame,
+    // and goes nowhere else.
+    clear();
+    send(0x20B05A7Fu);   // CC 90 up
+    block();
+    CHECK(engine->panics().count == 2 && engine->panics().cut);
+    got = events(*midi1);
+    CHECK(got.size() == 16 * 5);
+    if (!got.empty()) CHECK(isCc(got[0].midi, 120) && got[0].sampleOffset == 240);
+    CHECK(count(*midi1, [&](const MidiMessage& m) { return isCc(m, 120); }) == 16);
+    CHECK(count(*midi2, [&](const MidiMessage& m) { return isCc(m, 120); }) == 16);
+    CHECK(count(*midi1, [&](const MidiMessage& m) { return isCc(m, 90); }) == 0);
+    CHECK(midi1->resets == 1 && midi2->resets == 1 && muted->resets == 1 && reverb->resets == 1);
+    send(0x20B05A00u);   // released: nothing
+    block();
+    CHECK(engine->panics().count == 2);
+
+    // The pedal was forgotten: a new row isn't sent it.
+    auto fresh = std::make_shared<FakePlugin>(2, NoteDialect::Midi);
+    engine->commit(graph({a, b, c, slotFor(fresh)}));
+    block();
+    CHECK(!fresh->calls.empty() && count(*fresh, [&](const MidiMessage& m) { return isCc(m, 64); }) == 0);
+
+    // The riff plays on: its next note (64, so 66) sounds, with no stray note-off for 62 first.
+    clear();
+    for (int i = 0; i < 200 && count(*midi1, [](const MidiMessage& m) { return ump::isNoteOn(m); }) == 0; ++i)
+        block();
+    CHECK(count(*midi1, [](const MidiMessage& m) { return ump::isNoteOn(m) && ump::noteNumber(m) == 66; }) == 1);
+    CHECK(count(*midi1, [](const MidiMessage& m) { return ump::isNoteOff(m); }) == 0);
+    CHECK(engine->transport().running);
+
+    // More than 2 s after the last: notes off only.
+    for (int i = 0; i < 210; ++i) block();
+    clear();
+    engine->panic();
+    block();
+    CHECK(engine->panics().count == 3 && !engine->panics().cut);
+    CHECK(count(*midi1, [&](const MidiMessage& m) { return isCc(m, 120); }) == 0 && midi1->resets == 1);
+    CHECK(count(*midi1, [](const MidiMessage& m) { return ump::isNoteOff(m) && ump::noteNumber(m) == 66; }) == 1);
+
+    // With no graph, it still counts.
+    engine->commit(nullptr);
+    block();
+    engine->panic();
+    block();
+    CHECK(engine->panics().count == 4);
+    engine->collect();
+}
+
+// The DSP load (docs/panic.md, section 6): each block's time over its
+// period, as an average and the worst block since the last take; each row's
+// own share in its runtime.
+void testDspLoad() {
+    auto engine = std::make_unique<Engine>();
+    auto heavy  = std::make_shared<FakePlugin>();
+    heavy->busy = std::chrono::milliseconds(3);   // of a 10 ms period
+    SlotConfig slot = slotFor(heavy);
+    slot.runtime    = std::make_shared<SlotRuntime>(1.0f);
+    engine->commit(graphOf({slot}));
+    for (int i = 0; i < 5; ++i) {
+        Block blk(480, 48000.0, T);
+        engine->process(blk.ctx);
+    }
+    const Engine::DspLoad load = engine->takeDspLoad();
+    const float           row  = slot.runtime->load.take();
+    CHECK(row >= 0.3f && load.peak >= row);
+    CHECK(load.average > 0.0f && load.average <= load.peak);   // five blocks of a second's average: rising
+    CHECK(engine->takeDspLoad().peak == 0.0f && slot.runtime->load.take() == 0.0f);   // taken
+
+    engine->commit(nullptr);
+    Block blk(480, 48000.0, T);
+    engine->process(blk.ctx);
+    engine->collect();
+}
+
 int main() {
     testClick();
     testCountIn();
@@ -1126,6 +1312,8 @@ int main() {
     testSongSwitch();
     testBuses();
     testTransport();
+    testPanic();
+    testDspLoad();
     testGraphLifecycle();
     return test::finish("Engine");
 }

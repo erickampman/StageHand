@@ -329,6 +329,10 @@ void ClapPlugin::stopProcessing() noexcept {
     processing = false;
 }
 
+void ClapPlugin::reset() noexcept {
+    if (active) plugin->reset(plugin);
+}
+
 void ClapPlugin::fillTransport(const TimeInfo& time) noexcept {
     transport        = clap_event_transport_t{};
     transport.header = eventHeader(sizeof transport, 0, CLAP_EVENT_TRANSPORT);

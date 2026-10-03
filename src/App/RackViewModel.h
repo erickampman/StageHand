@@ -62,6 +62,7 @@ struct RowModel {
     bool          clipped     = false;       // latched until cleared
     // Its sends to the rig's buses A and B (docs/rig.md), after the fader; none = off.
     std::array<std::optional<float>, kRigBuses> sendDb;
+    int           loadPercent = 0;           // its plugin's share of the period, the worst of the last second
 
     bool operator==(const RowModel&) const = default;
 };
@@ -83,6 +84,7 @@ struct BusModel {
     std::uint32_t                                 firstOutput = 0;
     float                                         meterDb[2]    = {-60.0f, -60.0f};   // the return's, with ballistics
     float                                         peakHoldDb[2] = {-60.0f, -60.0f};
+    int                                           loadPercent   = 0;   // its effects', as a row's
 
     bool operator==(const BusModel&) const = default;
 };
@@ -108,7 +110,11 @@ struct SourceChoice {
 struct StatusModel {
     double        sampleRate    = 0.0;
     std::uint32_t bufferSize    = 0;
-    std::uint64_t xruns         = 0;
+    std::uint64_t xruns         = 0;   // since StageHand started, or the count was reset
+    int           xrunSecondsAgo = -1; // since the last one; -1: none counted
+    bool          xrunRecent    = false;   // in the last few seconds: shown red
+    int           dspPercent    = 0;   // DSP load (docs/panic.md): the average, about a second
+    int           dspPeakPercent = 0;  // and the worst block of the last second
     std::uint32_t outputs       = 2;   // for the output-pair choice
     std::uint64_t midiDropped   = 0;   // queue or buffer full, or no form a plugin takes
     MidiProtocol  preference    = MidiProtocol::Midi2;
@@ -150,6 +156,13 @@ struct TransportModel {
     bool                     clickConnected = false;   // to it, now
     std::vector<std::string> playbackDevices;          // as of refreshPlaybackDevices()
     std::string              mainDevice;               // where the main outputs go ("" if unknown)
+
+    // Panic (docs/panic.md): lit for a moment after one; its learned control,
+    // in the rig ("" when none), as the looper switch's is shown.
+    bool                     panicLit       = false;
+    std::string              panicControl;
+    bool                     panicConnected = true;
+    bool                     panicLearning  = false;
 
     bool operator==(const TransportModel&) const = default;
 };

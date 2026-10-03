@@ -96,6 +96,7 @@ private:
         std::vector<float>  audio;               // audioChannels * kMaxPluginBlockFrames
         std::vector<float*> channels;            // pointers into `audio`
         bool                fresh         = false;   // new in this graph: gets the held pedals (set at adoption)
+        std::int64_t        processNs     = 0;       // this block's time in process(), for its LoadMeter
     };
 
     // Audio-thread working state for one bus, sized at construction. The bus
@@ -115,6 +116,7 @@ private:
         Stage                      stages[BusConfig::kEffects];
         const float*               returnChannels[2] = {};   // the last stage's output (or the input), as stereo
         bool                       silent = false;            // an effect with no output: nothing to return
+        std::int64_t               processNs = 0;             // this block's time in its effects
     };
 
     std::vector<SlotConfig> configs;

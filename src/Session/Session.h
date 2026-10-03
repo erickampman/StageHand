@@ -286,6 +286,10 @@ public:
     void        setLooperSwitch(const std::optional<SequenceTrigger>& trigger);
     // Why it doesn't act, if its input isn't connected.
     const std::string& looperSwitchProblem() const noexcept { return looperSwitchIssue; }
+    // Panic's control (docs/panic.md), in the rig like the looper switch: none
+    // = off. Marks the rig modified.
+    void               setPanicControl(const std::optional<SequenceTrigger>& trigger);
+    const std::string& panicControlProblem() const noexcept { return panicIssue; }
     // Where the click plays: in the rig (Rig::clickOutput), the same in every
     // song. Marks the rig modified. A rack from before kept it itself: loading
     // one gives the rig its choice if the rig has none (and the rack drops it).
@@ -400,6 +404,8 @@ private:
     std::string                             currentLooperId;
     MidiSourceHandle                        looperSwitchSource = kInvalidMidiSource;
     std::string                             looperSwitchIssue;
+    MidiSourceHandle                        panicSource = kInvalidMidiSource;
+    std::string                             panicIssue;
     void                                    resolveLooper(LooperEntry& entry);
     LooperEntry*                            findLooper(const std::string& id) noexcept;
     std::vector<MidiSourceHandle>           setlistSources;   // setlistControls' inputs, resolved

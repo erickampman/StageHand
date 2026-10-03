@@ -171,6 +171,16 @@ public:
     };
     Panics panics() const noexcept;   // any thread
 
+    // --- DSP load (docs/panic.md, section 6) ---
+    // The share of each period process() takes (1 = all of it: an xrun). The
+    // average over about a second, and the worst block since the last take.
+    // Each row's and bus's own are in their SlotRuntime's `load`.
+    struct DspLoad {
+        float average = 0.0f;
+        float peak    = 0.0f;
+    };
+    DspLoad takeDspLoad() noexcept;   // main thread
+
     // --- MIDI learn (docs/sequences.md, section 4). Main thread.
     // Arm: the next note-on, or controller press (a value of 64 or more), from
     // any input is captured instead of reaching rows or triggers.
@@ -260,6 +270,7 @@ public:
 
     // How long a change of slot gain takes to arrive (docs/rack-view.md, section 3).
     static constexpr double kGainRampSeconds = 0.010;
+    static constexpr double kLoadAverageSeconds = 1.0;   // the DSP load's average: about this long
     // A muted slot is suspended (SlotRuntime::muted) once its output stays under
     // kQuietLevel (-100 dBFS) for kQuietSeconds, or after kMaxMutedSeconds
     // whatever it does (a drone, noise).
@@ -444,6 +455,11 @@ private:
     Nanoseconds                   lastPanicTime = 0;
     std::atomic<std::uint32_t>    panicCount{0};
     std::atomic<bool>             panicCut{false};
+
+    // DSP load: the running average (audio thread only) and what's published.
+    float                         loadAverage = 0.0f;
+    std::atomic<float>            publishedLoadAverage{0.0f};
+    LoadMeter                     loadPeak;
     SpscQueue<SequenceSet::SetlistHit, 16> setlistRequests;   // audio -> main
 
     // Song switches: plans main -> audio (pushed before their graph is

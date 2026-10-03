@@ -6,6 +6,7 @@
 #include <utility>
 #include <vector>
 
+#include "Core/Clock.h"
 #include "Core/Denormals.h"
 #include "Core/Ump.h"
 
@@ -276,6 +277,13 @@ Engine::Stats Engine::stats() const noexcept {
     return s;
 }
 
+Engine::Panics Engine::panics() const noexcept {
+    Panics p;
+    p.count = panicCount.load(std::memory_order_acquire);
+    p.cut   = panicCut.load(std::memory_order_relaxed);
+    return p;
+}
+
 // The rack's tempo and signature: now, or, while a switch is on its way, at
 // the switch (it's the new rack's). The audio thread counts a switch done
 // before it reads them, so neither a value nor the switch is ever missed.
@@ -322,6 +330,7 @@ void Engine::onMidi(MidiSourceHandle source, const TimedMidiMessage& msg) noexce
 // --- audio thread ----------------------------------------------------------------
 
 void Engine::process(const AudioCallbackContext& ctx) noexcept {
+    const Nanoseconds          started = nowNanoseconds();   // the DSP load: this block's time over its period
     const ScopedFlushDenormals flush;   // for the whole block, plugins included; restored after
     const bool switching = takeSwitch(ctx);
     if (!holdSwitch) adoptPendingGraph();
@@ -333,7 +342,7 @@ void Engine::process(const AudioCallbackContext& ctx) noexcept {
     advanceCountIn(ctx);
     recordLoops();
     generateSequences(ctx);
-    routeMidi(ctx.frameCount);
+    routeMidi(ctx);
     runSlots(ctx);
     renderClick(ctx);
 
@@ -364,6 +373,21 @@ void Engine::process(const AudioCallbackContext& ctx) noexcept {
     publishedBeat.store(now.beatPosition, std::memory_order_relaxed);
     publishedBarStart.store(now.barStartBeats, std::memory_order_relaxed);
     publishedBar.store(now.barNumber, std::memory_order_relaxed);
+
+    if (ctx.time.sampleRate > 0.0 && ctx.frameCount > 0) {
+        const double period = ctx.frameCount / ctx.time.sampleRate;   // seconds
+        const auto   share  = static_cast<float>(static_cast<double>(nowNanoseconds() - started) * 1e-9 / period);
+        loadAverage += static_cast<float>(std::min(1.0, period / kLoadAverageSeconds)) * (share - loadAverage);
+        publishedLoadAverage.store(loadAverage, std::memory_order_relaxed);
+        loadPeak.add(share);
+    }
+}
+
+Engine::DspLoad Engine::takeDspLoad() noexcept {
+    DspLoad load;
+    load.average = publishedLoadAverage.load(std::memory_order_relaxed);
+    load.peak    = loadPeak.take();
+    return load;
 }
 
 // Read this block's tempo and signature. A new signature starts at the current
@@ -732,9 +756,11 @@ void Engine::applySwitch(const AudioCallbackContext& ctx) noexcept {
 // triggers see it first; what they don't claim is staged for routeMidi().
 void Engine::takeMidi(const AudioCallbackContext& ctx) noexcept {
     stagedCount = 0;
+    panicFrame  = UINT32_MAX;
     const double        rate   = ctx.time.sampleRate;
     const std::uint32_t frames = ctx.frameCount;
-    if (rate <= 0.0 || frames == 0) return;
+    if (rate <= 0.0 || frames == 0) return;   // a Panic asked for waits for a real block
+    if (panicRequested.exchange(false, std::memory_order_relaxed)) panicFrame = 0;   // the button: the block's start
 
     const Nanoseconds blockStart  = ctx.blockStartTime;
     const Nanoseconds windowStart = blockStart - std::llround(frames * 1e9 / rate);
@@ -782,6 +808,11 @@ void Engine::takeMidi(const AudioCallbackContext& ctx) noexcept {
                     looperAction(ctx, looper, pressed ? LooperCommand::Press : LooperCommand::Release, entry.offset);
                 continue;
             }
+            // Then Panic's control (docs/panic.md): one Panic a block, at the first press.
+            if (currentSequences->matchPanic(entry.item.source, m, pressed)) {
+                if (pressed && panicFrame == UINT32_MAX) panicFrame = entry.offset;
+                continue;
+            }
             SequenceSet::TriggerHit hits[16];
             bool                    matched = false;
             const std::size_t       fired =
@@ -812,9 +843,19 @@ void Engine::takeMidi(const AudioCallbackContext& ctx) noexcept {
 }
 
 // Route the staged input and the sequences' events, merged in offset order
-// (the input's offsets never decrease: the queue is in capture order).
-void Engine::routeMidi(std::uint32_t frames) noexcept {
-    if (currentGraph == nullptr) return;
+// (the input's offsets never decrease: the queue is in capture order). A Panic
+// goes in before the first of them at or after its frame.
+void Engine::routeMidi(const AudioCallbackContext& ctx) noexcept {
+    bool silenced = panicFrame == UINT32_MAX;
+    auto silenceFrom = [&](std::uint32_t offset) {
+        if (silenced || offset < panicFrame) return;
+        silenced = true;
+        silence(ctx, panicFrame);
+    };
+    if (currentGraph == nullptr) {
+        silenceFrom(panicFrame);   // nothing to send, but the tables still clear
+        return;
+    }
     for (EngineGraph::SlotState& state : currentGraph->states) state.eventCount = 0;
     applyMutes();
     sendHeldPedals();
@@ -824,6 +865,7 @@ void Engine::routeMidi(std::uint32_t frames) noexcept {
         for (; nextSequenceEvent < sequenceEventCount && sequenceEvents[nextSequenceEvent].offset <= offset;
              ++nextSequenceEvent) {
             const SequenceEvent& e = sequenceEvents[nextSequenceEvent];
+            silenceFrom(e.offset);
             QueuedMidi           item;
             item.source          = e.source;
             item.message.message = e.message;
@@ -832,9 +874,70 @@ void Engine::routeMidi(std::uint32_t frames) noexcept {
     };
     for (std::size_t i = 0; i < stagedCount; ++i) {
         routeSequencesUpTo(staged[i].offset);
+        silenceFrom(staged[i].offset);
         route(staged[i].item, staged[i].offset);
     }
-    routeSequencesUpTo(frames);
+    routeSequencesUpTo(ctx.frameCount);
+    silenceFrom(panicFrame);   // after everything before it, if nothing came after
+}
+
+// A Panic at `offset` (docs/panic.md): a note-off for every note sounding, to
+// the plugin that has it at the note it got; every row's pedals up and All
+// Notes Off on all 16 channels; the held tables, the sequences' and loopers'
+// sounding notes and the auditions forgotten. Within kPanicCutSeconds of the
+// last one, it also cuts the sound: All Sound Off first, and every row and bus
+// effect reset.
+void Engine::silence(const AudioCallbackContext& ctx, std::uint32_t offset) noexcept {
+    const Nanoseconds now =
+        ctx.blockStartTime + (ctx.time.sampleRate > 0.0 ? std::llround(offset * 1e9 / ctx.time.sampleRate) : 0);
+    const bool cut = panickedOnce && now - lastPanicTime < std::llround(kPanicCutSeconds * 1e9);
+    panickedOnce   = true;
+    lastPanicTime  = now;
+
+    if (currentGraph != nullptr) {
+        for (const HeldNote& held : heldNotes) {
+            if (!held.used) continue;
+            MidiMessage off;   // MIDI 2.0: deliver() translates it for the slot's port
+            off.words[0]  = 0x40000000u | (std::uint32_t{held.group} << 24) | ((0x80u | held.channel) << 16) |
+                            (std::uint32_t{held.note} << 8);
+            off.wordCount = 2;
+            for (std::uint8_t k = 0; k < held.count; ++k)
+                for (std::size_t i = 0; i < currentGraph->configs.size(); ++i)
+                    if (currentGraph->configs[i].plugin.get() == held.plugins[k] && currentGraph->states[i].dialects != 0)
+                        deliver(i, off, nullptr, 0, offset, held.deliveredNotes[k], nullptr);
+        }
+        static constexpr std::uint8_t kPedalsUp[] = {64, 66, 67, 123};
+        for (std::size_t i = 0; i < currentGraph->configs.size(); ++i) {
+            if (!currentGraph->configs[i].plugin || currentGraph->states[i].dialects == 0) continue;
+            for (std::uint32_t channel = 0; channel < 16; ++channel) {
+                auto send = [&](std::uint8_t controller) {
+                    MidiMessage cc;   // MIDI 1.0, group 1; upconverted for a MIDI-2.0-only port
+                    cc.words[0]  = 0x20000000u | ((0xB0u | channel) << 16) | (std::uint32_t{controller} << 8);
+                    cc.wordCount = 1;
+                    MidiMessage         upconverted[ump::kMaxTranslatedMessages];
+                    ump::UpconvertState plain;   // a controller needs no stream state
+                    const std::size_t   n = ump::upconvert(cc, plain, upconverted, ump::kMaxTranslatedMessages);
+                    deliver(i, cc, upconverted, n, offset, -1, nullptr);
+                };
+                if (cut) send(120);   // All Sound Off
+                for (const std::uint8_t controller : kPedalsUp) send(controller);
+            }
+        }
+        if (cut) {
+            for (const SlotConfig& config : currentGraph->configs)
+                if (config.plugin) config.plugin->reset();
+            for (const BusConfig& bus : currentGraph->busConfigs)
+                for (const auto& effect : bus.effects)
+                    if (effect) effect->reset();
+        }
+    }
+    for (HeldNote& held : heldNotes) held.used = false;
+    for (HeldPedal& pedal : heldPedals) pedal.used = false;
+    for (AuditionVoice& voice : auditionVoices) voice.used = false;
+    if (currentSequences != nullptr) currentSequences->forgetSounding();
+
+    panicCut.store(cut, std::memory_order_relaxed);
+    panicCount.fetch_add(1, std::memory_order_release);
 }
 
 // A slot newly muted gets note-offs (at the block's start) for every note it
@@ -1060,7 +1163,8 @@ void Engine::runSlots(const AudioCallbackContext& ctx) noexcept {
     if (currentGraph != nullptr) {
         for (std::size_t i = 0; i < currentGraph->configs.size(); ++i) {
             EngineGraph::SlotState& state = currentGraph->states[i];
-            state.cursor = 0;
+            state.cursor    = 0;
+            state.processNs = 0;
             if (state.eventCount != 0)
                 currentGraph->configs[i].runtime->midiEvents.fetch_add(state.eventCount, std::memory_order_relaxed);
         }
@@ -1093,7 +1197,9 @@ void Engine::runSlots(const AudioCallbackContext& ctx) noexcept {
                 pc.time                 = timeAt(ctx, chunkStart);
                 pc.audioOut             = AudioBuffer{state.channels.data(), state.audioChannels, chunk};
                 pc.eventsIn             = EventBlock{state.events.data() + first, state.cursor - first};
+                const Nanoseconds start = nowNanoseconds();
                 config.plugin->process(pc);
+                state.processNs += nowNanoseconds() - start;
                 if (runtime.suspended) {   // run only for its events (a controller, a note-off), and unheard
                     config.plugin->stopProcessing();
                     continue;
@@ -1160,6 +1266,17 @@ void Engine::runSlots(const AudioCallbackContext& ctx) noexcept {
                 }
             }
             runBuses(ctx, chunkStart, chunk);
+        }
+
+        // Each row's and bus's share of the period.
+        const double toShare = ctx.frameCount == 0 ? 0.0 : ctx.time.sampleRate / (ctx.frameCount * 1e9);
+        for (std::size_t i = 0; i < currentGraph->configs.size(); ++i)
+            currentGraph->configs[i].runtime->load.add(static_cast<float>(currentGraph->states[i].processNs * toShare));
+        for (std::size_t b = 0; b < currentGraph->busStates.size(); ++b) {
+            EngineGraph::BusState& bus = currentGraph->busStates[b];
+            if (const auto& runtime = currentGraph->busConfigs[b].runtime)
+                runtime->load.add(static_cast<float>(bus.processNs * toShare));
+            bus.processNs = 0;
         }
     }
 
@@ -1261,6 +1378,7 @@ void Engine::runBuses(const AudioCallbackContext& ctx, std::uint32_t chunkStart,
     for (std::size_t b = 0; b < currentGraph->busStates.size(); ++b) {
         const BusConfig&       config = currentGraph->busConfigs[b];
         EngineGraph::BusState& state  = currentGraph->busStates[b];
+        const Nanoseconds start = nowNanoseconds();
         for (std::size_t e = 0; e < BusConfig::kEffects; ++e) {
             if (!config.effects[e]) continue;
             EngineGraph::BusState::Stage& stage = state.stages[e];
@@ -1271,6 +1389,7 @@ void Engine::runBuses(const AudioCallbackContext& ctx, std::uint32_t chunkStart,
             pc.audioOut   = AudioBuffer{stage.out.data(), static_cast<std::uint32_t>(stage.out.size()), chunk};
             config.effects[e]->process(pc);
         }
+        state.processNs += nowNanoseconds() - start;
 
         SlotRuntime& runtime = *config.runtime;
         float        level   = 1.0f;

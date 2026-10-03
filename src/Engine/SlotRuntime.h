@@ -43,6 +43,20 @@ private:
     std::atomic<bool>  clipped{false};
 };
 
+// A share of the audio period that something took to compute (docs/panic.md,
+// DSP load): 1 = all of it. The worst block since the main thread last took
+// it; approximate in the same way as LevelMeter.
+class LoadMeter {
+public:
+    void  add(float share) noexcept {   // audio thread
+        if (share > peak.load(std::memory_order_relaxed)) peak.store(share, std::memory_order_relaxed);
+    }
+    float take() noexcept { return peak.exchange(0.0f, std::memory_order_relaxed); }   // main thread
+
+private:
+    std::atomic<float> peak{0.0f};
+};
+
 // A level the audio thread ramps to whenever its target changes, over
 // Engine::kGainRampSeconds, so a change never clicks. Audio thread only.
 struct GainRamp {
@@ -83,6 +97,7 @@ struct SlotRuntime {
 
     LevelMeter meter;                            // post-gain; audio writes, main takes
     std::atomic<std::uint32_t> midiEvents{0};    // events delivered; audio adds, main compares
+    LoadMeter  load;                             // its plugin's (a bus's: its effects') share of each period
 
     // --- audio thread only: the ramps ---
     GainRamp gain;

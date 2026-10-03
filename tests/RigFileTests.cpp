@@ -62,6 +62,11 @@ void testRoundTrip(const fs::path& dir) {
     looper.number  = 82;
     looper.channel = 1;
     rig.looperSwitch          = looper;
+    SequenceTrigger panic;    // Panic's control (docs/panic.md): a note from any input
+    panic.control = SequenceTrigger::Control::Note;
+    panic.number  = 21;
+    panic.channel = 15;
+    rig.panic                 = panic;
     rig.clickOutput           = "Scarlett 2i2 USB Analog Stereo";   // where the click plays, in every song
     const std::string path    = (dir / "Stage.rig").string();
     CHECK(saveRig(path, rig).ok);
@@ -88,6 +93,7 @@ void testMissingStateAndDefaults(const fs::path& dir) {
     CHECK(rig.buses[0].effects[0] && rig.buses[0].effects[0]->plugin.id == "hall" &&
           rig.buses[0].effects[0]->state.empty());
     CHECK(!rig.buses[0].effects[1] && !rig.buses[1].effects[0] && rig.buses[1].returnDb == 0.0f);
+    CHECK(!rig.looperSwitch && !rig.panic);   // none: off
 }
 
 void testFailures(const fs::path& dir) {

@@ -53,18 +53,21 @@ RackFileResult loadRig(const std::string& bundlePath, Rig& rig) {
         loaded.name     = doc.value("name", stem);
         loaded.masterDb = doc.value("masterDb", 0.0f);
         loaded.clickOutput = doc.value("clickOutput", std::string{});
-        if (doc.contains("looperSwitch")) {   // {"source": ..., "note" or "controller": n, "channel": 1, "group": 1}
-            const Json&     j = doc.at("looperSwitch");
+        // A control: {"source": ..., "note" or "controller": n, "channel": 1, "group": 1}
+        auto control = [&](const char* key) {
+            const Json&     j = doc.at(key);
             SequenceTrigger t;
             if (!j.is_object() || j.contains("note") == j.contains("controller"))
-                fail("looperSwitch has a \"note\" or a \"controller\"");
+                fail(std::string(key) + " has a \"note\" or a \"controller\"");
             t.source  = parseSource(j.value("source", std::string("all")));
             t.control = j.contains("note") ? SequenceTrigger::Control::Note : SequenceTrigger::Control::Controller;
             t.number  = static_cast<std::uint8_t>(std::clamp(j.at(j.contains("note") ? "note" : "controller").get<int>(), 0, 127));
             t.channel = static_cast<std::uint8_t>(std::clamp(j.value("channel", 1), 1, 16) - 1);
             t.group   = static_cast<std::uint8_t>(std::clamp(j.value("group", 1), 1, 16) - 1);
-            loaded.looperSwitch = t;
-        }
+            return t;
+        };
+        if (doc.contains("looperSwitch")) loaded.looperSwitch = control("looperSwitch");
+        if (doc.contains("panic")) loaded.panic = control("panic");
         if (doc.contains("buses")) {
             const Json& buses = doc.at("buses");
             if (!buses.is_array() || buses.size() > kRigBuses) fail("\"buses\" must be a list of up to 2 buses");
@@ -122,14 +125,16 @@ RackFileResult saveRig(const std::string& bundlePath, const Rig& rig) {
         doc["name"]     = rig.name;
         doc["masterDb"] = rig.masterDb;
         if (!rig.clickOutput.empty()) doc["clickOutput"] = rig.clickOutput;
-        if (const auto& t = rig.looperSwitch) {
+        auto control = [&](const char* key, const SequenceTrigger& t) {
             Json j;
-            j["source"] = sourceText(t->source);
-            j[t->control == SequenceTrigger::Control::Note ? "note" : "controller"] = t->number;
-            j["channel"] = t->channel + 1;
-            j["group"]   = t->group + 1;
-            doc["looperSwitch"] = j;
-        }
+            j["source"] = sourceText(t.source);
+            j[t.control == SequenceTrigger::Control::Note ? "note" : "controller"] = t.number;
+            j["channel"] = t.channel + 1;
+            j["group"]   = t.group + 1;
+            doc[key]     = j;
+        };
+        if (rig.looperSwitch) control("looperSwitch", *rig.looperSwitch);
+        if (rig.panic) control("panic", *rig.panic);
         Json buses      = Json::array();
         for (std::size_t b = 0; b < kRigBuses; ++b) {
             const RigBus& bus = rig.buses[b];

@@ -62,6 +62,11 @@ public:
     // may deactivate it. No-op if not processing.
     virtual void stopProcessing() noexcept = 0;
 
+    // Clear the plugin's audio memory (a reverb's tail, a delay's buffer) and
+    // sounding voices: a Panic's second press (docs/panic.md). Audio thread,
+    // while active; CLAP's reset(). No-op by default.
+    virtual void reset() noexcept {}
+
     // --- parameters ---
     // Current plain value of a parameter (main thread, for UI). NOTE: to change a
     // parameter audibly, the engine sends a ParamValue Event into process();

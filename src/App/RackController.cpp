@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 
@@ -19,6 +20,7 @@ namespace {
 const std::string kTransportLearn = "\x01transport";
 const std::string kSetlistLearn   = "\x01setlist";
 const std::string kLooperLearn    = "\x01looper";
+const std::string kPanicLearn     = "\x01panic";
 
 SourceProtocol toSourceProtocol(MidiProtocol p) {
     return p == MidiProtocol::Midi2 ? SourceProtocol::Midi2 : SourceProtocol::Midi1;
@@ -182,6 +184,20 @@ void RackController::tick(double now) {
     transport.clickOutput     = session.clickOutput();
     transport.clickConnected  = !clickDevice.empty();
     transport.playbackDevices = deviceNames;
+    if (const Engine::Panics panics = engine.panics(); panics.count != panicsSeen) {   // the button or the control
+        panicsSeen = panics.count;
+        panicAt    = now;
+        notice(panics.cut ? "Panic: sound cut" : "Panic: all notes off");
+    }
+    transport.panicLit = panicAt >= 0.0 && now - panicAt < kPanicLitSeconds;
+    if (const auto& control = session.rig().saved.panic) {
+        const std::string text = triggerText(*control);
+        transport.panicControl = text.substr(text.find(": ") + 2);   // without the action
+    } else {
+        transport.panicControl.clear();
+    }
+    transport.panicConnected = session.panicControlProblem().empty();
+    transport.panicLearning  = learningId == kPanicLearn;
     model.rows.clear();
     for (const Session::Slot& slot : session.slots()) model.rows.push_back(rowFor(slot, now, dt));
     // Forget rows that are gone.
@@ -197,9 +213,21 @@ void RackController::tick(double now) {
         const AudioStatus audio = config.audioStatus();
         status.sampleRate       = audio.sampleRate;
         status.bufferSize       = audio.bufferSize;
-        status.xruns            = audio.xruns;
         status.outputs          = audio.outputs;
+        if (audio.xruns != xrunsSeen) {   // a new one (or more): when, and where, in the log
+            if (audio.xruns > xrunsSeen) logXrun();
+            xrunsSeen = audio.xruns;
+            xrunAt    = now;
+        }
+        xrunsBase    = std::min(xrunsBase, audio.xruns);   // a backend that started again counts from 0
+        status.xruns = audio.xruns - xrunsBase;
     }
+    status.xrunSecondsAgo = status.xruns != 0 && xrunAt >= 0.0 ? static_cast<int>(now - xrunAt) : -1;
+    status.xrunRecent     = status.xrunSecondsAgo >= 0 && now - xrunAt < kXrunRecentSeconds;
+    const Engine::DspLoad load = engine.takeDspLoad();
+    dspLoad.update(load.peak, now);
+    status.dspPercent     = static_cast<int>(std::lround(load.average * 100.0f));
+    status.dspPeakPercent = dspLoad.percent();
     const Engine::Stats stats = engine.stats();
     status.midiDropped  = stats.midiQueueFull + stats.slotEventsFull + stats.unsupportedDialect;
     status.preference   = config.protocolPreference;
@@ -277,6 +305,8 @@ RowModel RackController::rowFor(const Session::Slot& slot, double now, double dt
         const LevelMeter::Reading reading = slot.runtime->meter.take();
         cache.meter.update(reading, now, dt);
         row.clipped = reading.clipped;
+        cache.load.update(slot.runtime->load.take(), now);
+        row.loadPercent = cache.load.percent();
 
         const std::uint32_t events = slot.runtime->midiEvents.load(std::memory_order_relaxed);
         if (events != cache.lastMidiEvents) {
@@ -537,6 +567,19 @@ void RackController::removeLooperSwitch() {
     session.setLooperSwitch(std::nullopt);
 }
 
+void RackController::panic() {
+    engine.panic();
+}
+
+void RackController::learnPanic() {
+    learningId = kPanicLearn;
+    engine.armLearn();
+}
+
+void RackController::removePanic() {
+    session.setPanicControl(std::nullopt);
+}
+
 std::vector<std::string> RackController::takeNotices() {
     return std::exchange(notices, {});
 }
@@ -689,6 +732,33 @@ void RackController::clearClip(const std::string& id) {
         slot->runtime->meter.clearClip();
 }
 
+void RackController::resetXruns() {
+    xrunsBase = xrunsSeen;
+    xrunAt    = -1.0;
+}
+
+// "xrun: song 4 (So what), bar 17" on stderr, so a gig's xruns can be found in the log.
+void RackController::logXrun() const {
+    const SetlistModel& set  = model.setlist;
+    std::string         song = set.open && set.current >= 0 && set.current < static_cast<int>(set.songs.size())
+                                   ? "song " + std::to_string(set.current + 1) + " (" +
+                                         set.songs[static_cast<std::size_t>(set.current)].name + ")"
+                                   : session.rackName().empty() ? std::string("untitled rack")
+                                                                : session.rackName();
+    const Engine::Transport t = engine.transport();
+    std::fprintf(stderr, "xrun: %s, %s\n", song.c_str(),
+                 t.running ? ("bar " + std::to_string(t.barNumber + 1)).c_str() : "stopped");
+}
+
+void RackController::LoadWindow::update(float peak, double now) noexcept {
+    pending = std::max(pending, peak);
+    if (since < 0.0) since = now;
+    if (now - since < 1.0) return;
+    shown   = pending;
+    pending = 0.0f;
+    since   = now;
+}
+
 void RackController::clearOutputClip() {
     engine.outputMeter().clearClip();
 }
@@ -774,6 +844,8 @@ void RackController::buildRig(double now, double dt) {
         }
         if (const std::shared_ptr<SlotRuntime>& runtime = rig.returns[b]) {
             busMeters[b].update(runtime->meter.take(), now, dt);
+            busLoads[b].update(runtime->load.take(), now);
+            bus.loadPercent = busLoads[b].percent();
             for (std::size_t c = 0; c < LevelMeter::kChannels; ++c) {
                 bus.meterDb[c]    = busMeters[b].displayDb[c];
                 bus.peakHoldDb[c] = busMeters[b].holdDb[c];
@@ -1153,10 +1225,12 @@ void RackController::finishLearn(const Engine::Learned& learned) {
     const bool        transport = id == kTransportLearn;
     const bool        forSet    = id == kSetlistLearn;
     const bool        forLooper = id == kLooperLearn;
-    const Session::SequenceEntry* entry = transport || forSet || forLooper ? nullptr : session.sequence(id);
-    if (forSet ? !setlistOpen : !transport && !forLooper && entry == nullptr) return;   // closed or removed meanwhile
+    const bool        forPanic  = id == kPanicLearn;
+    const Session::SequenceEntry* entry = transport || forSet || forLooper || forPanic ? nullptr : session.sequence(id);
+    if (forSet ? !setlistOpen : !transport && !forLooper && !forPanic && entry == nullptr) return;   // closed or removed meanwhile
     const std::string who = forSet      ? std::string("Setlist")
                             : forLooper ? std::string("Looper switch")
+                            : forPanic  ? std::string("Panic")
                             : transport ? std::string("Transport")
                                         : entry->sequence.name;
     const auto input = std::find_if(session.openInputs().begin(), session.openInputs().end(),
@@ -1185,14 +1259,17 @@ void RackController::finishLearn(const Engine::Learned& learned) {
             notice(warning);
         return;
     }
-    if (forLooper) {   // in the rig: the performer's, the same in every song
+    if (forLooper || forPanic) {   // in the rig: the performer's, the same in every song
         SequenceTrigger t;
         t.source  = input->ref;
         t.control = ump::isNoteOn(learned.message) ? SequenceTrigger::Control::Note : SequenceTrigger::Control::Controller;
         t.group   = ump::group(learned.message);
         t.channel = ump::channel(learned.message);
         t.number  = static_cast<std::uint8_t>((learned.message.words[0] >> 8) & 0x7F);
-        session.setLooperSwitch(t);
+        if (forPanic)
+            session.setPanicControl(t);
+        else
+            session.setLooperSwitch(t);
         const std::string text = triggerText(t);
         notice(who + ": " + text.substr(text.find(": ") + 2));
         return;

@@ -1760,6 +1760,125 @@ void testHotplug() {
     CHECK(controller.takeNotices().empty());
 }
 
+// Panic (docs/panic.md): the button, lit for a moment, with a notice; its
+// control learned into the rig (a press is a Panic, the second within 2 s
+// cuts the sound), saved, and removed.
+void testPanic() {
+    namespace fs = std::filesystem;
+    const fs::path dir = scratchDir("stagehand-panic-test");
+    fs::remove_all(dir);
+    Rig rig;
+    rig.session->addOpenSource(MidiSourceRef{MidiSourceRef::Kind::Virtual, "MIDI 2.0 In"}, 7);
+    Rack rack;
+    rack.name  = "Song";
+    rack.slots = {slot("keys", "synth", "/clap/Synth.clap")};
+    Session::LoadReport report;
+    rig.session->load(rack, 48000.0, report);
+    RackController::Config config = rig.config((dir / "Song.rack").string());
+    config.defaultRigPath         = (dir / "Default.rig").string();
+    RackController       controller(*rig.session, *rig.engine, rig.midi, rig.factory, config);
+    const RackViewModel& view = controller.view();
+    double               now  = 0.0;
+    auto tick = [&] { controller.tick(now += 0.05); };
+    auto send = [&](std::uint32_t word) {
+        TimedMidiMessage m;
+        m.captureTime       = 1'000'000'000 - 1'000'000;
+        m.message.words[0]  = word;
+        m.message.wordCount = 1;
+        rig.engine->onMidi(7, m);
+        runBlock(*rig.engine);
+    };
+    tick();
+    controller.takeNotices();
+
+    controller.panic();
+    runBlock(*rig.engine);
+    tick();
+    CHECK(view.transport.panicLit && controller.takeNotices() == std::vector<std::string>{"Panic: all notes off"});
+    now += 1.0;
+    tick();
+    CHECK(!view.transport.panicLit && controller.takeNotices().empty());
+
+    // Learned: a controller press, kept in the rig.
+    CHECK(view.transport.panicControl.empty());
+    controller.learnPanic();
+    tick();
+    CHECK(view.transport.panicLearning);
+    send(0x20B0537Fu);   // CC 83 pressed
+    tick();
+    send(0x20B05300u);
+    CHECK(!view.transport.panicLearning && view.transport.panicControl == "From other apps (MIDI 2.0), CC 83, ch 1");
+    CHECK(view.transport.panicConnected && rig.session->rigModified());
+    controller.takeNotices();
+    send(0x20B0537Fu);   // a press: the second Panic, at once (the blocks' clock stands still), cuts the sound
+    send(0x20B05300u);
+    tick();
+    CHECK(view.transport.panicLit && controller.takeNotices() == std::vector<std::string>{"Panic: sound cut"});
+    CHECK(rig.engine->panics().count == 2);
+
+    CHECK(controller.save());
+    stagehand::Rig savedRig;
+    CHECK(loadRig(config.defaultRigPath, savedRig).ok && savedRig.panic && savedRig.panic->number == 83 &&
+          savedRig.panic->control == SequenceTrigger::Control::Controller);
+    controller.removePanic();
+    tick();
+    CHECK(view.transport.panicControl.empty() && rig.session->rigModified());
+    send(0x20B0537Fu);   // no longer Panic's
+    tick();
+    CHECK(rig.engine->panics().count == 2);
+
+    runBlock(*rig.engine);
+    rig.engine->collect();
+    fs::remove_all(dir);
+}
+
+// The DSP load and xruns (docs/panic.md, sections 6 to 9): the average and
+// the worst block of the last second, each row's own share; the xrun count,
+// how long ago the last was, red for a few seconds, and reset on request.
+void testDspAndXruns() {
+    Rig rig;
+    std::uint64_t xruns = 0;
+    Rack rack;
+    rack.slots = {slot("keys", "synth", "/clap/Synth.clap")};
+    Session::LoadReport report;
+    rig.session->load(rack, 48000.0, report);
+    RackController::Config config = rig.config();
+    config.audioStatus = [&xruns] { return RackController::AudioStatus{48000.0, 64, xruns, 2}; };
+    RackController       controller(*rig.session, *rig.engine, rig.midi, rig.factory, config);
+    const RackViewModel& view = controller.view();
+    double               now  = 0.0;
+    auto tick = [&](double seconds) { controller.tick(now += seconds); };
+    tick(0.05);
+    CHECK(view.status.xruns == 0 && view.status.xrunSecondsAgo == -1 && !view.status.xrunRecent);
+
+    // A plugin taking 1 ms of a 64-frame period (1.33 ms): about 75%, shown after a second.
+    rig.factory.created.at("synth")->busy = std::chrono::milliseconds(1);
+    for (int i = 0; i < 4; ++i) runBlock(*rig.engine);
+    tick(0.05);
+    CHECK(view.rows[0].loadPercent == 0 && view.status.dspPeakPercent == 0);
+    for (int i = 0; i < 100; ++i) runBlock(*rig.engine);   // 0.13 s: the second's average climbs to about 10%
+    tick(1.0);
+    CHECK(view.rows[0].loadPercent >= 70 && view.status.dspPeakPercent >= view.rows[0].loadPercent);
+    CHECK(view.status.dspPercent > 0);
+    rig.factory.created.at("synth")->busy = std::chrono::nanoseconds(0);
+
+    // Two xruns: counted, red for 5 s, then how long ago.
+    xruns = 2;
+    tick(0.05);
+    CHECK(view.status.xruns == 2 && view.status.xrunSecondsAgo == 0 && view.status.xrunRecent);
+    tick(6.0);
+    CHECK(view.status.xruns == 2 && view.status.xrunSecondsAgo == 6 && !view.status.xrunRecent);
+    controller.resetXruns();
+    tick(0.05);
+    CHECK(view.status.xruns == 0 && view.status.xrunSecondsAgo == -1);
+    xruns = 3;
+    tick(0.05);
+    CHECK(view.status.xruns == 1 && view.status.xrunRecent);
+
+    runBlock(*rig.engine);
+    rig.engine->collect();
+}
+
 } // namespace
 
 int main() {
@@ -1788,5 +1907,7 @@ int main() {
     testLoopNumbers();
     testCheckSetlist();
     testHotplug();
+    testPanic();
+    testDspAndXruns();
     return test::finish("RackController");
 }

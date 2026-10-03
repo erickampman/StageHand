@@ -4,6 +4,7 @@
 // Shared by the engine and session tests.
 
 #include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -61,6 +62,8 @@ public:
         call.time     = ctx.time;
         call.events.assign(ctx.eventsIn.events, ctx.eventsIn.events + ctx.eventsIn.count);
         calls.push_back(call);   // allocates: fine in a test
+        if (busy.count() > 0)    // a heavy plugin: this long a call, at least
+            for (const auto end = std::chrono::steady_clock::now() + busy; std::chrono::steady_clock::now() < end;) {}
         for (std::uint32_t c = 0; c < ctx.audioOut.channelCount; ++c)
             for (std::uint32_t f = 0; f < ctx.frameCount; ++f) ctx.audioOut.channels[c][f] = level;
     }
@@ -68,11 +71,14 @@ public:
         if (processing) ++stops;
         processing = false;
     }
+    void reset() noexcept override { ++resets; }
 
     PluginDescriptor       desc;
     std::vector<Call>      calls;
     std::vector<std::byte> state;
     int                    stops             = 0;
+    int                    resets            = 0;
+    std::chrono::nanoseconds busy{0};                // each process() call takes this long
     bool                   processing        = false;
     bool                   active            = false;
     bool                   loadedWhileActive = false;
@@ -123,11 +129,13 @@ public:
         if (processing) ++stops;
         processing = false;
     }
+    void reset() noexcept override { ++resets; }
 
     PluginDescriptor desc;
     float            factor;
     int              processed         = 0;
     int              stops             = 0;
+    int              resets            = 0;
     bool             processing        = false;
     std::uint32_t    lastInputChannels = 0;
 

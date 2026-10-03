@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -127,6 +128,8 @@ public:
     void tapTempo(double nowSeconds);
     void clearClip(const std::string& id);
     void clearOutputClip();
+    // The xrun count shown starts again from 0 (after a soundcheck, say).
+    void resetXruns();
 
     // --- the rig (docs/rig.md): its edits mark it modified (Ctrl-S saves it
     // with the rack). Without a rig, they do nothing.
@@ -234,6 +237,12 @@ public:
     // controller press), saved in the rig. A momentary switch, for hold.
     void        learnLooperSwitch();
     void        removeLooperSwitch();
+    // Panic (docs/panic.md): all notes off and pedals up in every row, at the
+    // next block; a second within 2 s also cuts the sound. Its control is
+    // learned like the looper switch's and kept in the rig.
+    void        panic();
+    void        learnPanic();
+    void        removePanic();
     // Leading and trailing spaces go; an empty name is refused (with a notice);
     // at most kMaxNameBytes. The id stays: rows keep playing it.
     void renameSequence(const std::string& id, const std::string& name);
@@ -373,6 +382,13 @@ private:
         double holdUntil[LevelMeter::kChannels] = {};
         void   update(const LevelMeter::Reading& reading, double now, double dt) noexcept;
     };
+    // A DSP load shown steadily: the worst of a second's takes, for the next second.
+    struct LoadWindow {
+        float  shown = 0.0f, pending = 0.0f;
+        double since = -1.0;
+        void   update(float peak, double now) noexcept;
+        int    percent() const noexcept { return static_cast<int>(std::lround(shown * 100.0f)); }
+    };
     // Per-row state kept between ticks, by slot id. Plugin facts are queried once
     // per plugin, not every tick.
     struct RowCache {
@@ -382,6 +398,7 @@ private:
         Ballistics          meter;
         std::uint32_t       lastMidiEvents  = 0;
         double              midiActiveUntil = 0.0;
+        LoadWindow          load;
     };
 
     static constexpr float  kFloorDb        = -60.0f;   // the meter's bottom
@@ -450,6 +467,7 @@ private:
     void           buildDock(double now);
     void           buildRig(double now, double dt);   // model.rig
     void           finishLearn(const Engine::Learned& learned);
+    void           logXrun() const;   // a new xrun, with the song and the bar, on stderr
     // The setlist's triggers that fired since the last tick, all at once
     // (pressing Next three times goes three songs on), then one switch.
     void           takeSetlistRequests();
@@ -477,6 +495,12 @@ private:
     void                                                  takeKeptLoops();
     std::array<Ballistics, kRigBuses>                     busMeters;
     Ballistics                                            master;
+    std::array<LoadWindow, kRigBuses>                     busLoads;
+    LoadWindow                                            dspLoad;
+    std::uint64_t                                         xrunsBase = 0;     // the backend's count at the last reset
+    std::uint64_t                                         xrunsSeen = 0;     // the backend's count, as of the last tick
+    double                                                xrunAt    = -1.0;  // when the last was seen (tick time)
+    static constexpr double                               kXrunRecentSeconds = 5.0;
     std::vector<MidiSourceInfo>                           enumerated;
     std::uint64_t                                         midiChanges = 0;   // MidiInput::changes() as last handled
     std::vector<PluginDescriptor>                         available;
@@ -493,6 +517,9 @@ private:
     std::vector<std::string>                              deviceNames;     // playback devices, for the menu
     bool                                                  scanned  = false;
     double                                                lastTick = -1.0;
+    std::uint32_t                                         panicsSeen = 0;     // engine.panics().count, as of the last tick
+    double                                                panicAt    = -1.0;  // when the last was seen (tick time)
+    static constexpr double                               kPanicLitSeconds = 0.5;
     std::vector<std::string>                              notices;
 
     // The open setlist. `song` is the song playing when `onSong`; otherwise

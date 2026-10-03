@@ -204,6 +204,10 @@ when they fit, the strips stay above the dock.
 trigger is written), since it's the performer's footswitch, the same in every
 song. It drives the current looper.
 
+**Added 2026-10-03 (docs/panic.md):** the rig holds Panic's control too
+(`"panic"` in rig.json, written as `"looperSwitch"` is), the performer's, the
+same in every song. A press is a Panic.
+
 **Added 2026-10-03 (the click's output):** the rig holds where the click
 plays (`"clickOutput"` in rig.json: a playback device by name; absent: none
 chosen), since it's the stage's headphones, the same in every song. Each rack

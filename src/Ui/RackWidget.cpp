@@ -33,6 +33,7 @@ constexpr float kPluginW    = 270.0f;
 constexpr float kMinOutputW = 330.0f;
 constexpr float kRemoveSize = 26.0f;   // the red X at each row's right end
 constexpr float kMidiW      = 34.0f;
+constexpr float kPanicW     = 58.0f;
 constexpr float kStripeW    = 5.0f;    // a row's colour, at its left edge
 // The beat display (docs/perform.md): a pulse is lit (and the edge flashes)
 // for this long, fading; and drawn this far ahead, for the time a frame takes
@@ -128,7 +129,8 @@ void RackWidget::showNotice(const std::string& text, double now) {
 // the text caret (1 s).
 std::uint32_t RackWidget::timedLook(double now) const {
     const RackViewModel& v = controller.view();
-    bool blinking          = v.transport.learning || v.setlist.learning || v.looperSwitchLearning;
+    bool blinking          = v.transport.learning || v.setlist.learning || v.looperSwitchLearning ||
+                             v.transport.panicLearning;
     for (const LooperRowModel& looper : v.loopers) blinking = blinking || looper.waiting;
     for (const SequenceRowModel& seq : v.sequences)
         blinking = blinking || seq.learning || seq.state == SequenceState::Starting ||
@@ -386,6 +388,13 @@ void RackWidget::drawPerform() {
     fill(b.state == BeatNow::State::Stopped ? kText : kBarBg);
     NanoVG::fill();
     region(tx, y, tw, th, [this](const Press&) { controller.toggleTransport(); });
+
+    // Panic (docs/panic.md), large, to the transport's right: red on the panel,
+    // lit red for a moment after one.
+    const float px = tx + tw + 30.0f, pw = 150.0f;
+    box(px, y, pw, th, t.panicLit ? kRed : kPanel, 10.0f);
+    label(px + pw / 2, y + th / 2, "Panic", 26.0f, t.panicLit ? kBarBg : kRed, ALIGN_CENTER | ALIGN_MIDDLE);
+    region(px, y, pw, th, [this](const Press&) { controller.panic(); });
 
     // The current looper: its state and its place in the loop, one wide bar.
     y += th + 24.0f;
@@ -756,13 +765,21 @@ void RackWidget::drawTransport(float x) {
     NanoVG::fill();
     region(playX, 8.0f, 34.0f, 28.0f, [this](const Press&) { controller.toggleTransport(); });
 
-    // Its MIDI control: lit when it has any, amber if start on first note's
-    // input isn't connected, blinking amber while learning.
-    const float midiX   = playX + 40.0f;
-    const bool  blinkOn = std::fmod(ui::nowSeconds(), 0.5) < 0.25;
-    const bool  mapped  = !t.triggers.empty() || !t.startOnNote.empty();
-    midiButton(midiX, 8.0f, kMidiW, 28.0f, t.learning ? blinkOn : mapped,
-               t.learning || !t.startOnNoteConnected ? kAmber : kAccent);
+    // Panic (docs/panic.md): red text on the panel, lit red for a moment after one.
+    const float panicX = playX + 40.0f;
+    box(panicX, 8.0f, kPanicW, 28.0f, t.panicLit ? kRed : kPanel, 4.0f);
+    label(panicX + kPanicW / 2, kToolbarH / 2, "Panic", 13.0f, t.panicLit ? kBarBg : kRed, ALIGN_CENTER | ALIGN_MIDDLE);
+    region(panicX, 8.0f, kPanicW, 28.0f, [this](const Press&) { controller.panic(); });
+
+    // The MIDI control (the transport's, and Panic's): lit when there's any,
+    // amber if start on first note's input or Panic's isn't connected,
+    // blinking amber while learning.
+    const float midiX    = panicX + kPanicW + 6.0f;
+    const bool  blinkOn  = std::fmod(ui::nowSeconds(), 0.5) < 0.25;
+    const bool  mapped   = !t.triggers.empty() || !t.startOnNote.empty() || !t.panicControl.empty();
+    const bool  learning = t.learning || t.panicLearning;
+    midiButton(midiX, 8.0f, kMidiW, 28.0f, learning ? blinkOn : mapped,
+               learning || !t.startOnNoteConnected || !t.panicConnected ? kAmber : kAccent);
     region(midiX, 8.0f, kMidiW, 28.0f, [this, midiX](const Press&) { openTransportMenu(midiX, topH()); });
 
     const float sigX = midiX + kMidiW + 6.0f;
@@ -964,6 +981,10 @@ void RackWidget::drawRowPlugin(const RowModel& row, float y) {
 
 
     button(editorX, y + 19.0f, 70.0f, 26.0f, "Editor", row.editorOpen, row.hasEditor, kAccent);
+    // Its share of the period (docs/panic.md, section 9): amber past half of it.
+    if (row.state != RowState::Placeholder)
+        label(editorX + 35.0f, y + 55.0f, "DSP " + std::to_string(row.loadPercent) + "%", 11.0f,
+              row.loadPercent > 50 ? kAmber : kDim, ALIGN_CENTER | ALIGN_MIDDLE);
     if (row.hasEditor)
         region(editorX, y + 19.0f, 70.0f, 26.0f, [this, id = row.id](const Press&) {
             if (const RowModel* now = rowById(id)) now->editorOpen ? controller.closeEditor(id) : controller.openEditor(id);
@@ -1041,12 +1062,34 @@ void RackWidget::drawStatus() {
     box(0, y, width(), kStatusH, kBarBg);
     region(0, y, width(), kStatusH, nullptr);
 
-    char stats[160];
-    std::snprintf(stats, sizeof stats, "%.0f Hz   %u frames   xruns %llu   MIDI %s", s.sampleRate, s.bufferSize,
-                  static_cast<unsigned long long>(s.xruns), s.preference == MidiProtocol::Midi2 ? "2.0" : "1.0");
-    std::string left = stats;
-    if (s.midiDropped != 0) left += "   MIDI dropped " + std::to_string(s.midiDropped);
-    label(kPad, y + kStatusH / 2, left, 12.0f, s.xruns != 0 || s.midiDropped != 0 ? kAmber : kDim);
+    // Left to right: the rate and period; the DSP load (its colour follows the
+    // peak: one late block is a click); xruns (red for a few seconds after
+    // one; a click resets the count); the protocol; dropped MIDI.
+    char text[96];
+    float x  = kPad;
+    auto  at = [&](const std::string& part, UiColor colour) {
+        label(x, y + kStatusH / 2, part, 12.0f, colour);
+        const float w = labelWidth(part, 12.0f);
+        x += w + 18.0f;
+        return w;
+    };
+    std::snprintf(text, sizeof text, "%.0f Hz   %u frames", s.sampleRate, s.bufferSize);
+    at(text, kDim);
+    std::snprintf(text, sizeof text, "DSP %d%% \xC2\xB7 peak %d%%", s.dspPercent, s.dspPeakPercent);
+    at(text, s.dspPeakPercent >= 90 ? kRed : s.dspPeakPercent >= 70 ? kAmber : kDim);
+    std::string xruns = "xruns " + std::to_string(s.xruns);
+    if (s.xrunSecondsAgo >= 0) {
+        const int ago = s.xrunSecondsAgo;
+        xruns += " \xC2\xB7 " + (ago < 60     ? std::to_string(ago) + " s ago"
+                                 : ago < 3600 ? std::to_string(ago / 60) + " min ago"
+                                              : std::to_string(ago / 3600) + " h ago");
+    }
+    const float xrunsX = x;
+    const float xrunsW = at(xruns, s.xrunRecent ? kRed : s.xruns != 0 ? kAmber : kDim);
+    if (s.xruns != 0) region(xrunsX - 4.0f, y, xrunsW + 8.0f, kStatusH, [this](const Press&) { controller.resetXruns(); });
+    at(s.preference == MidiProtocol::Midi2 ? "MIDI 2.0" : "MIDI 1.0", kDim);
+    if (s.midiDropped != 0) at("MIDI dropped " + std::to_string(s.midiDropped), kAmber);
+    const float leftEnd = x - 18.0f;
 
     // Master meter at the right, with the rig's master fader before it; the
     // notice or save target between.
@@ -1065,7 +1108,7 @@ void RackWidget::drawStatus() {
         textEnd = f0 - 16.0f - labelWidth(master, 12.0f);
     }
 
-    const float tx = kPad + labelWidth(left, 12.0f) + 28.0f;
+    const float tx = leftEnd + 28.0f;
     save();
     scissor(tx, y, std::max(0.0f, textEnd - tx), kStatusH);
     if (!notice.empty() && ui::nowSeconds() < noticeUntil)
@@ -1173,6 +1216,8 @@ void RackWidget::drawBusStrip(const BusModel& bus, std::size_t index, float y) {
     box(0, y + kBusH - 1.0f, width(), 1.0f, kLine);
     region(0, y, width(), kBusH, nullptr);
     label(kPad, y + 17.0f, "Bus " + bus.name, 15.0f, kText);
+    label(kPad + 56.0f, y + 17.0f, "DSP " + std::to_string(bus.loadPercent) + "%", 11.0f,   // its effects'
+          bus.loadPercent > 50 ? kAmber : kDim);
     label(kPad, y + 35.0f, index == 0 ? "rig: " + controller.view().rig.name + (controller.view().rig.modified ? " *" : "")
                                       : "effects in series",
           11.0f, kDim);
@@ -1760,8 +1805,8 @@ void RackWidget::openTransportMenu(float x, float y) {
     m.x     = x;
     m.y     = y;
     m.w     = 340.0f;
-    m.title = t.learning ? "Press a pad, key or pedal..." : "Transport: MIDI control";
-    if (t.learning) m.items.push_back(MenuItem{"Stop learning", [this] { controller.cancelLearn(); }});
+    m.title = t.learning || t.panicLearning ? "Press a pad, key or pedal..." : "Transport: MIDI control";
+    if (t.learning || t.panicLearning) m.items.push_back(MenuItem{"Stop learning", [this] { controller.cancelLearn(); }});
     for (const auto [action, text] : {std::pair{SequenceTrigger::Action::Toggle, "Learn Start/Stop"},
                                       {SequenceTrigger::Action::Start, "Learn Start"},
                                       {SequenceTrigger::Action::Stop, "Learn Stop"}})
@@ -1779,6 +1824,11 @@ void RackWidget::openTransportMenu(float x, float y) {
                                    [this, ref = choice.ref] { controller.setStartOnNote(true, ref); },
                                    !t.startOnNote.empty() && t.startOnNote == choice.label});
     }
+    // Panic's control (docs/panic.md): in the rig, the same in every song.
+    m.items.push_back(MenuItem{"Learn Panic (all songs)", [this] { controller.learnPanic(); }, t.panicLearning});
+    if (!t.panicControl.empty())
+        m.items.push_back(MenuItem{"Remove Panic: " + t.panicControl + (t.panicConnected ? "" : " (not connected)"),
+                                   [this] { controller.removePanic(); }, false, true});
     openMenu(std::move(m));
 }
 

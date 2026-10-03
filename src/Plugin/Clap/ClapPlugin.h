@@ -41,6 +41,7 @@ public:
     void                       deactivate() override;
     void                       process(const ProcessContext& ctx) noexcept override;
     void                       stopProcessing() noexcept override;
+    void                       reset() noexcept override;
     double                     paramValue(std::uint32_t id) const override;
     void                       flushParams(const EventBlock& in, EventSink* out) override;
     bool                       saveState(std::vector<std::byte>& out) const override;

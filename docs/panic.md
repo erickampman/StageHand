@@ -105,7 +105,7 @@ indicator** that shows trouble coming before it's heard. Builds on:
   second for display, and the xrun count from the backend, with the time the
   count last changed.
 
-## Milestones (proposed)
+## Milestones
 
 1. **Panic, engine and button:** `Engine::panic()` (one press and two), the
    held tables, sequences, loopers and auditions; `HostedPlugin::reset()`;
@@ -123,75 +123,73 @@ indicator** that shows trouble coming before it's heard. Builds on:
    load published and its peak taken, the controller's last-second peak and
    xrun time (with a fake audio status).
 
+**Milestone 1 implemented (2026-10-03):** `Engine::panic()` sets a flag the
+audio thread takes at the next block's start (`takeMidi()`); `routeMidi()`
+calls `Engine::silence()` before the first staged message or sequence event
+at or after the Panic's frame, so a sequence's next note sounds as usual.
+`silence()` sends a note-off (MIDI 2.0, translated by `deliver()`) for each
+held-note entry to each plugin holding it, at the note it got; then, to every
+row with a note port, muted and draining ones included, on all 16 channels of
+group 1: CC 64, 66, 67 at 0 and CC 123 (MIDI 1.0, upconverted for
+MIDI-2.0-only ports). It clears the held notes, the held pedals and the
+audition voices, and `SequenceSet::forgetSounding()` makes sequences and
+loopers forget their sounding notes, so no stray note-off follows. Within
+`kPanicCutSeconds` (2 s, on the block clock) of the last Panic, CC 120 comes
+first on each channel and every row's plugin and bus effect is reset
+(`HostedPlugin::reset()`, a new audio-thread call, default no-op;
+`ClapPlugin::reset()` calls CLAP's `reset()` while active). With no graph it
+still counts. `Engine::panics()` publishes the count and whether the last cut
+the sound. A slot's event buffer (1024 a block) holds a Panic's 64 to 80 CCs
+with room to spare, so nothing is carried to the next block; if one is full,
+the excess counts as dropped, as any message would. UI: **Panic** in the
+toolbar between Start/Stop and the transport's MIDI button (red text on the
+panel; red with dark text for 0.5 s after a Panic, as the controller sees
+`panics()` change), and a large Panic **beside** the Perform view's ▶/■
+(beside rather than under, so the current looper keeps its place on a short
+window); the notice "Panic: all notes off" or "Panic: sound cut" in the
+status bar. Tests: `testPanic` in the engine tests (note-offs at the
+transposed number, the CCs in order in each protocol, a muted row, the pedal
+not sent to a new row, the sequence's next note with no stray note-off, the
+second Panic's CC 120 and resets, one after 2 s, no graph).
+
+**Milestone 2 implemented (2026-10-03):** `Rig::panic`, `"panic"` in rig.json
+written as `"looperSwitch"` is (rig.md). `Session::setPanicControl()` resolves
+its input and compiles it into `TransportControl::panic` beside the looper
+switch; the engine matches it after the setlist's triggers and the looper
+switch, before the rack's (`SequenceSet::matchPanic()`: a note-on, or a
+controller's rise to 64), and it goes nowhere else. The Panic placed at its
+own frame. `RackController::panic()`, `learnPanic()`, `removePanic()`; it's
+learned and removed from the transport's MIDI menu ("Learn Panic (all
+songs)", "Remove Panic: …"), not from a MIDI button of its own: the toolbar
+has no room for one, and the transport's button sits beside Panic. That
+button lights for Panic's control too, and is amber when its input isn't
+connected. Tests: the rig file (round trip, absent by default), the
+controller (`testPanic`: the button, the light and notice, learning a
+controller press, the second press cutting the sound, saved in the rig,
+removed).
+
+**Milestone 3 implemented (2026-10-03):** the engine times `process()` with
+`nowNanoseconds()` and publishes the share of the period it took: a running
+average (`kLoadAverageSeconds`, 1 s) and the worst block since the last
+`Engine::takeDspLoad()`. Each slot's `process()` calls and each bus's effects
+are timed per block into a `LoadMeter` in their `SlotRuntime` (`load`). The
+controller shows the worst of each second for the next second
+(`LoadWindow`), so the figures hold still: `StatusModel::dspPercent`,
+`dspPeakPercent`, `RowModel::loadPercent`, `BusModel::loadPercent`. Xruns:
+the count since start or since `RackController::resetXruns()` (a click on it
+in the status bar), `xrunSecondsAgo`, `xrunRecent` (5 s); each new one is
+written to stderr as "xrun: song 4 (So what), bar 17" (the rack's name
+without a setlist, "stopped" when stopped). UI: the status bar reads "48000 Hz
+1024 frames   DSP 23% · peak 41%   xruns 3 · 12 s ago   MIDI 2.0", the DSP
+dim, amber from 70%, red from 90% (following the peak), the xruns red for 5 s
+after one, amber while not zero. Each row shows "DSP 4%" under its Editor
+button (amber over 50%), each bus strip after its name. Tests: `testDspLoad`
+in the engine tests (a fake plugin busy 3 ms of a 10 ms period), the
+controller's `testDspAndXruns` (the row's and the peak's percent after a
+second, the xrun count, age, red, reset).
+
 ## Open questions
 
 None at the moment (answered 2026-10-03, each as proposed: Panic keeps the
 transport running; a second press within 2 seconds cuts the sound; no key;
 the per-row load in milestone 3).
-
-## Work in progress (2026-10-03, handoff)
-
-On branch `panic-cpu`, all three milestones to go into one PR into
-`rack-view` (the user asked for Panic and the CPU/xrun indicator together).
-**The engine doesn't build yet:** the last commit is mid-edit.
-
-Done:
-- `TransportControl::hasPanic` / `panic` and `SequenceSet::matchPanic()`,
-  `SequenceSet::forgetSounding()` (both in Engine/Looper.cpp, beside
-  `matchLooperSwitch()`).
-- Engine.h: `Engine::panic()`, `kPanicCutSeconds`, `Panics panics()`, the
-  private `silence(ctx, offset)`, and the state (`panicRequested`,
-  `panicFrame`, `panickedOnce`, `lastPanicTime`, `panicCount`, `panicCut`).
-  `routeMidi()` now takes the context (its declaration is changed; the
-  definition and the call in `process()` aren't yet).
-
-Next, in Engine.cpp:
-1. `process()`: `routeMidi(ctx)`. At the start of `takeMidi()`:
-   `panicFrame = panicRequested.exchange(false) ? 0 : UINT32_MAX`. In
-   `takeMidi()`, after the looper switch: `matchPanic()`; on a press, if
-   `panicFrame == UINT32_MAX`, `panicFrame = entry.offset`; `continue`.
-2. `routeMidi(ctx)`: call `silence(ctx, panicFrame)` once, before the first
-   staged item or sequence event at an offset >= `panicFrame` (or at the end
-   if none). With no graph, still clear the tables and count it.
-3. `silence()`: cut = `panickedOnce` and less than kPanicCutSeconds since
-   `lastPanicTime` (time = blockStartTime + offset / rate). For every held
-   note, a note-off (MIDI 2.0 form, as `applyMutes()` builds it) through
-   `deliver()` with `held.deliveredNotes[k]` to the slot holding that plugin;
-   clear heldNotes, heldPedals, auditionVoices;
-   `currentSequences->forgetSounding()`. Each slot with a note port: on
-   channels 0-15 of group 0, MIDI 1.0 CCs (type 2 UMP) — 120 first if cut,
-   then 64, 66, 67 at 0, then 123 — through `deliver()` with an upconverted
-   form (plain `UpconvertState`, as `sendHeldPedals()` does). If cut:
-   `reset()` every slot plugin and bus effect. Publish `panicCount` + 1 and
-   `panicCut`. Define `Engine::panics()`.
-4. `HostedPlugin::reset()` (new, audio thread, default no-op); ClapPlugin:
-   `if (active) plugin->reset(plugin)`. FakePlugin and FakeEffect count
-   resets.
-5. Tests in tests/EngineTests.cpp (`testPanic`): note-offs at the transposed
-   number, the CCs in each protocol, a muted row, held pedals not resent at a
-   switch, sequences still sounding their next note, the second press within
-   2 s (CC 120 and resets) and one after 2 s (no cut), the learned control
-   (fires, goes nowhere else).
-
-Then milestone 2: `Rig::panic` (`std::optional<SequenceTrigger>`, `"panic"`
-in rig.json, RigFile + tests), the Session compiles it into
-TransportControl beside `looperSwitch` (Session.cpp ~line 713), and the
-controller learns and removes it as `learnLooperSwitch()` does. UI: a Panic
-button in the toolbar (red text, beside Start/Stop) with a MIDI button for
-the control, a large Panic button in the Perform view under the transport,
-and the status message "Panic: all notes off" / "Panic: sound cut" (the
-controller watches `engine.panics()`).
-
-Then milestone 3 (the CPU/xrun indicator): sections 6 to 10 above. The engine
-times `process()` with `nowNanoseconds()` and each slot's and bus effect's
-`process()` call (kept in `SlotRuntime`). It publishes the peak, taken by the
-main thread, and an average of about a second. The status bar shows "DSP 23% ·
-peak 41%" (amber from 70%, red from 90%, following the peak) and "xruns 3 ·
-12 s ago" (red for 5 s after a new one; a click resets it). Each row shows its
-own share ("4%", amber over 50%). Each xrun goes to stderr with the song and
-the bar.
-
-Before pushing, all suites must pass with GCC, with clang + libc++
-(`-DSTAGEHAND_APP=OFF`), and with GCC + ASan/UBSan. Add "implemented" notes
-to this doc and the `panic` row to the rig format docs. Open a PR into
-`rack-view`.
