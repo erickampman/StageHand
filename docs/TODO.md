@@ -14,5 +14,7 @@
   4. Velocity curves per row, or a fixed velocity.
   5. MIDI out: program changes to hardware at a song switch, MIDI clock out,
      the click as MIDI notes.
+- **Right-click in the empty space below the rack rows** opens the same menu
+  as "+ Add plugin" (added 2026-10-03), so a row can be added where rows go.
 - **Later:** backing tracks (an audio file per song, in time with the
   transport); song notes in the Perform view; undo for rack edits.
