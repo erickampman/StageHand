@@ -56,7 +56,9 @@ struct MetronomeSettings {
     bool        everyNote    = false;    // count every note (6/8: six), not the counted beats (6/8: two)
     bool        click        = false;
     float       clickLevelDb = -12.0f;
-    std::string clickOutput;             // a playback device, by name; "" = none chosen
+    // Where it plays is the rig's (Rig::clickOutput). Read from older racks
+    // only, which kept it here: taken into the rig if it has none.
+    std::string clickOutput;
 
     bool operator==(const MetronomeSettings&) const = default;
 };

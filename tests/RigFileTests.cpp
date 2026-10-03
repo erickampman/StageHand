@@ -61,6 +61,7 @@ void testRoundTrip(const fs::path& dir) {
     looper.number  = 82;
     looper.channel = 1;
     rig.looperSwitch          = looper;
+    rig.clickOutput           = "Scarlett 2i2 USB Analog Stereo";   // where the click plays, in every song
     const std::string path    = (dir / "Stage.rig").string();
     CHECK(saveRig(path, rig).ok);
     CHECK(fs::exists(dir / "Stage.rig/state/A1.bin") && !fs::exists(dir / "Stage.rig/state/A2.bin"));

@@ -51,6 +51,7 @@ RackFileResult loadRig(const std::string& bundlePath, Rig& rig) {
         if (stem.size() > 4 && stem.compare(stem.size() - 4, 4, ".rig") == 0) stem.resize(stem.size() - 4);
         loaded.name     = doc.value("name", stem);
         loaded.masterDb = doc.value("masterDb", 0.0f);
+        loaded.clickOutput = doc.value("clickOutput", std::string{});
         if (doc.contains("looperSwitch")) {   // {"source": ..., "note" or "controller": n, "channel": 1, "group": 1}
             const Json&     j = doc.at("looperSwitch");
             SequenceTrigger t;
@@ -119,6 +120,7 @@ RackFileResult saveRig(const std::string& bundlePath, const Rig& rig) {
         doc["version"]  = kFormatVersion;
         doc["name"]     = rig.name;
         doc["masterDb"] = rig.masterDb;
+        if (!rig.clickOutput.empty()) doc["clickOutput"] = rig.clickOutput;
         if (const auto& t = rig.looperSwitch) {
             Json j;
             j["source"] = sourceText(t->source);

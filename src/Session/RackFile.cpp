@@ -308,7 +308,7 @@ Json metronomeJson(const MetronomeSettings& m) {
     j["count"]       = m.everyNote ? "notes" : "beats";
     j["click"]       = m.click;
     j["clickLevel"]  = m.clickLevelDb;
-    j["clickOutput"] = m.clickOutput;
+    if (!m.clickOutput.empty()) j["clickOutput"] = m.clickOutput;   // older racks only: it's the rig's now
     return j;
 }
 

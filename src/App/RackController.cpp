@@ -164,7 +164,7 @@ void RackController::tick(double now) {
     transport.everyNote       = metronome.everyNote;
     transport.click           = metronome.click;
     transport.clickLevelDb    = metronome.clickLevelDb;
-    transport.clickOutput     = metronome.clickOutput;
+    transport.clickOutput     = session.clickOutput();
     transport.clickConnected  = !clickDevice.empty();
     transport.playbackDevices = deviceNames;
     model.rows.clear();
@@ -969,14 +969,14 @@ void RackController::setMetronomeCount(bool everyNote) {
 void RackController::setClick(bool on) {
     MetronomeSettings m = session.metronome();
     m.click             = on;
-    if (on && m.clickOutput.empty() && config.clickRouting != nullptr) {
+    if (on && session.clickOutput().empty() && config.clickRouting != nullptr) {
         const std::string main = config.clickRouting->mainDevice();
         for (const PlaybackDevice& d : config.clickRouting->playbackDevices())
             if (d.name != main) {
-                m.clickOutput = d.name;
+                session.setClickOutput(d.name);   // the rig's: every song's
                 break;
             }
-        if (m.clickOutput.empty())
+        if (session.clickOutput().empty())
             notice("Click: silent until you choose its output (the only device plays the main outputs too)");
     }
     setMetronome(m);
@@ -991,31 +991,33 @@ void RackController::setClickLevel(float db) {
     setClick(true);
 }
 
+// Where it plays is the rig's (every song's); whether this song clicks is the rack's.
 void RackController::setClickOutput(const std::string& device) {
+    session.setClickOutput(device);
     MetronomeSettings m = session.metronome();
-    m.clickOutput       = device;
     m.click             = !device.empty();   // choosing where it plays means wanting it
     clickMissing        = false;   // a new choice: report afresh
     setMetronome(m);
 }
 
 void RackController::testClick() {
-    const MetronomeSettings& m = session.metronome();
-    if (m.clickOutput.empty()) {
+    const MetronomeSettings& m      = session.metronome();
+    const std::string&       output = session.clickOutput();
+    if (output.empty()) {
         notice("Click: choose its output first");
         return;
     }
     if (!m.click) {   // off: connect just for the test
         AuxRouting* const routing = config.clickRouting;
         const auto        devices = routing != nullptr ? routing->playbackDevices() : std::vector<PlaybackDevice>{};
-        const int         i       = findPlaybackDevice(m.clickOutput, devices);
+        const int         i       = findPlaybackDevice(output, devices);
         if (i < 0 || !routing->connectAux(devices[static_cast<std::size_t>(i)])) {
-            notice("Click: its output '" + m.clickOutput + "' isn't connected");
+            notice("Click: its output '" + output + "' isn't connected");
             return;
         }
         clickDevice = devices[static_cast<std::size_t>(i)].name;
     } else if (clickDevice.empty()) {
-        notice("Click: its output '" + m.clickOutput + "' isn't connected");
+        notice("Click: its output '" + output + "' isn't connected");
         return;
     }
     engine.testClick();
@@ -1035,20 +1037,21 @@ void RackController::refreshPlaybackDevices() {
 void RackController::routeClick(bool report) {
     AuxRouting* const        routing = config.clickRouting;
     const MetronomeSettings& m       = session.metronome();
+    const std::string&       output  = session.clickOutput();
     if (routing == nullptr) return;
-    if (!m.click || m.clickOutput.empty()) {
+    if (!m.click || output.empty()) {
         if (!clickDevice.empty()) routing->disconnectAux();
         clickDevice.clear();
         clickMissing = false;
         return;
     }
     const std::vector<PlaybackDevice> devices = routing->playbackDevices();
-    const int                         i       = findPlaybackDevice(m.clickOutput, devices);
+    const int                         i       = findPlaybackDevice(output, devices);
     if (i < 0) {
         if (!clickDevice.empty()) routing->disconnectAux();
         clickDevice.clear();
         if (report && !clickMissing)
-            notice("Click: its output '" + m.clickOutput + "' isn't connected; the click is silent until it is");
+            notice("Click: its output '" + output + "' isn't connected; the click is silent until it is");
         clickMissing = true;
         return;
     }
@@ -1058,7 +1061,7 @@ void RackController::routeClick(bool report) {
         notice("Click: couldn't connect to " + device.name);
         return;
     }
-    if (clickMissing || device.name != m.clickOutput) notice("Click: playing on " + device.name);
+    if (clickMissing || device.name != output) notice("Click: playing on " + device.name);
     clickDevice  = device.name;
     clickMissing = false;
 }
@@ -1332,6 +1335,7 @@ void RackController::useRig(const std::string& path) {
     session.loadRig(rig, session.loadedSampleRate(), report);
     for (const std::string& warning : report.warnings) notice(warning);
     rigFile = wanted;
+    routeClick(true);   // the click plays where this rig says
 }
 
 bool RackController::saveRigIfModified() {

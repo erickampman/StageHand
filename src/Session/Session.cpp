@@ -196,6 +196,9 @@ bool Session::activate(std::unique_ptr<PreparedRack> prepared, LoadReport& repor
     const Rack& rack = p.source;
     transportSetup   = rack.transport;
     metronomeSetup   = rack.metronome;
+    olderClickOutput = metronomeSetup.clickOutput;   // the rig's now (adoptClickOutput())
+    metronomeSetup.clickOutput.clear();
+    adoptClickOutput();
     applyMetronome();
     for (const std::string& problem : resolveTransport())
         report.warnings.push_back("transport: a MIDI control won't act: " + problem);
@@ -358,6 +361,7 @@ void Session::loadRig(const Rig& rig, double rate, LoadReport& report) {
     }
     rigState  = std::move(next);   // the old effects live on in the old graph until it's collected
     setLooperSwitch(rigState.saved.looperSwitch);   // resolved; sent with the sequences
+    adoptClickOutput();
     rigLoaded = true;
     rigRate   = rate;
     rigDirty  = false;
@@ -827,6 +831,17 @@ void Session::setCurrentLooper(const std::string& id) {
     const LooperEntry* entry = looper(id);
     currentLooperId          = entry != nullptr ? id : std::string{};
     engine.setCurrentLooper(entry != nullptr ? entry->source : kInvalidMidiSource);
+}
+
+void Session::setClickOutput(const std::string& device) {
+    if (device != rigState.saved.clickOutput) rigDirty = true;
+    rigState.saved.clickOutput = device;
+}
+
+void Session::adoptClickOutput() {
+    if (!rigState.saved.clickOutput.empty() || olderClickOutput.empty()) return;
+    rigState.saved.clickOutput = olderClickOutput;   // a rack from before the rig had it
+    rigDirty                   = true;
 }
 
 void Session::setLooperSwitch(const std::optional<SequenceTrigger>& trigger) {
