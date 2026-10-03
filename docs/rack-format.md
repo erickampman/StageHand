@@ -300,7 +300,7 @@ Written only when it differs from the defaults.
 ## Metronome
 
 ```json
-"metronome": {"count": "beats", "click": true, "clickLevel": -12, "clickOutput": "Built-in Audio Analog Stereo"}
+"metronome": {"count": "beats", "click": true, "clickLevel": -12}
 ```
 
 | Field | Default | Meaning |
@@ -308,7 +308,7 @@ Written only when it differs from the defaults.
 | `count` | `"beats"` | `"beats"`: the counted beats (6/8: 2, 7/8: 7); `"notes"`: every note (6/8: 6) |
 | `click` | `false` | The click, on its own outputs |
 | `clickLevel` | `-12` | dB, -60 to 0 |
-| `clickOutput` | `""` | The playback device it's connected to, by the name PipeWire shows. Missing: see docs/sequences.md, section 7 (never the main outputs) |
+| `clickOutput` | `""` | Older racks only: where the click played. Read, and given to the rig if it has no click output (docs/rig.md: the rig holds it since 2026-10-03); not written any more |
 
 Written only when it differs from the defaults.
 

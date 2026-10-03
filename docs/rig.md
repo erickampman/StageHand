@@ -203,6 +203,16 @@ when they fit, the strips stay above the dock.
 trigger is written), since it's the performer's footswitch, the same in every
 song. It drives the current looper.
 
+**Added 2026-10-03 (the click's output):** the rig holds where the click
+plays (`"clickOutput"` in rig.json: a playback device by name; absent: none
+chosen), since it's the stage's headphones, the same in every song. Each rack
+still says whether it clicks and how loud, so a song can have no click.
+Choosing the output marks the rig modified (Ctrl-S). A rack from before kept
+the output itself: loading one gives the rig its output if the rig has none
+(the rig then has changes to save), and the rack drops it when it's next
+saved. Loading another rig moves the click to its output. Tests:
+`testClickRouting` (controller), the rig file tests.
+
 ## Open questions
 
 None at the moment (answered 2026-10-02: a new song copies the current one;

@@ -553,6 +553,9 @@ void testClickRouting() {
     config.clickRouting           = &routing;
     RackController       controller(*rig.session, *rig.engine, rig.midi, rig.factory, config);
     const RackViewModel& view = controller.view();
+    // An older rack's own click output goes to the rig (every song's), and the rack drops it.
+    CHECK(rig.session->clickOutput() == "Scarlett 2i2 USB Analog Stereo" && rig.session->rigModified() &&
+          rig.session->capture().metronome.clickOutput.empty() && rig.session->capture().metronome.click);
     CHECK(routing.connected.empty() && !view.transport.clickConnected);
     std::vector<std::string> notices = controller.takeNotices();
     CHECK(notices.size() == 1 && notices[0].find("isn't connected") != std::string::npos);
@@ -589,12 +592,12 @@ void testClickRouting() {
     controller.takeNotices();
     controller.setClick(true);
     CHECK(routing.connected == "Built-in Audio Analog Stereo" &&
-          rig.session->metronome().clickOutput == "Built-in Audio Analog Stereo");
+          rig.session->clickOutput() == "Built-in Audio Analog Stereo");
     routing.devices.erase(routing.devices.begin());   // only the mains' device left
     controller.setClick(false);
     controller.setClickOutput("");
     controller.setClick(true);
-    CHECK(routing.connected.empty() && rig.session->metronome().clickOutput.empty());
+    CHECK(routing.connected.empty() && rig.session->clickOutput().empty());
 }
 
 // Renaming a sequence: trimmed, never empty, at most 64 bytes (cut on a

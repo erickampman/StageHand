@@ -417,7 +417,8 @@ Implemented 2026-09-30 (milestone 6):
   on), a Test the click item (one blip at once, running or not, to check
   where it's heard), and its output (choosing one turns it on too): any playback
   device (e.g. the laptop's headphone jack while the mains go to an
-  interface). A short sine blip (30 ms, 6 ms decay), 1600 Hz on the downbeat
+  interface). Whether it clicks and how loud are the rack's; its output is
+  the rig's (2026-10-03, rig.md), the same in every song. A short sine blip (30 ms, 6 ms decay), 1600 Hz on the downbeat
   and 1000 Hz on the other pulses, placed to the sample, only while the
   transport runs. The ⋮ is blue while it plays, amber when its output is
   missing.

@@ -277,6 +277,11 @@ public:
     void        setLooperSwitch(const std::optional<SequenceTrigger>& trigger);
     // Why it doesn't act, if its input isn't connected.
     const std::string& looperSwitchProblem() const noexcept { return looperSwitchIssue; }
+    // Where the click plays: in the rig (Rig::clickOutput), the same in every
+    // song. Marks the rig modified. A rack from before kept it itself: loading
+    // one gives the rig its choice if the rig has none (and the rack drops it).
+    void               setClickOutput(const std::string& device);
+    const std::string& clickOutput() const noexcept { return rigState.saved.clickOutput; }
 
     // --- the transport (docs/sequences.md, section 7): Start puts beat 1 at the
     // next block; Stop ends every sequence and returns to bar 1. Its MIDI
@@ -356,6 +361,7 @@ private:
     std::string                             name;
     std::vector<Slot>                       loaded;
     std::map<std::string, MidiSourceHandle> openSources;   // "device:<id>" / "virtual:<name>"
+    std::string                             olderClickOutput;   // the last rack's own (older racks), for the rig
     std::set<std::string>                   lostSources;   // open devices that left (syncMidi()), by key
     std::vector<OpenInput>                  inputs;        // the same, in order
     double                                  sampleRate     = 0.0;
@@ -369,6 +375,7 @@ private:
     TransportSettings                       transportSetup;
     MetronomeSettings                       metronomeSetup;
     void                                    applyMetronome();
+    void                                    adoptClickOutput();   // an older rack's click output, into a rig without one
     std::vector<MidiSourceHandle>           transportTriggerSources;
     MidiSourceHandle                        startOnNoteHandle = kInvalidMidiSource;
     std::string                             startOnNoteProblem;

@@ -22,7 +22,7 @@ everything needed to play the piece, with or without a setlist.
   range, transpose), gain, mute and output pair.
 - Sequences: their notes, settings, and the rows they play into.
 - Time: tempo, time signature, transport triggers, At Start.
-- The click: level and output.
+- The click: on or off, and its level (where it plays is the rig's, 2026-10-03).
 - Its own unsaved changes.
 
 **Song: one place in a setlist.** Not a file, and no settings of its own.
@@ -412,8 +412,11 @@ data model or the engine); the rest can come with later milestones.
    maps a pedal to Start that the setlist maps to Next, the setlist wins: its
    triggers are matched first and go no further. A rack-level conflict is
    shown as a warning when the rack is prepared.
-7. **The click** (level and output) is saved per rack, so it changes from
-   song to song if racks differ. That follows the rule that the rack owns
+7. **The click** (on or off, and its level) is saved per rack, so a song can
+   have none; where it plays is the rig's (decided 2026-10-03: the stage's
+   headphones are the same in every song), so a switch never moves it.
+   Before, the output was saved per rack too, and changed from
+   song to song if racks differed. That follows the rule that the rack owns
    the song (section 5); a set that wants one click sets its racks alike.
 8. **Switching in time.** With the transport running, a switch lands
    mid-bar, and tempo-synced delays and arpeggiators jump. The switch
