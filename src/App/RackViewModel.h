@@ -185,6 +185,7 @@ struct InputChipModel {
     bool           isVirtual = false;
     SourceProtocol protocol  = SourceProtocol::Mixed;
     bool           active    = false;   // messages arrived a moment ago
+    bool           connected = true;    // false: its device left (it's heard again when it's back)
 
     bool operator==(const InputChipModel&) const = default;
 };

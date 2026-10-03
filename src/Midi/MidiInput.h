@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -70,6 +71,19 @@ public:
                                          MidiProtocol protocol) = 0;
 
     virtual void close(MidiSourceHandle source) = 0;
+
+    // Devices come and go (hotplug, docs/command-line.md "MIDI devices coming
+    // and going"). changes() goes up whenever the system announces a source
+    // appearing or leaving; the main thread compares it with the value it saw
+    // last, then calls sync() for each source it opened. Thread-safe.
+    virtual std::uint64_t changes() const { return 0; }
+    // An opened device: true if it's connected now. One that left and came
+    // back (the same id) is connected again, under the same handle, so
+    // whatever uses the handle hears it again. Virtual inputs: always true.
+    virtual bool sync(MidiSourceHandle source) {
+        (void)source;
+        return true;
+    }
 
     // Human-readable backend name, e.g. "ALSA sequencer". For UI and logging.
     virtual const char* name() const = 0;

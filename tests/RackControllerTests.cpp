@@ -2,6 +2,7 @@
 // protocol warning), meter ballistics and MIDI activity, editors, adding and
 // removing plugins, and saving. No DGL, X11 or JACK.
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -1647,6 +1648,69 @@ void testCheckSetlist() {
     fs::remove_all(dir);
 }
 
+// MIDI devices coming and going (hotplug): a device a row names appears and
+// is opened and heard; one that leaves shows as disconnected, and comes back
+// as the same input; a new software source isn't opened (hardware only).
+void testHotplug() {
+    Rig                 rig;
+    Session::LoadReport report;
+    rig.session->load(testRack(), 48000.0, report);   // a: Keys; e: Unplugged:Port, not there
+    RackController       controller(*rig.session, *rig.engine, rig.midi, rig.factory, rig.config());
+    const RackViewModel& view = controller.view();
+    double               now  = 1.0;
+    auto tick = [&] { controller.tick(now += 0.1); };
+    auto row  = [&](const char* id) -> const RowModel* {
+        for (const RowModel& r : view.rows)
+            if (r.id == id) return &r;
+        return nullptr;
+    };
+    auto noticed = [&](const std::string& text) {
+        bool found = false;
+        for (const std::string& n : controller.takeNotices()) found = found || n == text;
+        return found;
+    };
+    tick();
+    controller.takeNotices();
+    CHECK(row("e") && !row("e")->sourceConnected && row("a") && row("a")->sourceConnected);
+
+    // Plugged in: opened (hardware), and the row naming it hears it.
+    rig.midi.present.insert("Unplugged:Port");
+    rig.midi.sources.push_back(MidiSourceInfo{"Unplugged:Port", "Port", false, true, MidiProtocol::Midi1});
+    rig.midi.sources.push_back(MidiSourceInfo{"VMPK:Out", "Out", true, false, MidiProtocol::Midi1});
+    rig.midi.present.insert("VMPK:Out");
+    ++rig.midi.changeCount;
+    tick();
+    CHECK(noticed("MIDI device 'Unplugged:Port' connected"));
+    CHECK(row("e") && row("e")->sourceConnected && rig.session->slot("e")->source == 100);
+    CHECK(!rig.session->sourceOpen(MidiSourceRef{MidiSourceRef::Kind::Device, "VMPK:Out"}));   // software: not opened
+    bool chip = false;
+    for (const InputChipModel& c : view.inputs) chip = chip || (c.label.find("Port") != std::string::npos && c.connected);
+    CHECK(chip);
+
+    // Unplugged: the row says so (it hears nothing), and so does its chip.
+    rig.midi.unplugged.insert(42);
+    ++rig.midi.changeCount;
+    tick();
+    CHECK(noticed("MIDI device 'Keys:Keys MIDI 1' disconnected"));
+    CHECK(row("a") && !row("a")->sourceConnected && rig.session->slot("a")->source == kInvalidMidiSource);
+    bool lost = false;
+    for (const InputChipModel& c : view.inputs) lost = lost || !c.connected;
+    CHECK(lost);
+    CHECK(!rig.session->flushPending());   // committed at the tick
+
+    // Back: the same input again, heard by the row.
+    rig.midi.unplugged.erase(42);
+    ++rig.midi.changeCount;
+    tick();
+    CHECK(noticed("MIDI device 'Keys:Keys MIDI 1' is back"));
+    CHECK(row("a") && row("a")->sourceConnected && rig.session->slot("a")->source == 42);
+    CHECK(std::count(rig.midi.opened.begin(), rig.midi.opened.end(), "Keys:Keys MIDI 1") == 1);   // never reopened
+
+    // Nothing announced: nothing done.
+    tick();
+    CHECK(controller.takeNotices().empty());
+}
+
 } // namespace
 
 int main() {
@@ -1674,5 +1738,6 @@ int main() {
     testKeepLoop();
     testLoopNumbers();
     testCheckSetlist();
+    testHotplug();
     return test::finish("RackController");
 }

@@ -73,6 +73,13 @@ public:
         // (docs/setlists.md, "Reopening"); empty = not remembered (tests).
         std::string lastPositionPath;
 
+        // MIDI devices that appear while running (hotplug): opened, as the
+        // hardware inputs are at start (all inputs listen to them), unless
+        // --midi chose the inputs. `openNewSoftware` (--midi all): app and
+        // software sources too.
+        bool openNewInputs   = true;
+        bool openNewSoftware = false;
+
         // The default rig (docs/rig.md), used by a rack on its own and a setlist
         // that names none; created empty if it isn't there. Empty = no rig at
         // all (tests): no buses, and sends go nowhere.
@@ -403,6 +410,9 @@ private:
     // Each tick: keep the next and previous songs' racks prepared, and the one
     // a switch waits for (first), one plugin per tick; switch when it's ready.
     void           prepareAhead();
+    // MIDI devices came or went (MidiInput::changes() moved): new ones opened
+    // (config.openNewInputs), Session::syncMidi(), the source menus refreshed.
+    void           midiChanged();
     void           checkStep();   // checkSetlist(), a step a tick
     void           forgetChecks();   // the set changed: its checks were for another
     void           refreshSongs(double now);   // songCache and songBundles
@@ -454,6 +464,7 @@ private:
     std::array<Ballistics, kRigBuses>                     busMeters;
     Ballistics                                            master;
     std::vector<MidiSourceInfo>                           enumerated;
+    std::uint64_t                                         midiChanges = 0;   // MidiInput::changes() as last handled
     std::vector<PluginDescriptor>                         available;
     std::vector<double>                                   taps;      // tap-tempo times
     std::map<MidiSourceHandle, std::pair<std::uint32_t, double>> inputActivity;   // last count, lit until

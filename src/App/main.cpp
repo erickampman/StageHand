@@ -633,6 +633,11 @@ int runPlay(const Options& options) {
     config.savingOff          = options.noSaveRack;
     config.clickRouting       = &backend;
     config.lastPositionPath   = defaultLastPositionPath();
+    // Devices plugged in later are opened as at start: hardware, or everything
+    // with --midi all; not when --midi named the inputs.
+    const bool allMidi     = options.midiSources.size() == 1 && options.midiSources.front() == "all";
+    config.openNewInputs   = options.midiSources.empty() || allMidi;
+    config.openNewSoftware = allMidi;
     config.defaultRigPath     = defaultRigPath();
     RackController controller(session, *engine, *input, factory, std::move(config));
     // A setlist: --setlist from its first song, or (no arguments) the last one
