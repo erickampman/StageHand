@@ -89,12 +89,12 @@ stage, with the beat large enough to read from across it. Builds on:
     stray click can't change the rack. Plugin editors stay as they are.
 13. **Edge flash** (an option, off by default): the window's whole border
     flashes on each pulse, brighter on the downbeat, readable from across
-    the stage or in peripheral vision. Available in both views. **Kept in
-    the rig** (decided 2026-10-03), with the click's output and the looper
-    switch: the stage's setup. So it's the same in every song of a set;
-    a setlist naming another rig can have it otherwise; it travels with the
-    rig file to another machine; turning it on marks the rig modified
-    (Ctrl-S saves it); and a rack opened on its own uses the default rig's.
+    the stage or in peripheral vision. Available in both views. **Set per
+    song, in the rack** (decided 2026-10-03), with its click
+    (`"metronome": {"flash": true}`): a song that needs to be watched closely
+    has it, a loose one doesn't. It travels with the rack, and an edit
+    marks the rack modified, as the click's level does. The count-in
+    flashes whatever the song's setting, as it clicks whatever the click's.
 14. **In time with the sound:** the beat display runs at the display's rate
     while the transport runs (not the 30 Hz tick), and is drawn ahead by
     the audio output's latency, so a flash lands with the click you hear,
@@ -114,10 +114,10 @@ stage, with the beat large enough to read from across it. Builds on:
    off, half a bar, 1 bar, 2 bars), the amber lights and the toolbar countdown. Tests:
    the rack file, the controller.
 3. **The Perform view:** the mode, the layout above, the keys, the remembered
-   mode, the edge flash (in the rig), drawing at the display's rate and
+   mode, the edge flash (per song, in the rack), drawing at the display's rate and
    ahead by the output latency.
 
 ## Open questions
 
 None at the moment (answered 2026-10-03: half a bar as well; the edge flash
-in the rig; Tab for the Perform view).
+per song, in the rack; Tab for the Perform view).
