@@ -304,6 +304,7 @@ Engine::Transport Engine::transport() const noexcept {
     t.barNumber        = publishedBar.load(std::memory_order_relaxed);
     t.running          = publishedRunning.load(std::memory_order_relaxed);
     t.countIn          = publishedCountIn.load(std::memory_order_relaxed);
+    t.countInBeat      = publishedCountInBeat.load(std::memory_order_relaxed);
     return t;
 }
 
@@ -351,6 +352,7 @@ void Engine::process(const AudioCallbackContext& ctx) noexcept {
         countingLeft      = std::max(1, countIn.pulses - counted);
     }
     publishedCountIn.store(countingLeft, std::memory_order_relaxed);
+    publishedCountInBeat.store(countIn.active ? std::max(countIn.position, 0.0) : 0.0, std::memory_order_relaxed);
     publishedRunning.store(clock.running, std::memory_order_relaxed);
     const TimeInfo now = timeAt(ctx, 0);   // the next block's start (the clock has moved)
     publishedBeat.store(now.beatPosition, std::memory_order_relaxed);

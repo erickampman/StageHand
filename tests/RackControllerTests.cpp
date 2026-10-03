@@ -288,6 +288,30 @@ void testTransport() {
     CHECK(std::fabs(view.transport.beatPosition - 640.0 * 97.3 / 60.0 / 48000.0) < 1e-9);
     CHECK(view.transport.beatInBar == 0 && view.transport.onBeat);
     CHECK(view.modified);
+
+    // The count-in (docs/perform.md), saved with the rack: half a bar of 4/4
+    // at 120 BPM counts "3, 4" (a beat: 375 of runBlock's 64 frames), the
+    // countdown and the lights showing it, then bar 1.
+    rig.engine->sendTransportCommand(Engine::TransportCommand::Stop);
+    runBlock(*rig.engine);
+    controller.setTempo(120.0);
+    controller.setTimeSignature(4, 4);
+    controller.setCountIn(0.7);   // rounded to the nearest choice below a bar: half
+    controller.tick(1.3);
+    CHECK(view.transport.countInBars == 0.5 && rig.session->capture().metronome.countInBars == 0.5);
+    rig.engine->sendTransportCommand(Engine::TransportCommand::Start);
+    for (int i = 0; i < 10; ++i) runBlock(*rig.engine);
+    controller.tick(1.4);
+    CHECK(!view.transport.running && view.transport.countIn == 2);
+    CHECK(view.transport.beatInBar == 2 && view.transport.onBeat);   // the third light: "3"
+    for (int i = 0; i < 375; ++i) runBlock(*rig.engine);
+    controller.tick(1.5);
+    CHECK(view.transport.countIn == 1 && view.transport.beatInBar == 3 && view.transport.onBeat);   // "4"
+    for (int i = 0; i < 375; ++i) runBlock(*rig.engine);
+    controller.tick(1.6);
+    CHECK(view.transport.running && view.transport.countIn == 0 && view.transport.beatInBar == 0);   // bar 1
+    controller.setCountIn(0.0);
+    CHECK(rig.session->capture().metronome.countInBars == 0.0);
 }
 
 void testDock() {

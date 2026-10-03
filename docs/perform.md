@@ -1,6 +1,6 @@
 # StageHand — Count-in and the Perform view (design)
 
-Proposed 2026-10-03; milestone 1 built (notes under "Milestones"). A count-in before a song starts,
+Proposed 2026-10-03; milestones 1 and 2 built (notes under "Milestones"). A count-in before a song starts,
 chosen per song, and a Perform view: the main window as it should look on
 stage, with the beat large enough to read from across it. Builds on:
 - sequences.md, section 7: Start and Stop, At Start, start on first note,
@@ -133,6 +133,20 @@ down). Tests: `testCountIn` in the engine tests (onsets, pitch, what plugins
 see, half a bar, 6/8, Start again, Toggle as Stop) and the sequence tests (At
 Start from a trigger's frame, a sequence started while stopped, start on
 first note, a song switch), `testArmWithCountIn` (looper).
+
+**Milestone 2 implemented (2026-10-03):** `MetronomeSettings::countInBars`,
+saved as `"countIn"` in the rack's `"metronome"` (rack-format.md; only 0.5, 1
+or 2, written when set), applied to the engine with the click
+(`Session::applyMetronome()`). `RackController::setCountIn()`; the view
+model's `TransportModel::countIn` (the pulse sounding, counted down) and
+`countInBars`, and the beat lights placed while counting in where the pulses
+fall in the bars before bar 1 (half a bar of 4/4 lights the third and fourth).
+The engine publishes how far into the count-in it is
+(`Transport::countInBeat`). UI: the ⋮ menu's No count-in, half a bar, 1 bar,
+2 bars; while counting in, the tempo box reads "Count-in 3" in amber and the
+lights are all amber. Tests: the rack file (round trip, a bad value), the
+controller (the setting saved, the countdown and the lights through a
+half-bar count-in, bar 1).
 
 ## Open questions
 

@@ -536,9 +536,11 @@ void RackWidget::drawToolbar() {
 void RackWidget::drawTransport(float x) {
     const TransportModel& t = controller.view().transport;
     char                  text[32];
-    std::snprintf(text, sizeof text, "%.1f BPM", t.tempoBpm);
+    // Counting in (docs/perform.md): the countdown, in amber, where the tempo is.
+    if (t.countIn > 0) std::snprintf(text, sizeof text, "Count-in %d", t.countIn);
+    else std::snprintf(text, sizeof text, "%.1f BPM", t.tempoBpm);
     box(x, 8.0f, 104.0f, 28.0f, kTrack, 4.0f);
-    label(x + 52.0f, kToolbarH / 2, text, 14.0f, kText, ALIGN_CENTER | ALIGN_MIDDLE);
+    label(x + 52.0f, kToolbarH / 2, text, 14.0f, t.countIn > 0 ? kAmber : kText, ALIGN_CENTER | ALIGN_MIDDLE);
     region(
         x, 8.0f, 104.0f, 28.0f,
         [this](const Press& p) {
@@ -608,7 +610,7 @@ void RackWidget::drawTransport(float x) {
         const bool lit = t.onBeat && b == t.beatInBar;
         beginPath();
         circle(sigX + 68.0f + static_cast<float>(b) * spacing, kToolbarH / 2, 5.0f);
-        fill(!lit ? kTrack : b == 0 ? kAmber : kGreen);   // the downbeat stands out
+        fill(!lit ? kTrack : b == 0 || t.countIn > 0 ? kAmber : kGreen);   // the downbeat stands out; the count-in's all amber
         NanoVG::fill();
     }
 
@@ -643,6 +645,10 @@ void RackWidget::openMetronomeMenu(float x, float y) {
         m.items.push_back(MenuItem{"Click at " + std::to_string(static_cast<int>(db)) + " dB",
                                    [this, db] { controller.setClickLevel(db); },
                                    t.click && std::fabs(t.clickLevelDb - db) < 0.5f});
+    // The count-in (docs/perform.md): this song's, before bar 1 at a start.
+    for (const auto [bars, text] : {std::pair{0.0, "No count-in"}, {0.5, "Count-in: half a bar"}, {1.0, "Count-in: 1 bar"},
+                                    {2.0, "Count-in: 2 bars"}})
+        m.items.push_back(MenuItem{text, [this, b = bars] { controller.setCountIn(b); }, t.countInBars == bars});
     // Why it's silent, where it's plain to see.
     if (t.click && t.clickOutput.empty()) m.items.push_back(MenuItem{"   Silent: choose an output below", {}});
     else if (t.click && !t.clickConnected) m.items.push_back(MenuItem{"   Silent: its output isn't connected", {}});

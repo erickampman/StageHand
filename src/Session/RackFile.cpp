@@ -289,7 +289,8 @@ Json transportJson(const TransportSettings& t) {
     return j;
 }
 
-// "metronome": {"count": "beats" | "notes", "click": bool, "clickLevel": dB, "clickOutput": name}.
+// "metronome": {"count": "beats" | "notes", "click": bool, "clickLevel": dB, "countIn": bars,
+// "clickOutput": name (older racks)}.
 MetronomeSettings parseMetronome(const Json& j) {
     if (!j.is_object()) fail("metronome should be an object");
     MetronomeSettings m;
@@ -300,6 +301,12 @@ MetronomeSettings parseMetronome(const Json& j) {
     m.clickLevelDb = j.value("clickLevel", -12.0f);
     if (m.clickLevelDb < -60.0f || m.clickLevelDb > 0.0f) fail("metronome.clickLevel must be within -60 to 0 dB");
     m.clickOutput = j.value("clickOutput", std::string());
+    if (j.contains("countIn")) {
+        const Json& c = j.at("countIn");
+        m.countInBars = c.is_number() ? c.get<double>() : -1.0;
+        if (m.countInBars != 0.0 && m.countInBars != 0.5 && m.countInBars != 1.0 && m.countInBars != 2.0)
+            fail("metronome.countIn must be 0, 0.5, 1 or 2 (bars)");
+    }
     return m;
 }
 
@@ -308,6 +315,7 @@ Json metronomeJson(const MetronomeSettings& m) {
     j["count"]       = m.everyNote ? "notes" : "beats";
     j["click"]       = m.click;
     j["clickLevel"]  = m.clickLevelDb;
+    if (m.countInBars > 0.0) j["countIn"] = m.countInBars;
     if (!m.clickOutput.empty()) j["clickOutput"] = m.clickOutput;   // older racks only: it's the rig's now
     return j;
 }

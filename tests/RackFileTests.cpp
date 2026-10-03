@@ -78,6 +78,7 @@ Rack sampleRack() {
     rack.metronome.everyNote         = true;
     rack.metronome.click             = true;
     rack.metronome.clickLevelDb      = -18.0f;
+    rack.metronome.countInBars       = 0.5;
     rack.metronome.clickOutput       = "Built-in Audio Analog Stereo";
     rack.transport.triggers          = {pedal};
     rack.transport.startOnNote       = true;
@@ -284,6 +285,8 @@ void testFailures(const fs::path& dir) {
     expectFailure(dir, "Count.rack",
                   R"({"format":"stagehand-rack","version":1,"slots":[],"metronome":{"count":"halves"}})",
                   "metronome: ");
+    expectFailure(dir, "BadCountIn.rack",
+                  R"({"format":"stagehand-rack","version":1,"slots":[],"metronome":{"countIn":3}})", "countIn");
     expectFailure(dir, "Fast.rack", R"({"format":"stagehand-rack","version":1,"tempo":500,"slots":[]})",
                   "20-400 BPM");
     expectFailure(dir, "Sig.rack",

@@ -131,6 +131,7 @@ struct TransportModel {
     int    beatsInBar   = 4;     // lights to draw: counted beats (6/8: 2 dotted beats; 7/8: 7 eighths)
     bool   onBeat       = false; // the first part of a beat: the light is lit (never while stopped)
     bool   running      = false; // Start/Stop (docs/sequences.md, section 7)
+    int    countIn      = 0;     // counting in: the pulse sounding, counted down (4, 3, 2, 1); 0: not (docs/perform.md)
     // Its MIDI control: triggers described as a sequence row's are; start on
     // first note ("" when off, else the input: "All inputs", "KeyLab 88").
     std::vector<std::string> triggers;
@@ -143,6 +144,7 @@ struct TransportModel {
     bool                     everyNote      = false;
     bool                     click          = false;
     float                    clickLevelDb   = -12.0f;
+    double                   countInBars    = 0.0;     // 0, 0.5, 1 or 2
     std::string              clickOutput;              // chosen device; "" = none
     bool                     clickConnected = false;   // to it, now
     std::vector<std::string> playbackDevices;          // as of refreshPlaybackDevices()
