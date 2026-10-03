@@ -53,7 +53,7 @@ void testRoundTrip(const fs::path& dir) {
     set.songs = {{(dir / "Racks/Autumn leaves.rack").string(), ""},
                  {(dir / "Racks/So what.rack").string(), "So what (fast)"},
                  {(dir / "Racks/Autumn leaves.rack").string(), ""}};   // a reprise
-    set.switching.when = SwitchSettings::When::NextBar;
+    set.switching.when = SwitchSettings::When::Now;   // not the default: written
     set.rig            = (dir / "Stage.rig").string();
     SetlistTrigger next;   // a pedal on a device
     next.source  = MidiSourceRef{MidiSourceRef::Kind::Device, "FCB1010:FCB1010 MIDI 1"};
@@ -70,7 +70,7 @@ void testRoundTrip(const fs::path& dir) {
     // Relative to the setlist's folder, so moving both together keeps working.
     const std::string text = readText(file);
     CHECK(text.find("\"../Racks/So what.rack\"") != std::string::npos);
-    CHECK(text.find("\"nextBar\"") != std::string::npos && text.find("\"ringOut\"") != std::string::npos);
+    CHECK(text.find("\"at\": \"now\"") != std::string::npos && text.find("\"ringOut\"") != std::string::npos);
     CHECK(text.find("\"rig\": \"../Stage.rig\"") != std::string::npos);   // relative, like the racks
     CHECK(text.find("\"action\": \"song\"") != std::string::npos && text.find("\"controller\": 80") != std::string::npos);
 

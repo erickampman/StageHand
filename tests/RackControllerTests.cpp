@@ -1303,17 +1303,24 @@ void testSwitchSettings() {
     tick();   // B prepared
     CHECK(view.setlist.switching == SwitchSettings{});
 
-    // Keep running (the default): the new tempo, and B's At Start waiting for the next bar.
+    // The defaults: keep running, at the next bar. A's tempo plays on until
+    // the bar line (a bar of 4/4 at 100 BPM: 115200 frames, 1800 of
+    // runBlock's 64), then B's tempo, with its At Start from that bar.
     controller.startTransport();
     for (int i = 0; i < 4; ++i) runBlock(*rig.engine);
     CHECK(controller.nextSong() && controller.rackPath() == racks[1]);
     runBlock(*rig.engine);
-    CHECK(rig.engine->transport().running && rig.engine->transport().tempoBpm == 140.0);
-    CHECK(rig.session->sequenceState("intro") == SequenceState::Starting);
+    CHECK(rig.engine->transport().running && rig.engine->transport().tempoBpm == 100.0);   // waiting for the bar
+    int blocks = 0;
+    for (; blocks < 2000 && rig.engine->transport().tempoBpm != 140.0; ++blocks) runBlock(*rig.engine);
+    CHECK(blocks > 1700 && blocks < 1800 && rig.engine->transport().running);   // at the line, 5 blocks in already
+    CHECK(rig.session->sequenceState("intro") == SequenceState::Starting ||
+          rig.session->sequenceState("intro") == SequenceState::Playing);
 
     // Stop, and Cut: saved at once; the next switch stops the transport and mutes the old song.
     SwitchSettings settings;
     settings.transport = SwitchSettings::Transport::Stop;
+    settings.when      = SwitchSettings::When::Now;   // as soon as it's ready
     settings.oldRack   = SwitchSettings::OldRack::Cut;
     controller.setSwitchSettings(settings);
     Setlist saved;
