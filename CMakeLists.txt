@@ -72,6 +72,7 @@ target_compile_options(stagehand-warnings INTERFACE -Wall -Wextra -Wpedantic)
 
 # --- stagehand-core: value models, UMP helpers, seam interfaces ----------------
 add_library(stagehand-core STATIC
+    src/Core/Clock.cpp
     src/Core/Ump.cpp)
 target_include_directories(stagehand-core PUBLIC src)
 target_link_libraries(stagehand-core PRIVATE stagehand-warnings)
@@ -88,6 +89,7 @@ target_link_libraries(stagehand-engine
 
 # --- stagehand-session: racks (files) and running them (no platform deps) -------
 add_library(stagehand-session STATIC
+    src/Session/AppPaths.cpp
     src/Session/RackFile.cpp
     src/Session/RigFile.cpp
     src/Session/Session.cpp
@@ -158,6 +160,7 @@ function(stagehand_add_test NAME SOURCE LIBRARY)
 endfunction()
 stagehand_add_test(test-ump    tests/UmpTests.cpp       stagehand-core)
 stagehand_add_test(test-spsc   tests/SpscQueueTests.cpp stagehand-core)
+stagehand_add_test(test-clock  tests/ClockTests.cpp     stagehand-core)
 stagehand_add_test(test-engine tests/EngineTests.cpp    stagehand-engine)
 stagehand_add_test(test-sequence tests/SequenceTests.cpp stagehand-engine)
 stagehand_add_test(test-looper  tests/LooperTests.cpp    stagehand-engine)

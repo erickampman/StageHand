@@ -36,7 +36,7 @@ struct LastPosition {
     std::string setlist;
     std::size_t song = 0;
 };
-// $XDG_STATE_HOME/stagehand/last.json (default ~/.local/state/...).
+// last.json in appStateDir() (Session/AppPaths.h).
 std::string defaultLastPositionPath();
 bool        loadLastPosition(const std::string& path, LastPosition& position);   // false: none, or unreadable
 bool        saveLastPosition(const std::string& path, const LastPosition& position);

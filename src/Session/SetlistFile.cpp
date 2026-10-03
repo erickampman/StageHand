@@ -7,6 +7,7 @@
 #include <fstream>
 #include <stdexcept>
 
+#include "Session/AppPaths.h"
 #include "Session/BundleFiles.h"
 
 namespace stagehand {
@@ -214,9 +215,7 @@ bool isSetlistFile(const std::string& path) {
 // --- last position -------------------------------------------------------------------
 
 std::string defaultLastPositionPath() {
-    const char* state = std::getenv("XDG_STATE_HOME");
-    const fs::path base = state != nullptr && *state != '\0' ? fs::path(state) : fs::path(homeDir()) / ".local/state";
-    return (base / "stagehand" / "last.json").string();
+    return (fs::path(appStateDir()) / "last.json").string();
 }
 
 bool loadLastPosition(const std::string& path, LastPosition& position) {

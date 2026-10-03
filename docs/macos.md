@@ -1,7 +1,7 @@
 # StageHand — macOS (plan)
 
 Proposed 2026-10-03, reviewed the same day (notes under "Review");
-milestone 1 built (notes under "Milestones"). StageHand on macOS 15 (Sequoia) and later, keeping DGL for the UI
+milestones 1 and 2 built (notes under "Milestones"). StageHand on macOS 15 (Sequoia) and later, keeping DGL for the UI
 (no native Cocoa interface). Builds on:
 - architecture.md, sections 1 to 3: MIDI, audio and plugins sit behind seams
   (`MidiInput`, `AudioBackend`, `PluginFactory`) so CoreMIDI and CoreAudio
@@ -228,13 +228,18 @@ lock-free on arm64.
    `if(LINUX)`, and a CI workflow running the suites on Linux and macOS.
    Linux builds the same targets with the same dependencies as before; it
    gains CI. Needs no Mac.
-2. **Clock, paths and the main loop:** `nowNanoseconds()` and the block-time
-   convention with its engine test (decision 4), the paths, and the main
-   loop with DGL driving (Cocoa's loop on macOS; Linux's loop unchanged), on
-   both platforms. Before CoreMIDI, whose notifications need Cocoa's loop.
-3. **CoreMIDI input,** two ports, with hotplug, ids in the ALSA shape and
-   devices by name (decision 5, both platforms). Tests: the name fallback in
-   the Session tests; the backend on a Mac.
+2. **Clock and paths:** `nowNanoseconds()` and the block-time convention
+   with its engine test (decision 4), and the paths, on both platforms.
+   (The main loop with Cocoa's loop driving was planned here; it moved to
+   milestone 3, 2026-10-03: it's macOS code in the app, which doesn't build
+   on macOS until there's a MIDI input to run, and Linux's loop doesn't
+   change.)
+3. **CoreMIDI input and the app on macOS:** the app built on macOS with the
+   modes that need no audio (`--list-midi`, `--monitor`), the main loop with
+   Cocoa's loop driving (CoreMIDI's notifications need it), and the CoreMIDI
+   input: two ports, with hotplug, ids in the ALSA shape and devices by name
+   (decision 5, both platforms). Tests: the name fallback in the Session
+   tests; the backend on a Mac.
 4. **CoreAudio backend:** a HAL IOProc on the main device (decision 12,
    settled first), denormals
    flushed (and in JACK's callback), the buses' channel pairs, then the click
@@ -262,6 +267,22 @@ session, app) and the 12 test suites build, with no JACK, ALSA, X11 or DPF.
 the suites; macOS 15 (Apple Silicon) builds the libraries and runs the
 suites, on every pull request and on pushes to main and rack-view. Linux's
 build is otherwise unchanged: the same targets, with the same dependencies.
+
+**Milestone 2 implemented (2026-10-03):** `Core/Clock.h`: `nowNanoseconds()`
+(`CLOCK_MONOTONIC` on Linux, `mach_absolute_time` in nanoseconds on macOS,
+with `hostTimeToNanoseconds()` for CoreMIDI's and CoreAudio's host times),
+used by `JackBackend` and `AlsaSeqInput` in place of their own copies.
+`AudioBackend.h` states the block-time convention (a block's time is when
+its period began; CoreAudio passes the IOProc's "now"), and
+`testCaptureToBlock` (engine) holds every backend to it: MIDI captured
+during a period plays in the next block at the same offset, a constant one
+period later (it fails with a backend passing the period's end, checked).
+`Session/AppPaths.h`: `appDataDir()` and `appStateDir()` (XDG on Linux,
+`~/Library/Application Support/StageHand` on macOS) for the default rig, the
+last position and the window size. Tests: `tests/ClockTests.cpp` (the
+clock, and host times on macOS), `testAppPaths` (setlist file tests: both
+platforms' paths, each checked on its own CI), the rig and setlist path
+checks per platform.
 
 ## Review (2026-10-03)
 

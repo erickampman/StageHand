@@ -5,12 +5,14 @@
 
 #include <unistd.h>
 
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <string>
 
 #include "Check.h"
+#include "Session/AppPaths.h"
 #include "Session/RackFile.h"
 #include "Session/SetlistFile.h"
 #include "Session/WindowState.h"
@@ -142,10 +144,33 @@ void testLastPosition(const fs::path& dir) {
     CHECK(saveLastPosition(path, LastPosition{}));
     CHECK(loadLastPosition(path, p) && p.setlist.empty() && p.song == 0);
 
-    setenv("XDG_STATE_HOME", "/x/state", 1);
-    CHECK(defaultLastPositionPath() == "/x/state/stagehand/last.json");
+    CHECK(defaultLastPositionPath() == appStateDir() + "/last.json");
+}
+
+// Where StageHand keeps its own files (Session/AppPaths.h): XDG's folders on
+// Linux, Application Support on macOS, from HOME either way.
+void testAppPaths() {
+    const char*       home     = std::getenv("HOME");
+    const std::string realHome = home != nullptr ? home : "";
+    setenv("HOME", "/h", 1);
+#ifdef __APPLE__
+    CHECK(appDataDir() == "/h/Library/Application Support/StageHand");
+    CHECK(appStateDir() == "/h/Library/Application Support/StageHand");
+#else
+    unsetenv("XDG_DATA_HOME");
     unsetenv("XDG_STATE_HOME");
-    CHECK(defaultLastPositionPath().find("/.local/state/stagehand/last.json") != std::string::npos);
+    CHECK(appDataDir() == "/h/.local/share/stagehand" && appStateDir() == "/h/.local/state/stagehand");
+    setenv("XDG_DATA_HOME", "/x/data", 1);
+    setenv("XDG_STATE_HOME", "/x/state", 1);
+    CHECK(appDataDir() == "/x/data/stagehand" && appStateDir() == "/x/state/stagehand");
+    CHECK(defaultLastPositionPath() == "/x/state/stagehand/last.json");
+    CHECK(defaultWindowStatePath() == "/x/state/stagehand/window.json");
+    setenv("XDG_STATE_HOME", "", 1);   // set but empty: as if not set
+    CHECK(appStateDir() == "/h/.local/state/stagehand");
+    unsetenv("XDG_DATA_HOME");
+    unsetenv("XDG_STATE_HOME");
+#endif
+    setenv("HOME", realHome.c_str(), 1);
 }
 
 // The rack window's size, kept between runs, and fitted to the monitor.
@@ -158,9 +183,7 @@ void testWindowSize(const fs::path& dir) {
     writeText(dir / "state/stagehand/window.json", R"({"width": 0, "height": 700})");
     CHECK(!loadWindowSize(path, s) && s == (WindowSize{1180.0, 906.0}));   // unchanged
 
-    setenv("XDG_STATE_HOME", "/x/state", 1);
-    CHECK(defaultWindowStatePath() == "/x/state/stagehand/window.json");
-    unsetenv("XDG_STATE_HOME");
+    CHECK(defaultWindowStatePath() == appStateDir() + "/window.json");
 
     const WindowSize minimum{930.0, 300.0};
     CHECK(fitWindowSize({1100.0, 900.0}, minimum, {1920.0, 1080.0}) == (WindowSize{1100.0, 900.0}));
@@ -180,6 +203,7 @@ int main() {
     testPaths(dir);
     testLastPosition(dir);
     testWindowSize(dir);
+    testAppPaths();
     fs::remove_all(dir);
     return test::finish("SetlistFile");
 }

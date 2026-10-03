@@ -101,7 +101,8 @@ old rack ring out.
 - **Reopening (decided 2026-10-01):** started with no arguments, StageHand
   reopens the last setlist at the song it was on. The setlist's path and the
   song are kept in `$XDG_STATE_HOME/stagehand/last.json` (default
-  `~/.local/state`), written at each switch (a few bytes, atomic), so a crash
+  `~/.local/state`; on macOS in `~/Library/Application Support/StageHand`),
+  written at each switch (a few bytes, atomic), so a crash
   reopens where it was too. If that setlist is gone, or a rack was opened on
   its own last, it starts as today (an untitled rack). A path on the command
   line wins.

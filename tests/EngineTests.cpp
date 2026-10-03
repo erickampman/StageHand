@@ -90,6 +90,45 @@ void testOnePeriodBehind() {
     }
 }
 
+// The backend's side of the convention (AudioBackend.h, docs/macos.md
+// decision 4): a block's time is when its period began, so MIDI captured
+// during one period plays in the next block at the same offset in its
+// period: a constant latency of one period, every block, nothing late and
+// nothing lost. A backend passing the output's time instead (later by the
+// buffer and the latency) would break this; so would one passing the end of
+// the period.
+void testCaptureToBlock() {
+    auto engine = std::make_unique<Engine>();
+    auto plugin = std::make_shared<FakePlugin>();
+    engine->commit(graphOf({slotFor(plugin)}));
+
+    constexpr std::uint32_t kFrames = 256;
+    constexpr double        kRate   = 48000.0;
+    const Nanoseconds       period  = std::llround(kFrames * 1e9 / kRate);   // 5.33 ms
+    const std::uint32_t     offsets[] = {0, 1, 100, 255};
+    std::uint8_t            noteNumber = 40;
+    for (int k = 0; k < 6; ++k) {
+        const Nanoseconds start = T + k * period;
+        if (k > 0) {   // what this block plays was captured during the period before it
+            Block block(kFrames, kRate, start);
+            engine->process(block.ctx);
+        }
+        // Captured during period k, as the MIDI thread would stamp it.
+        for (const std::uint32_t offset : offsets)
+            engine->onMidi(1, note(start + std::llround(offset * 1e9 / kRate) + 1, noteNumber++));
+    }
+    CHECK(engine->stats().lateMidi == 0);
+    CHECK(plugin->calls.size() == 5);
+    std::uint8_t expected = 40;
+    for (const auto& call : plugin->calls) {
+        CHECK(call.events.size() == 4);
+        for (std::size_t i = 0; i < call.events.size() && i < 4; ++i) {
+            CHECK(ump::noteNumber(call.events[i].midi) == expected++);
+            CHECK(call.events[i].sampleOffset == offsets[i]);
+        }
+    }
+}
+
 void testBlockSplitting() {
     auto engine = std::make_unique<Engine>();
     auto plugin = std::make_shared<FakePlugin>();
@@ -973,6 +1012,7 @@ void testGraphLifecycle() {
 int main() {
     testClick();
     testOnePeriodBehind();
+    testCaptureToBlock();
     testBlockSplitting();
     testRoutingAndDialects();
     testTranslation();
