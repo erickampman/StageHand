@@ -1,7 +1,7 @@
 # StageHand — macOS (plan)
 
 Proposed 2026-10-03, reviewed the same day (notes under "Review");
-milestones 1 and 2 built (notes under "Milestones"). StageHand on macOS 15 (Sequoia) and later, keeping DGL for the UI
+milestones 1 to 3 built (notes under "Milestones"). StageHand on macOS 15 (Sequoia) and later, keeping DGL for the UI
 (no native Cocoa interface). Builds on:
 - architecture.md, sections 1 to 3: MIDI, audio and plugins sit behind seams
   (`MidiInput`, `AudioBackend`, `PluginFactory`) so CoreMIDI and CoreAudio
@@ -155,9 +155,12 @@ lock-free on arm64.
 - **Hotplug:** the client's notifications (objects added and removed) bump
   `changes()`; `sync()` reconnects a source that came back (by its unique
   id, then its name). They arrive on the run loop of the thread that made
-  the client, so the main loop must run Cocoa's loop first (milestone 2).
+  the client, so the client is made on a small thread of the input's own
+  that runs a `CFRunLoop` and only counts them (changed in milestone 3: see
+  its notes). The input then works under any main loop, or none.
 - **Threads:** CoreMIDI calls back on its own high-priority thread: no
-  thread of ours, no SCHED_FIFO.
+  MIDI thread of ours, no SCHED_FIFO (the notification thread above carries
+  no MIDI).
 
 ### Plugins
 - **Bundles:** `.clap` on macOS is a bundle, loaded through CFBundle, the
@@ -239,8 +242,10 @@ lock-free on arm64.
    Cocoa's loop driving (CoreMIDI's notifications need it), and the CoreMIDI
    input: two ports, with hotplug, ids in the ALSA shape and devices by name
    (decision 5, both platforms). Tests: the name fallback in the Session
-   tests; the backend on a Mac.
-4. **CoreAudio backend:** a HAL IOProc on the main device (decision 12,
+   tests; the backend on a Mac. (Cocoa's loop moved to milestone 4 when
+   built: see the notes.)
+4. **CoreAudio backend:** the main loop with Cocoa's loop driving (moved
+   from milestone 3), a HAL IOProc on the main device (decision 12,
    settled first), denormals
    flushed (and in JACK's callback), the buses' channel pairs, then the click
    on its own pair or another device through the private aggregate
@@ -301,6 +306,47 @@ need no Mac.
   (a denormal result and a denormal input are 0 under it, normal values
   untouched, the mode restored, nesting), run on x86 Linux and ARM64 macOS
   by CI.
+
+**Milestone 3 implemented (2026-10-05):** `Midi/CoreMidiInput` (UMP API, two
+input ports `"StageHand"` and `"StageHand MIDI 2.0"`, each source connected
+to the port of its own protocol; virtual inputs through
+`MIDIDestinationCreateWithProtocol`; each connection's refCon a `Receiver`
+holding its handle, never freed before the input, so a late callback for a
+closed handle finds it cleared). Ids `"<device>:<endpoint>"`; a source with
+no device (another app's virtual source) is just `"<endpoint>"`. Hardware
+means a device on any driver but the IAC bus and network sessions. Offline
+endpoints (a known USB device unplugged) aren't listed. Timestamps are the
+packet's host time, clamped to now (an app may stamp ahead). CMake builds
+the app on macOS by default with `src/Midi/CoreMidiInput.cpp`,
+`main.cpp` and `MidiMonitor.cpp`; playing, `--tone` and `--list-plugins` are
+behind `STAGEHAND_PLAY_MODES` (Linux only for now) and say so on macOS.
+`Midi/PlatformMidiInput.h` picks the input for `main.cpp`; both inputs have
+`threadDescription()`. CI builds the app on macOS too.
+
+- **Changed: the notification thread, and Cocoa's loop to milestone 4.**
+  The plan had the main loop run Cocoa's loop so CoreMIDI's notifications
+  could come. But nothing on macOS runs a main loop yet (`--monitor` and
+  `--list-midi` don't use one; `--play` needs audio), and tying the input's
+  hotplug to whichever loop the app runs would make it depend on DGL. So
+  the input makes its client on its own thread, with a `CFRunLoop` that
+  only counts notifications. Cocoa's loop driving `MainLoop` (with the
+  timers as DGL idle callbacks) belongs with the first macOS window, in
+  milestone 4 or 5, and no longer has CoreMIDI to wait for.
+- **Checked on a Mac** (macOS 15, Apple Silicon), with a test sender
+  publishing a MIDI 1.0 and a MIDI 2.0 source: the 1.0 source arrives as
+  MT 0x2 and the 2.0 source as MT 0x4, each on its own port; both virtual
+  inputs receive; note-on to note-off spacing is right; a source leaving
+  moves `changes()` and `sync()` reports it gone, and coming back (a new
+  endpoint of the same name) reconnects it under the same handle. KeyEDO
+  lists as a MIDI 2.0 app source.
+- **MSB-only Data Entry survives on macOS.** A MIDI 1.0 app sending to the
+  `"MIDI 2.0 In"` destination: RPN 0/0 with CC 6 only arrives as `RPN 0:0
+  value 0x04000000` (the MSB, scaled), at once, without waiting for an LSB,
+  unlike ALSA's converter (architecture.md, section 1). CoreMIDI also passes
+  CC 101 and CC 100 through, as MIDI 2.0 controller messages, before the
+  RPN.
+- **Not checked yet:** a real USB keyboard (the KeyLab 88 and Launchkey
+  were unplugged), and a UMP-native USB device.
 
 ## Review (2026-10-03)
 

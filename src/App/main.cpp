@@ -18,33 +18,42 @@
 
 #include <unistd.h>
 
+#include "App/MidiMonitor.h"
+#include "Midi/PlatformMidiInput.h"
+#include "Session/Session.h"
+
+// Playing, --tone and --list-plugins: Linux only until macOS has its audio
+// backend, plugin loader and windows (docs/macos.md, milestones 4 to 6).
+#ifdef STAGEHAND_PLAY_MODES
 #include "App/AppHost.h"
 #include "App/EditorWindow.h"
 #include "App/MainLoop.h"
-#include "App/MidiMonitor.h"
 #include "App/RackController.h"
 #include "App/TestTone.h"
 #include "Audio/JackBackend.h"
 #include "Engine/Engine.h"
-#include "Midi/AlsaSeqInput.h"
 #include "Plugin/Clap/ClapPluginFactory.h"
 #include "Session/RackFile.h"
 #include "Session/RigFile.h"
-#include "Session/Session.h"
 #include "Session/SetlistFile.h"
 #include "Session/WindowState.h"
 #include "Ui/RackUi.h"
+#endif
 
 using namespace stagehand;
 
 namespace {
 
 std::atomic<bool>      quitRequested{false};
+#ifdef STAGEHAND_PLAY_MODES
 std::atomic<MainLoop*> activeLoop{nullptr};   // --play's loop, for the signal handler
+#endif
 
 void handleSignal(int) {
     quitRequested.store(true);
+#ifdef STAGEHAND_PLAY_MODES
     if (MainLoop* loop = activeLoop.load()) loop->requestQuit();   // async-signal-safe
+#endif
 }
 
 void printUsage() {
@@ -223,6 +232,7 @@ const char* protocolName(MidiProtocol protocol) {
     return protocol == MidiProtocol::Midi2 ? "MIDI 2.0" : "MIDI 1.0";
 }
 
+#ifdef STAGEHAND_PLAY_MODES
 std::string dialectNames(NoteDialectMask mask) {
     std::string text;
     auto add = [&](NoteDialectMask bit, const char* name) {
@@ -236,6 +246,7 @@ std::string dialectNames(NoteDialectMask mask) {
     add(NoteDialect::Midi2, "MIDI2");
     return text.empty() ? "none" : text;
 }
+#endif
 
 // Virtual inputs other apps (a MIDI 2.0 test tool, later KeyEDO) connect to.
 const std::vector<std::pair<std::string, MidiProtocol>> kVirtualInputs = {
@@ -244,7 +255,7 @@ const std::vector<std::pair<std::string, MidiProtocol>> kVirtualInputs = {
 // Opens the two virtual inputs plus the requested sources and prints where each
 // landed. Registers each with `session` (if given) so rack sources resolve to
 // it. Returns handle -> label.
-std::map<MidiSourceHandle, std::string> openMidiInputs(AlsaSeqInput& input, const Options& options,
+std::map<MidiSourceHandle, std::string> openMidiInputs(PlatformMidiInput& input, const Options& options,
                                                        Session* session) {
     std::map<MidiSourceHandle, std::string> names;
     std::printf("MIDI protocol preference: %s\n", protocolName(options.preference));
@@ -277,12 +288,11 @@ std::map<MidiSourceHandle, std::string> openMidiInputs(AlsaSeqInput& input, cons
         if (session) session->addOpenSource(MidiSourceRef{MidiSourceRef::Kind::Device, id}, handle);
         std::printf("  %-30s %s\n", id.c_str(), input.describe(handle).c_str());
     }
-    std::printf("MIDI thread: %s\n",
-                input.realtimePriority()
-                    ? "SCHED_FIFO"
-                    : "normal priority (no real-time permission; timestamps may jitter)");
+    std::printf("MIDI thread: %s\n", input.threadDescription());
     return names;
 }
+
+#ifdef STAGEHAND_PLAY_MODES
 
 // --- --tone ------------------------------------------------------------------------------
 
@@ -330,10 +340,12 @@ int runTone(const Options& options) {
     return 0;
 }
 
+#endif // STAGEHAND_PLAY_MODES
+
 // --- --list-midi / --monitor --------------------------------------------------------------
 
 int listMidi() {
-    const auto input = AlsaSeqInput::create();
+    const auto input = PlatformMidiInput::create();
     if (!input) return 1;
     const std::vector<MidiSourceInfo> sources = input->enumerate();
     if (sources.empty()) {
@@ -347,7 +359,7 @@ int listMidi() {
 }
 
 int runMonitor(const Options& options) {
-    const auto input = AlsaSeqInput::create();
+    const auto input = PlatformMidiInput::create();
     if (!input) return 1;
     input->setProtocolPreference(options.preference);
 
@@ -369,6 +381,8 @@ int runMonitor(const Options& options) {
     monitor->drain(names);
     return 0;
 }
+
+#ifdef STAGEHAND_PLAY_MODES
 
 // --- --list-plugins / --play ---------------------------------------------------------------
 
@@ -578,7 +592,7 @@ int runPlay(const Options& options) {
     const auto engine = std::make_unique<Engine>();
     backend.setProcessor(engine.get());
 
-    std::unique_ptr<AlsaSeqInput> input = AlsaSeqInput::create();
+    std::unique_ptr<PlatformMidiInput> input = PlatformMidiInput::create();
     if (!input) return 1;
     input->setProtocolPreference(options.preference);
     input->setSink(engine.get());
@@ -777,6 +791,8 @@ void restartUnderPwJackIfNeeded(int argc, char** argv) {
     unsetenv(kMarker);
 }
 
+#endif // STAGEHAND_PLAY_MODES
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -790,17 +806,30 @@ int main(int argc, char** argv) {
     Options options;
     if (const int result = parseArguments(argc, argv, options); result != 0)
         return result < 0 ? 0 : result;
+#ifdef STAGEHAND_PLAY_MODES
     if (options.mode == Mode::Play || options.mode == Mode::Tone) restartUnderPwJackIfNeeded(argc, argv);
+#endif
 
     std::signal(SIGINT, handleSignal);
     std::signal(SIGTERM, handleSignal);
 
     switch (options.mode) {
+#ifdef STAGEHAND_PLAY_MODES
         case Mode::Play:        return runPlay(options);
         case Mode::ListPlugins: return listPlugins();
+        case Mode::Tone:        return runTone(options);
+#else
+        case Mode::Play:
+        case Mode::ListPlugins:
+        case Mode::Tone:
+            std::fprintf(stderr,
+                         "On macOS, StageHand only lists and monitors MIDI so far (--list-midi,\n"
+                         "--monitor): playing, --tone and --list-plugins need the audio backend and\n"
+                         "the plugin loader still to come (docs/macos.md, milestones 4 and 5).\n");
+            return 1;
+#endif
         case Mode::ListMidi:    return listMidi();
         case Mode::Monitor:     return runMonitor(options);
-        case Mode::Tone:        return runTone(options);
         case Mode::None:        break;
     }
     printUsage();

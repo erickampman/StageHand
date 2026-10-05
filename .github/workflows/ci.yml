@@ -1,6 +1,6 @@
 # Build and run the test suites on every push and pull request (docs/macos.md,
 # milestone 1). Linux builds everything, the app included; macOS builds the
-# libraries and the tests only, until its backends exist. The suites use
+# libraries, the tests and the app's MIDI modes (milestone 3). The suites use
 # fakes: no audio, MIDI or display needed.
 name: CI
 
@@ -36,8 +36,8 @@ jobs:
           submodules: true
       - name: Install build dependencies
         run: brew install ninja
-      - name: Configure (libraries and tests only)
-        run: cmake -S . -B build -G Ninja -DSTAGEHAND_APP=OFF
+      - name: Configure
+        run: cmake -S . -B build -G Ninja
       - name: Build
         run: cmake --build build
       - name: Test

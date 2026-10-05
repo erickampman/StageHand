@@ -12,7 +12,7 @@ Everything else is a system library.
 | Platform | What builds today |
 |---|---|
 | Linux | everything: the `stagehand` app (rack window, plugin hosting), its libraries, the test suites |
-| macOS | the platform-free libraries (core, engine, session, app) and the test suites; no app until the CoreMIDI and CoreAudio backends exist ([macos.md](macos.md), milestones 3 onward) |
+| macOS | the libraries, the test suites, and the `stagehand` app with its MIDI modes only (`--list-midi`, `--monitor`, over CoreMIDI); playing waits for the CoreAudio backend and the plugin loader ([macos.md](macos.md), milestones 4 and 5) |
 
 ## Getting the source
 
@@ -73,8 +73,8 @@ ctest --test-dir build --output-on-failure
 
 The default build type is `RelWithDebInfo`; add `-DCMAKE_BUILD_TYPE=Debug` to
 the first command for a debug build. `build/compile_commands.json` is there
-for clangd. `-DSTAGEHAND_APP=OFF` builds what macOS builds: the libraries and
-tests, with none of the Linux dependencies above.
+for clangd. `-DSTAGEHAND_APP=OFF` builds the libraries and tests only, with
+none of the Linux dependencies above.
 
 The test suites use fakes (`tests/FakePlugin.h`, `tests/SessionFakes.h`), so
 they need no audio, MIDI, plugins or display.
@@ -114,7 +114,8 @@ group, and log in again.
 
 Apple Silicon, macOS 15 or later (the build sets `CMAKE_OSX_ARCHITECTURES`
 to `arm64` and the deployment target to 15.0; [macos.md](macos.md),
-decisions 9 and 13). Only the libraries and the test suites build so far.
+decisions 9 and 13). The libraries, the test suites and the app build; the
+app lists and monitors MIDI (`--list-midi`, `--monitor`) but doesn't play yet.
 
 ### Dependencies
 
@@ -130,16 +131,13 @@ CMake and Ninja, for example from Homebrew:
 brew install cmake ninja
 ```
 
-No JACK, ALSA, X11 or OpenGL packages. The macOS backends will use only
-system frameworks (CoreAudio, CoreMIDI, AppKit).
+No JACK, ALSA, X11 or OpenGL packages. The macOS backends use only system
+frameworks (CoreMIDI and CoreFoundation now; CoreAudio and AppKit to come).
 
 ### Build and test
 
-`-DSTAGEHAND_APP=OFF` is required: without it CMake stops with "The app
-builds on Linux only, so far".
-
 ```bash
-cmake -B build -G Ninja -DSTAGEHAND_APP=OFF
+cmake -B build -G Ninja
 ```
 
 ```bash
@@ -150,7 +148,13 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
+Then, to see MIDI arrive (Ctrl-C stops it):
+
+```bash
+./build/stagehand --monitor
+```
+
 ## Other platforms
 
-Not supported. Anything other than Linux builds only with
-`-DSTAGEHAND_APP=OFF`, and only macOS is tested (by CI).
+Not supported. Anything other than Linux and macOS builds only with
+`-DSTAGEHAND_APP=OFF`, and isn't tested.

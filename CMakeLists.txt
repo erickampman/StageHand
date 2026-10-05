@@ -15,25 +15,36 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 # --- Platforms (docs/macos.md) -----------------------------------------------------
-# Linux builds everything. Elsewhere (macOS, so far: milestone 1) only the
-# platform-free libraries and the test suites build; the app needs backends
-# that aren't written yet. STAGEHAND_APP=OFF does the same on Linux.
+# Linux builds everything. macOS (so far: milestone 3) builds the app with the
+# MIDI modes only (--list-midi, --monitor), over CoreMIDI; playing needs the
+# audio backend and plugin loader still to come. STAGEHAND_APP=OFF builds the
+# platform-free libraries and the test suites only, anywhere.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     set(stagehand_linux ON)
 else()
     set(stagehand_linux OFF)
 endif()
-option(STAGEHAND_APP "Build the app (Linux only, for now), not just the libraries and tests" ${stagehand_linux})
-if(STAGEHAND_APP AND NOT stagehand_linux)
-    message(FATAL_ERROR "The app builds on Linux only, so far (docs/macos.md); configure with -DSTAGEHAND_APP=OFF")
+if(stagehand_linux OR APPLE)
+    set(stagehand_app_default ON)
+else()
+    set(stagehand_app_default OFF)
+endif()
+option(STAGEHAND_APP "Build the app (Linux and macOS), not just the libraries and tests" ${stagehand_app_default})
+if(STAGEHAND_APP AND NOT stagehand_app_default)
+    message(FATAL_ERROR "The app builds on Linux and macOS only (docs/macos.md); configure with -DSTAGEHAND_APP=OFF")
+endif()
+if(STAGEHAND_APP AND stagehand_linux)
+    set(stagehand_linux_app ON)
+else()
+    set(stagehand_linux_app OFF)
 endif()
 
 # --- System dependencies (docs/architecture.md, dependency summary) -----------
 # JACK API headers from libjack-jackd2-dev; at runtime the calls are served by
 # PipeWire (pipewire-jack) — run under `pw-jack`. ALSA's sequencer (UMP mode,
-# alsa-lib 1.2.10+) provides MIDI input. The app's only.
+# alsa-lib 1.2.10+) provides MIDI input. The Linux app's only.
 find_package(Threads REQUIRED)
-if(STAGEHAND_APP)
+if(stagehand_linux_app)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(JACK REQUIRED IMPORTED_TARGET jack)
     pkg_check_modules(ALSA REQUIRED IMPORTED_TARGET alsa>=1.2.10)
@@ -51,8 +62,8 @@ target_include_directories(nlohmann-json SYSTEM INTERFACE external)
 
 # --- DPF's DGL (pugl + NanoVG over OpenGL): StageHand's own UI. Vendored from PMU
 # (external/dpf/README.StageHand.md); only the DGL library, no plugin wrappers.
-# The app's only.
-if(STAGEHAND_APP)
+# The Linux app's only, so far (macOS: docs/macos.md, milestone 4 onwards).
+if(stagehand_linux_app)
     set(DPF_LIBRARIES OFF CACHE BOOL "" FORCE)
     set(DPF_EXAMPLES OFF CACHE BOOL "" FORCE)
     add_subdirectory(external/dpf EXCLUDE_FROM_ALL)
@@ -113,8 +124,8 @@ target_link_libraries(stagehand-app
     PUBLIC  stagehand-session
     PRIVATE stagehand-warnings)
 
-# --- The Linux seams, the UI and the app (STAGEHAND_APP) ---------------------------
-if(STAGEHAND_APP)
+# --- The Linux seams, the UI and the app (STAGEHAND_APP on Linux) ------------------
+if(stagehand_linux_app)
 
     # --- stagehand-lib: seam implementations (everything except main) --------------
     add_library(stagehand-lib STATIC
@@ -152,6 +163,23 @@ if(STAGEHAND_APP)
         src/App/MainLoop.cpp
         src/App/MidiMonitor.cpp)
     target_link_libraries(stagehand PRIVATE stagehand-lib stagehand-app stagehand-ui PkgConfig::X11 stagehand-warnings)
+    target_compile_definitions(stagehand PRIVATE STAGEHAND_PLAY_MODES)   # playing, --tone, --list-plugins
+
+endif()
+
+# --- The macOS seams and the app (STAGEHAND_APP on macOS): MIDI modes only ---------
+if(STAGEHAND_APP AND APPLE)
+
+    add_library(stagehand-lib STATIC
+        src/Midi/CoreMidiInput.cpp)
+    target_link_libraries(stagehand-lib
+        PUBLIC  stagehand-engine "-framework CoreMIDI" "-framework CoreFoundation" Threads::Threads
+        PRIVATE stagehand-warnings)
+
+    add_executable(stagehand
+        src/App/main.cpp
+        src/App/MidiMonitor.cpp)
+    target_link_libraries(stagehand PRIVATE stagehand-lib stagehand-app stagehand-warnings)
 
 endif()
 

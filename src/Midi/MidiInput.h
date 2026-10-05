@@ -27,10 +27,11 @@ public:
                         const TimedMidiMessage& msg) noexcept = 0;
 };
 
-// The MIDI-input seam. The only component that knows ALSA (initial impl: the
+// The MIDI-input seam. The only component that knows ALSA (AlsaSeqInput: the
 // sequencer in UMP mode, with one MIDI 1.0 client and one MIDI 2.0 client —
-// docs/architecture.md section 1), later libremidi/CoreMIDI. Owns a non-RT MIDI
-// thread; timestamps each message at capture and delivers it to the sink.
+// docs/architecture.md section 1) or CoreMIDI (CoreMidiInput: two input ports —
+// docs/macos.md). Messages come on a non-RT MIDI thread (its own, or CoreMIDI's),
+// timestamped at capture, and go to the sink.
 //
 // It WRAPS BUT NEVER TRANSLATES: MIDI 1.0 sources arrive as MT 0x2/0x1/0x3 (a
 // lossless wrap), MIDI 2.0 sources as MT 0x4. Routing and protocol translation

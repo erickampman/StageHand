@@ -52,6 +52,9 @@ public:
 
     // --- diagnostics ---
     bool          realtimePriority() const noexcept { return rtPriority; }
+    const char*   threadDescription() const noexcept {
+        return rtPriority ? "SCHED_FIFO" : "normal priority (no real-time permission; timestamps may jitter)";
+    }
     std::uint64_t overrunCount() const noexcept { return overruns.load(std::memory_order_relaxed); }
     // Where a handle's port lives, e.g. "129:0 on 'StageHand MIDI 2.0' (UMP MIDI 2.0)",
     // so other tools (aseqsend, aplaymidi2) can address it. Main thread.
