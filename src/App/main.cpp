@@ -39,11 +39,15 @@
 #include "Audio/JackBackend.h"
 #endif
 
-// StageHand's windows: the rack window (DGL) and the plugin editors' (X11).
-// Linux only so far; on macOS StageHand plays without them, console only,
-// until milestones 5 and 6 bring Cocoa's (docs/macos.md).
-#ifdef STAGEHAND_WINDOWS
+// The plugin editors' windows: X11 on Linux, Cocoa on macOS (the same
+// interface). The rack window (DGL): Linux only so far; on macOS StageHand
+// plays without it until milestone 6 (docs/macos.md).
+#ifdef __APPLE__
+#include "App/EditorWindowMac.h"
+#else
 #include "App/EditorWindow.h"
+#endif
+#ifdef STAGEHAND_RACK_WINDOW
 #include "Ui/RackUi.h"
 #endif
 
@@ -59,16 +63,9 @@ void handleSignal(int) {
     if (MainLoop* loop = activeLoop.load()) loop->requestQuit();   // async-signal-safe
 }
 
-#ifndef STAGEHAND_WINDOWS
-// No windows on this platform yet: stand-ins that never open, so playing reads
-// the same everywhere.
-struct EditorWindow {
-    static std::unique_ptr<EditorWindow> open(HostedPlugin&, MainLoop&, const std::string&,
-                                              std::function<void()> = {}) {
-        return nullptr;
-    }
-    bool isOpen() const { return false; }
-};
+#ifndef STAGEHAND_RACK_WINDOW
+// No rack window on this platform yet: a stand-in that never opens, so playing
+// reads the same everywhere (the editors open at start instead, as with --no-ui).
 struct RackUi {
     static std::unique_ptr<RackUi> open(RackController&, const std::string& = {}) { return nullptr; }
     void showNotice(const std::string&) {}
@@ -76,6 +73,13 @@ struct RackUi {
     void idle() {}
     bool closed() const { return true; }
 };
+#endif
+
+// The modifier for StageHand's keys in its windows (docs/macos.md, decision 7).
+#ifdef __APPLE__
+constexpr const char* kWindowKey = "Cmd";
+#else
+constexpr const char* kWindowKey = "Ctrl";
 #endif
 
 // The audio backend stopped under us: JACK's server went, or the Mac's output
@@ -155,6 +159,7 @@ void printUsage() {
         "Closing the rack window quits the same way. Closing an editor window closes\n"
         "that editor only; StageHand keeps playing.\n"
         "In the terminal, Ctrl-C quits the same way as Ctrl-Q.\n"
+        "On macOS, Cmd takes Ctrl's place in StageHand's windows (Cmd-Q, Cmd-Shift-S).\n"
         "\n"
         "Audio goes through PipeWire's JACK layer. Started without pw-jack and with no\n"
         "JACK server to reach, playing and --tone restart themselves under pw-jack.\n"
@@ -768,18 +773,19 @@ int runPlay(const Options& options) {
     if (ui ? options.openEditors : options.editor) controller.openAllEditors();
 
     if (!saveTarget.empty())
-        std::printf("Saves to %s on exit; Ctrl-Shift-S in %s saves now (--no-save-rack: off).\n",
-                    saveTarget.c_str(), ui ? "StageHand's windows" : "an editor window");
+        std::printf("Saves to %s on exit; %s-Shift-S in %s saves now (--no-save-rack: off).\n", saveTarget.c_str(), kWindowKey,
+                    ui ? "StageHand's windows" : "an editor window");
     else if (options.noSaveRack)
         std::puts("Not saving (--no-save-rack).");
     else if (ui)
         std::puts("Untitled rack: Save As in the rack window's File menu keeps it.");
     else
         std::puts("Not saving: this session has no rack. Add --save-rack PATH to keep it.");
-    const char* const stopHow = ui                                 ? "Ctrl-Q in StageHand's windows, or Ctrl-C here,"
-                                : controller.openEditorCount() > 0 ? "Ctrl-Q in an editor window, or Ctrl-C here,"
-                                                                   : "Ctrl-C";
-    std::printf("Playing %s. Send MIDI to an input above. %s stops.\n", session.rackName().c_str(), stopHow);
+    const std::string stopHow = ui ? std::string(kWindowKey) + "-Q in StageHand's windows, or Ctrl-C here,"
+                                : controller.openEditorCount() > 0
+                                    ? std::string(kWindowKey) + "-Q in an editor window, or Ctrl-C here,"
+                                    : std::string("Ctrl-C");
+    std::printf("Playing %s. Send MIDI to an input above. %s stops.\n", session.rackName().c_str(), stopHow.c_str());
     std::fflush(stdout);
 
     // Housekeeping on the main loop: the controller's service and tick, plus the
@@ -893,11 +899,10 @@ int main(int argc, char** argv) {
 #ifndef __APPLE__
     if (options.mode == Mode::Play || options.mode == Mode::Tone) restartUnderPwJackIfNeeded(argc, argv);
 #endif
-#ifndef STAGEHAND_WINDOWS
-    if (options.mode == Mode::Play && (options.ui || options.editor)) {
-        std::puts("No windows on macOS yet: playing console only (no rack window, no plugin editors).");
-        options.ui     = false;
-        options.editor = false;
+#ifndef STAGEHAND_RACK_WINDOW
+    if (options.mode == Mode::Play && options.ui) {
+        std::puts("No rack window on macOS yet: every plugin's editor opens at start (--no-editor: none).");
+        options.ui = false;
     }
 #endif
 

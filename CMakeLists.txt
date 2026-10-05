@@ -163,12 +163,13 @@ if(stagehand_linux_app)
         src/App/MainLoop.cpp
         src/App/MidiMonitor.cpp)
     target_link_libraries(stagehand PRIVATE stagehand-lib stagehand-app stagehand-ui PkgConfig::X11 stagehand-warnings)
-    target_compile_definitions(stagehand PRIVATE STAGEHAND_WINDOWS)   # the rack window and editor windows
+    target_compile_definitions(stagehand PRIVATE STAGEHAND_RACK_WINDOW)   # the rack window (DGL)
 
 endif()
 
-# --- The macOS seams and the app (STAGEHAND_APP on macOS): no windows yet ----------------
+# --- The macOS seams and the app (STAGEHAND_APP on macOS): editor windows, no rack window yet ---
 if(STAGEHAND_APP AND APPLE)
+    enable_language(OBJCXX)   # the Cocoa pieces (.mm): the main loop and the editor window
 
     add_library(stagehand-lib STATIC
         src/Audio/CoreAudioBackend.cpp
@@ -184,9 +185,11 @@ if(STAGEHAND_APP AND APPLE)
     add_executable(stagehand
         src/App/main.cpp
         src/App/AppHost.cpp
-        src/App/MainLoop.cpp
+        src/App/EditorWindowMac.mm
+        src/App/MainLoopMac.mm
         src/App/MidiMonitor.cpp)
-    target_link_libraries(stagehand PRIVATE stagehand-lib stagehand-app stagehand-warnings)
+    set_source_files_properties(src/App/EditorWindowMac.mm src/App/MainLoopMac.mm PROPERTIES COMPILE_OPTIONS -fobjc-arc)
+    target_link_libraries(stagehand PRIVATE stagehand-lib stagehand-app "-framework AppKit" stagehand-warnings)
 
 endif()
 

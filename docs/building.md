@@ -12,7 +12,7 @@ Everything else is a system library.
 | Platform | What builds today |
 |---|---|
 | Linux | everything: the `stagehand` app (rack window, plugin hosting), its libraries, the test suites |
-| macOS | the libraries, the test suites, and the `stagehand` app over CoreAudio, CoreMIDI and CLAP bundles: it plays racks console only, with no rack window or plugin editors yet ([macos.md](macos.md), milestones 5 and 6) |
+| macOS | the libraries, the test suites, and the `stagehand` app over CoreAudio, CoreMIDI and CLAP bundles: it plays racks with the plugins' editors, but no rack window yet ([macos.md](macos.md), milestone 6) |
 
 ## Getting the source
 
@@ -115,7 +115,7 @@ group, and log in again.
 Apple Silicon, macOS 15 or later (the build sets `CMAKE_OSX_ARCHITECTURES`
 to `arm64` and the deployment target to 15.0; [macos.md](macos.md),
 decisions 9 and 13). The libraries, the test suites and the app build; the
-app plays racks and plugins, console only (no windows yet).
+app plays racks and plugins with their editors (no rack window yet).
 
 ### Dependencies
 

@@ -11,11 +11,17 @@
 
 namespace stagehand {
 
-// The app's main-thread event loop: a poll() loop that runs timers and watched
-// file descriptors until asked to quit. It serves plugin editors (CLAP
-// timer-support, posix-fd-support), the editor window's X11 connection, and
-// StageHand's own housekeeping (engine collect(), plugin idle(), stats). --play
-// runs on it; the simpler test modes keep their sleep loops.
+// The app's main-thread event loop: it runs timers and watched file
+// descriptors until asked to quit. It serves plugin editors (CLAP
+// timer-support, posix-fd-support), the editor windows, and StageHand's own
+// housekeeping (engine collect(), plugin idle(), stats). --play runs on it; the
+// simpler test modes keep their sleep loops.
+//
+// Linux (MainLoop.cpp): a poll() loop, the editor windows' X11 connections
+// among its fds. macOS (MainLoopMac.mm): AppKit's event loop, the timers as
+// CFRunLoopTimers and the fds as CFFileDescriptors in the run loop's common
+// modes, so they keep running while a window is resized or a menu is tracked
+// (docs/macos.md, "The app").
 //
 // Everything runs on the thread that calls run(), except requestQuit(), which is
 // async-signal-safe so a SIGINT handler can call it.
@@ -46,6 +52,30 @@ public:
     void requestQuit() noexcept;
 
 private:
+#ifdef __APPLE__
+    struct Timer {
+        void*                                  timer = nullptr;   // CFRunLoopTimerRef
+        std::shared_ptr<std::function<void()>> callback;
+    };
+    struct Watch {
+        void*                                               descriptor = nullptr;   // CFFileDescriptorRef
+        void*                                               source     = nullptr;   // CFRunLoopSourceRef
+        std::uint32_t                                       events     = 0;
+        std::shared_ptr<std::function<void(std::uint32_t)>> callback;
+    };
+    void enable(int fd);   // CFFileDescriptor callbacks are one-shot
+
+public:
+    void dispatchFd(int fd, std::uint32_t fired);   // from the CFFileDescriptor callback; not for callers
+
+private:
+    std::map<TimerId, Timer> timers;
+    std::map<int, Watch>     watches;
+    TimerId                  nextTimerId = 1;
+    int                      wakeRead    = -1;   // self-pipe: requestQuit() from a signal handler
+    int                      wakeWrite   = -1;
+    std::atomic<bool>        quit{false};
+#else
     using Clock = std::chrono::steady_clock;
 
     // Callbacks are shared so a dispatch keeps its callback alive even if the
@@ -66,6 +96,7 @@ private:
     int                      wakeRead    = -1;   // self-pipe (portable; eventfd is Linux's)
     int                      wakeWrite   = -1;
     std::atomic<bool>        quit{false};
+#endif
 };
 
 } // namespace stagehand

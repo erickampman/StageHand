@@ -435,8 +435,39 @@ console only and says so. The click isn't routed on macOS yet
   jitter). Messages are now stamped as they arrive, like ALSA's read-time
   stamps, so capture time never precedes queue time. KeyEDO stamps 0, so it
   was never affected.
-- **Still to do in milestone 5:** the editor window (decision 11), which
-  brings Cocoa's loop driving `MainLoop` and the window stand-ins' end.
+
+**Milestone 5, second part (2026-10-05): editor windows, and Cocoa's loop.**
+- `App/EditorWindowMac.mm`: decision 11's plain window, an `NSWindow` whose
+  content view is the plugin's parent `NSView` (`CLAP_WINDOW_API_COCOA`),
+  with the X11 window's interface, so `main.cpp` takes either. The plain
+  window was chosen over a DGL one: DGL isn't built on macOS yet, and DPF's
+  shared Objective-C class names (above) make a window with no DGL in it the
+  safer host. Its one Objective-C class has its own name
+  (`StageHandEditorWindowDelegate`). Fixed-size editors pin the content's
+  min = max; a plugin's `request_resize` resizes the window and is confirmed
+  with `set_size` after the request returns (`dispatch_async`), as X11 does
+  when its resize lands. The close button closes that editor only; the
+  window and its delegate are let go after the event (they're released from
+  inside the window's own close handling otherwise). Cmd-Q quits and
+  Cmd-Shift-S saves from any editor window (decision 7), through a local key
+  monitor before the plugin sees them. The process becomes a regular app
+  (Dock icon, key windows) when the first editor opens.
+- `App/MainLoopMac.mm`: `MainLoop` on macOS, AppKit's loop driving
+  (`nextEventMatchingMask:` in `run()`); the timers are `CFRunLoopTimer`s and
+  the fds `CFFileDescriptor`s, both in the run loop's common modes, so they
+  run while AppKit runs its own loop (a live resize, a menu). `requestQuit()`
+  stays async-signal-safe: it writes the self-pipe, whose `CFFileDescriptor`
+  posts an application-defined event to wake `nextEventMatchingMask:`.
+- `main.cpp`: the editor window by platform; `STAGEHAND_RACK_WINDOW`
+  (Linux) has the rack window, and macOS's stand-in for it never opens, so
+  the editors open at start as with `--no-ui`. Window keys are named per
+  platform (`Cmd`/`Ctrl`) in the console's hints and the help.
+- **Checked on a Mac:** PlainOldSynth's, Polygraph MU's and StruckSynth's
+  editors open at their sizes, in points (1200×750, 900×600, 1080×640 on a
+  1728×1117-point screen; DPF's own log shows the same at 2× in pixels);
+  Ctrl-C in the terminal quits through the self-pipe, cleanly.
+- **Still to do in milestone 5:** nothing beyond what's checked by hand
+  (two DPF plugins' editors at once wait for their namespaces).
 
 ## Review (2026-10-03)
 
