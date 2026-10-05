@@ -64,6 +64,9 @@ if(STAGEHAND_APP)
             set_target_properties(${dgl_target} PROPERTIES INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${dgl_includes}")
         endif()
     endforeach()
+    # pugl.hpp includes <cstdbool>, which GCC 15 flags with a #warning in C++17
+    # and later. Vendored code (copied from PMU, so not patched here): quiet it.
+    target_compile_options(dgl-opengl PRIVATE -Wno-cpp)
 endif()
 
 # --- Warnings for our own code (not vendored/system headers) -------------------

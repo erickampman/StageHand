@@ -279,7 +279,10 @@ int AlsaSeqInput::createPort(int clientIndex, const std::string& portName, bool 
 
 MidiSourceHandle AlsaSeqInput::registerPort(int clientIndex, int port, bool isVirtual) {
     const MidiSourceHandle handle = nextHandle++;
-    openPorts[handle] = OpenPort{clientIndex, port, isVirtual};
+    OpenPort& open   = openPorts[handle];
+    open.clientIndex = clientIndex;
+    open.port        = port;
+    open.isVirtual   = isVirtual;
     portHandles[clientIndex][port].store(handle, std::memory_order_release);
     return handle;
 }
