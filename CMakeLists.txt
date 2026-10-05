@@ -105,6 +105,7 @@ target_link_libraries(stagehand-engine
 # --- stagehand-session: racks (files) and running them (no platform deps) -------
 add_library(stagehand-session STATIC
     src/Session/AppPaths.cpp
+    src/Session/AudioDeviceState.cpp
     src/Session/RackFile.cpp
     src/Session/RigFile.cpp
     src/Session/Session.cpp

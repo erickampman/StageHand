@@ -386,11 +386,10 @@ xruns), the device going away. `--tone` and `--list-audio` run on macOS;
   no overloads; output latency 18 ms at 64 frames, 27 ms at 512 (the
   built-in speakers' safety offset is large). `--device` refuses an
   unknown or ambiguous name, naming the matches.
-- **Still to do in milestone 4:** the saved device per machine (decision
-  12's storage, written when `--play` chooses one), the buses' channel
-  pairs, the click on its pair or through the aggregate (decision 3),
-  sample-rate changes acted on (prepared racks remade), sleep and
-  unplugging recovered from.
+- **Done since** (second part, below): the saved device per machine, the
+  click through the aggregate, devices going and coming, the rate held. The
+  buses' pairs needed nothing: they're `--channels` outputs, onto the
+  device's channels in order.
 
 **Milestone 5, first part (2026-10-05): the CLAP loader, and playing without
 windows.** `ClapModule` loads a bundle through CFBundle
@@ -468,6 +467,46 @@ console only and says so. The click isn't routed on macOS yet
   Ctrl-C in the terminal quits through the self-pipe, cleanly.
 - **Still to do in milestone 5:** nothing beyond what's checked by hand
   (two DPF plugins' editors at once wait for their namespaces).
+
+**Milestone 4, second part (2026-10-05): devices coming and going, decision
+12's memory, and the click on macOS.**
+- `CoreAudioBackend` is built around `setUp()` (the IOProc on the main
+  device, or the click's aggregate) and `tearDown()`, so it can move without
+  the engine knowing: it sees no blocks for a moment. `service()`, on the
+  app's 5 ms housekeeping timer, does the main-thread work and returns what
+  to tell the user.
+- **The main device going away** (unplugged, or asleep): silent until it's
+  back, then everything resumes and the click is routed again. Not the
+  laptop's speakers instead: on stage, sound from the wrong place is worse
+  than none. (Linux quits when JACK's server goes; unchanged.)
+- **Decision 12's memory:** `Session/AudioDeviceState` (`audio.json` in
+  `appStateDir()`: the device's name and UID). `--play --device` chooses and
+  remembers; without it, the remembered device (by UID), or the system's
+  default while it isn't there, said plainly, and `service()` moves to it
+  when it appears. Tests: `testAudioDeviceChoice` (setlist file tests).
+- **The click (decision 3):** `CoreAudioBackend` is the `AuxRouting`.
+  Playback devices are the system's outputs (ports "1".."n"). On the main
+  device the click is mixed onto its first two channels; on another device
+  a private aggregate (main device first, the clock; the other at its rate,
+  drift-compensated) is made and the IOProc moves to it, the click on that
+  device's first two channels. Its device leaving: back to the main device
+  alone, and the controller routes it again when it's back (as on Linux).
+- **The sample rate is held:** something else changing the device's rate
+  mid-set would leave the plugins at the wrong pitch, so `service()` sets it
+  back and says so; after three times in ten seconds it stops fighting and
+  says pitch and tempo are off.
+- **Outputs always as asked:** the engine always gets `--channels`
+  outputs; a device with fewer drops the rest (told at open), so a device
+  change never changes the engine's layout.
+- **Checked on a Mac:** with a silent processor, the click moved from the
+  MacBook's speakers to a display's audio (an aggregate) and back with
+  blocks never stopping and no overloads; the aggregate adds 6 ms of output
+  latency there (33.5 against 27.3 ms at 512 frames). `--device`
+  remembered, reused on the next run, and a remembered device that isn't
+  there (simulated) gave way to the default, said so.
+- **Not checked yet:** a device unplugged and plugged back in while
+  playing; the click chosen in the rig on macOS (no rack window yet: by
+  hand, `"clickOutput"` in the rig); sleep and wake.
 
 ## Review (2026-10-03)
 

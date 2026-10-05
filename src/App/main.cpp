@@ -35,6 +35,7 @@
 
 #ifdef __APPLE__
 #include "Audio/CoreAudioBackend.h"
+#include "Session/AudioDeviceState.h"
 #else
 #include "Audio/JackBackend.h"
 #endif
@@ -654,7 +655,16 @@ int runPlay(const Options& options) {
     // by the session) go before the engine, the host services they call, and
     // the backend.
 #ifdef __APPLE__
-    CoreAudioBackend backend(options.device);
+    // The output device (decision 12): --device chooses it and is remembered for
+    // this Mac; without it, the one remembered, or the system's default (the
+    // default stands in while a remembered one isn't there).
+    AudioDeviceChoice remembered;
+    const bool        haveRemembered = options.device.empty() &&
+                                loadAudioDeviceChoice(defaultAudioDevicePath(), remembered);
+    CoreAudioBackend  backend(!options.device.empty() ? options.device
+                              : haveRemembered       ? (remembered.uid.empty() ? remembered.name : remembered.uid)
+                                                     : std::string{},
+                              haveRemembered);
 #else
     if (!options.device.empty()) std::puts("--device is macOS's: on Linux, PipeWire routes the outputs.");
     JackBackend backend("StageHand", options.autoConnect);
@@ -667,6 +677,16 @@ int runPlay(const Options& options) {
     if (!backend.open(requested, negotiated)) return 1;
     std::printf("%s: %.0f Hz, %u-frame buffer, %u out\n", backend.name(), negotiated.sampleRate,
                 negotiated.bufferSize, negotiated.outputChannels);
+#ifdef __APPLE__
+    std::printf("Output device: %s\n", backend.device().name.c_str());
+    if (backend.usingFallback())
+        std::printf("The output device chosen for this Mac, '%s', isn't here: playing on '%s' until it is.\n",
+                    remembered.name.c_str(), backend.device().name.c_str());
+    if (!options.device.empty() &&
+        !saveAudioDeviceChoice(defaultAudioDevicePath(), AudioDeviceChoice{backend.device().name, backend.device().uid}))
+        std::fprintf(stderr, "warning: couldn't remember '%s' as this Mac's output device\n",
+                     backend.device().name.c_str());
+#endif
 
     MainLoop   loop;
     AppHost    host(loop);
@@ -728,11 +748,7 @@ int runPlay(const Options& options) {
     config.protocolPreference = options.preference;
     config.saveTarget         = saveTarget.empty() ? std::string{} : resolveRackPath(saveTarget);
     config.savingOff          = options.noSaveRack;
-#ifdef __APPLE__
-    config.clickRouting       = nullptr;   // the click's routing on macOS: milestone 4, still to come
-#else
     config.clickRouting       = &backend;
-#endif
     config.outputLatencySeconds = backend.outputLatencySeconds();   // started and connected by now
     config.lastPositionPath   = defaultLastPositionPath();
     // Devices plugged in later are opened as at start: hardware, or everything
@@ -810,7 +826,11 @@ int runPlay(const Options& options) {
             std::puts("The plugin asked for a restart; not supported yet (reload StageHand).");
             restartReported = true;
         }
+#ifdef __APPLE__
+        for (const std::string& text : backend.service()) std::puts(text.c_str());   // devices going and coming
+#else
         if (audioStopped(backend)) loop.requestQuit();
+#endif
         std::fflush(stdout);
     });
     const auto started = std::chrono::steady_clock::now();

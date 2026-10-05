@@ -1,11 +1,14 @@
 #include "Audio/CoreAudioBackend.h"
 
 #include <CoreAudio/CoreAudio.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <thread>
 
 #include "Core/Clock.h"
 
@@ -60,11 +63,26 @@ std::string lowercase(std::string text) {
     return text;
 }
 
+bool findByUid(const std::string& uid, AudioDeviceInfo& found) {
+    for (const AudioDeviceInfo& device : CoreAudioBackend::outputDevices())
+        if (device.uid == uid) {
+            found = device;
+            return true;
+        }
+    return false;
+}
+
+std::string hertz(double rate) {
+    char text[32];
+    std::snprintf(text, sizeof text, "%.0f Hz", rate);
+    return text;
+}
+
 // Property changes come on the HAL's own notification thread (see
 // useHalThread()), never the IOProc's.
-OSStatus propertyListener(AudioObjectID, UInt32 count, const AudioObjectPropertyAddress* addresses, void* client) {
+OSStatus propertyListener(AudioObjectID object, UInt32 count, const AudioObjectPropertyAddress* addresses, void* client) {
     auto* const self = static_cast<CoreAudioBackend*>(client);
-    for (UInt32 i = 0; i < count; ++i) self->onPropertyChanged(addresses[i].mSelector);
+    for (UInt32 i = 0; i < count; ++i) self->onPropertyChanged(object, addresses[i].mSelector);
     return noErr;
 }
 
@@ -89,9 +107,14 @@ constexpr AudioObjectPropertySelector kWatched[] = {
     kAudioDevicePropertyBufferFrameSize, kAudioDevicePropertyNominalSampleRate,
     kAudioDeviceProcessorOverload, kAudioDevicePropertyDeviceIsAlive};
 
+// Something else setting the rate again and again: stop fighting it.
+constexpr int                  kMaxRateRestores = 3;
+constexpr std::chrono::seconds kRateRestoreWindow{10};
+
 } // namespace
 
-CoreAudioBackend::CoreAudioBackend(std::string deviceChoice) : choice(std::move(deviceChoice)) {
+CoreAudioBackend::CoreAudioBackend(std::string deviceChoice, bool fallBackToDefault)
+    : choice(std::move(deviceChoice)), fallBack(fallBackToDefault) {
     useHalThread();
 }
 
@@ -163,78 +186,227 @@ bool CoreAudioBackend::findDevice(const std::string& wanted, AudioDeviceInfo& fo
 // --- AudioBackend ------------------------------------------------------------------------
 
 bool CoreAudioBackend::open(const AudioConfig& requested, AudioConfig& negotiated) {
-    if (procId != nullptr) return false;   // already open
+    if (isOpen) return false;
 
     std::string problem;
-    if (!findDevice(choice, opened, problem)) {
-        std::fprintf(stderr, "CoreAudioBackend: %s\n", problem.c_str());
+    pendingChoice.clear();
+    if (!findDevice(choice, main, problem)) {
+        if (!fallBack || choice.empty() || !findDevice({}, main, problem)) {
+            std::fprintf(stderr, "CoreAudioBackend: %s\n", problem.c_str());
+            return false;
+        }
+        pendingChoice = choice;   // service() moves there when it appears
+    }
+
+    // The device keeps its rate unless one is asked for; from here on, the rate
+    // it runs at is the one we hold to (the plugins are prepared for it).
+    wanted = requested;
+    if (requested.sampleRate > 0.0 && requested.sampleRate != main.sampleRate &&
+        !setProperty(main.id, kAudioDevicePropertyNominalSampleRate, Float64{requested.sampleRate}))
+        std::fprintf(stderr, "CoreAudioBackend: '%s' won't run at %.0f Hz\n", main.name.c_str(), requested.sampleRate);
+    Float64 rate = 0.0;
+    getProperty(main.id, kAudioDevicePropertyNominalSampleRate, rate);
+    wanted.sampleRate = rate;
+
+    // This process's buffer on the device stays as set until set again, so
+    // close() puts back what was there.
+    restoreBufferSize = 0;
+    if (UInt32 before = 0; requested.bufferSize != 0 && getProperty(main.id, kAudioDevicePropertyBufferFrameSize, before))
+        restoreBufferSize = before;
+    if (main.outputChannels < requested.outputChannels)
+        std::fprintf(stderr, "CoreAudioBackend: '%s' has %u outputs; outputs %u to %u go nowhere\n",
+                     main.name.c_str(), main.outputChannels, main.outputChannels + 1, requested.outputChannels);
+
+    // The system's device list, for hotplug (the main device's return, the
+    // chosen one appearing, the click's devices).
+    const AudioObjectPropertyAddress devicesAddress = address(kAudioHardwarePropertyDevices);
+    AudioObjectAddPropertyListener(kAudioObjectSystemObject, &devicesAddress, &propertyListener, this);
+
+    lost.store(false);
+    rateChanged.store(false);
+    lostReported = false;
+    if (!setUp()) {
+        AudioObjectRemovePropertyListener(kAudioObjectSystemObject, &devicesAddress, &propertyListener, this);
         return false;
     }
-    const AudioObjectID device = opened.id;
+    isOpen = true;
 
-    // The device keeps its rate unless one is asked for.
-    if (requested.sampleRate > 0.0 && requested.sampleRate != opened.sampleRate &&
-        !setProperty(device, kAudioDevicePropertyNominalSampleRate, Float64{requested.sampleRate}))
-        std::fprintf(stderr, "CoreAudioBackend: '%s' won't run at %.0f Hz\n", opened.name.c_str(), requested.sampleRate);
+    negotiatedConfig                   = AudioConfig{};
+    negotiatedConfig.sampleRate        = currentSampleRate.load();
+    negotiatedConfig.bufferSize        = currentBufferSize.load();
+    negotiatedConfig.inputChannels     = 0;   // outputs only (decision 2)
+    negotiatedConfig.outputChannels    = requested.outputChannels;
+    negotiatedConfig.auxOutputChannels = requested.auxOutputChannels;
+    negotiated                         = negotiatedConfig;
+    return true;
+}
 
-    AudioValueRange range{};
-    getProperty(device, kAudioDevicePropertyBufferFrameSizeRange, range);
-    restoreBufferSize = 0;
-    if (requested.bufferSize != 0) {
-        // This process's buffer on the device stays as set until set again, so
-        // close() puts back what was there.
-        UInt32 before = 0;
-        if (getProperty(device, kAudioDevicePropertyBufferFrameSize, before)) restoreBufferSize = before;
-        const auto frames = static_cast<UInt32>(
-            std::clamp<double>(requested.bufferSize, range.mMinimum, range.mMaximum > 0 ? range.mMaximum : 8192));
-        if (frames != requested.bufferSize)
-            std::fprintf(stderr, "CoreAudioBackend: '%s' takes %.0f to %.0f frames; using %u\n", opened.name.c_str(),
-                         range.mMinimum, range.mMaximum, frames);
-        if (!setProperty(device, kAudioDevicePropertyBufferFrameSize, frames))
-            std::fprintf(stderr, "CoreAudioBackend: couldn't set a %u-frame buffer\n", frames);
+bool CoreAudioBackend::setUp() {
+    mainChannels        = outputChannelCount(main.id);
+    main.outputChannels = mainChannels;
+
+    // The click: another device through an aggregate, or onto the main device's
+    // first channels, or nowhere.
+    ioDevice = main.id;
+    auxChannels.clear();
+    if (!clickUid.empty()) {
+        AudioDeviceInfo other;
+        if (findByUid(clickUid, other) && makeAggregate(other)) {
+            ioDevice    = aggregate;
+            auxChannels = {mainChannels, mainChannels + std::min<std::uint32_t>(1, other.outputChannels - 1)};
+        } else {
+            clickUid.clear();   // gone, or no aggregate: unrouted (the controller tries again on hotplug)
+        }
+    } else if (clickOnMain && mainChannels > 0) {
+        auxChannels = {0, std::min<std::uint32_t>(1, mainChannels - 1)};
     }
 
+    if (wanted.sampleRate > 0.0) {
+        Float64 now = 0.0;
+        if (getProperty(ioDevice, kAudioDevicePropertyNominalSampleRate, now) && now != wanted.sampleRate)
+            setProperty(ioDevice, kAudioDevicePropertyNominalSampleRate, Float64{wanted.sampleRate});
+    }
+    AudioValueRange range{};
+    getProperty(ioDevice, kAudioDevicePropertyBufferFrameSizeRange, range);
+    if (wanted.bufferSize != 0) {
+        const auto frames = static_cast<UInt32>(
+            std::clamp<double>(wanted.bufferSize, range.mMinimum, range.mMaximum > 0 ? range.mMaximum : 8192));
+        if (frames != wanted.bufferSize)
+            std::fprintf(stderr, "CoreAudioBackend: '%s' takes %.0f to %.0f frames; using %u\n", main.name.c_str(),
+                         range.mMinimum, range.mMaximum, frames);
+        if (!setProperty(ioDevice, kAudioDevicePropertyBufferFrameSize, frames))
+            std::fprintf(stderr, "CoreAudioBackend: couldn't set a %u-frame buffer\n", frames);
+    }
     Float64 rate   = 0.0;
     UInt32  frames = 0;
-    getProperty(device, kAudioDevicePropertyNominalSampleRate, rate);
-    getProperty(device, kAudioDevicePropertyBufferFrameSize, frames);
+    getProperty(ioDevice, kAudioDevicePropertyNominalSampleRate, rate);
+    getProperty(ioDevice, kAudioDevicePropertyBufferFrameSize, frames);
     currentSampleRate.store(rate, std::memory_order_relaxed);
     currentBufferSize.store(frames, std::memory_order_relaxed);
+    if (wanted.sampleRate > 0.0 && rate != wanted.sampleRate) {
+        std::fprintf(stderr, "CoreAudioBackend: '%s' won't run at %.0f Hz (it's at %.0f Hz)\n", main.name.c_str(),
+                     wanted.sampleRate, rate);
+        tearDown();
+        return false;
+    }
 
-    const std::uint32_t outputs = std::min(requested.outputChannels, opened.outputChannels);
-    if (outputs < requested.outputChannels)
-        std::fprintf(stderr, "CoreAudioBackend: '%s' has %u outputs; using %u of the %u asked for\n",
-                     opened.name.c_str(), opened.outputChannels, outputs, requested.outputChannels);
-    const std::uint32_t aux = requested.auxOutputChannels;
-
-    // Planar buffers for the largest block the device allows, so a buffer-size
-    // change never needs more.
-    capacityFrames = std::max<std::uint32_t>(frames, static_cast<std::uint32_t>(range.mMaximum));
-    planar.assign(static_cast<std::size_t>(outputs + aux) * capacityFrames, 0.0f);
-    outputPointers.clear();
-    auxPointers.clear();
-    for (std::uint32_t c = 0; c < outputs; ++c) outputPointers.push_back(planar.data() + std::size_t{c} * capacityFrames);
-    for (std::uint32_t c = 0; c < aux; ++c)
-        auxPointers.push_back(planar.data() + std::size_t{outputs + c} * capacityFrames);
+    // Planar buffers for the largest block the device allows (the IOProc is
+    // stopped: they can move).
+    const std::uint32_t capacity = std::max<std::uint32_t>(frames, static_cast<std::uint32_t>(range.mMaximum));
+    const std::uint32_t outputs  = wanted.outputChannels;
+    const std::uint32_t aux      = wanted.auxOutputChannels;
+    if (capacity != capacityFrames || outputPointers.size() != outputs || auxPointers.size() != aux) {
+        capacityFrames = capacity;
+        planar.assign(static_cast<std::size_t>(outputs + aux) * capacityFrames, 0.0f);
+        outputPointers.clear();
+        auxPointers.clear();
+        for (std::uint32_t c = 0; c < outputs; ++c)
+            outputPointers.push_back(planar.data() + std::size_t{c} * capacityFrames);
+        for (std::uint32_t c = 0; c < aux; ++c)
+            auxPointers.push_back(planar.data() + std::size_t{outputs + c} * capacityFrames);
+    }
 
     AudioDeviceIOProcID id = nullptr;
-    if (const OSStatus result = AudioDeviceCreateIOProcID(device, &ioProc, this, &id); result != noErr) {
-        std::fprintf(stderr, "CoreAudioBackend: can't run on '%s' (error %d)\n", opened.name.c_str(),
+    if (const OSStatus result = AudioDeviceCreateIOProcID(ioDevice, &ioProc, this, &id); result != noErr) {
+        std::fprintf(stderr, "CoreAudioBackend: can't run on '%s' (error %d)\n", main.name.c_str(),
                      static_cast<int>(result));
+        tearDown();
         return false;
     }
     procId = reinterpret_cast<void*>(id);
-    addListeners();
+    addListeners(main.id);
+    return true;
+}
 
-    negotiatedConfig                   = AudioConfig{};
-    negotiatedConfig.sampleRate        = rate;
-    negotiatedConfig.bufferSize        = frames;
-    negotiatedConfig.inputChannels     = 0;   // outputs only (decision 2)
-    negotiatedConfig.outputChannels    = outputs;
-    negotiatedConfig.auxOutputChannels = aux;
-    lost.store(false);
-    rateChanged.store(false);
-    negotiated = negotiatedConfig;
+void CoreAudioBackend::tearDown() {
+    if (procId != nullptr) {
+        AudioDeviceStop(ioDevice, reinterpret_cast<AudioDeviceIOProcID>(procId));   // returns once the IOProc is done
+        AudioDeviceDestroyIOProcID(ioDevice, reinterpret_cast<AudioDeviceIOProcID>(procId));
+        procId = nullptr;
+    }
+    removeListeners();
+    if (aggregate != 0) {
+        AudioHardwareDestroyAggregateDevice(aggregate);
+        aggregate = 0;
+    }
+    ioDevice = 0;
+}
+
+bool CoreAudioBackend::restart() {
+    tearDown();
+    if (!setUp()) return false;
+    if (running && AudioDeviceStart(ioDevice, reinterpret_cast<AudioDeviceIOProcID>(procId)) != noErr) {
+        std::fprintf(stderr, "CoreAudioBackend: can't start '%s' again\n", main.name.c_str());
+        return false;
+    }
+    return true;
+}
+
+// The main device and `other`, as one private device (decision 3): the main
+// device is the clock; the other runs at its rate, drift-compensated. Not shown
+// to other apps, and gone when StageHand quits.
+bool CoreAudioBackend::makeAggregate(const AudioDeviceInfo& other) {
+    if (other.sampleRate != wanted.sampleRate &&
+        !setProperty(other.id, kAudioDevicePropertyNominalSampleRate, Float64{wanted.sampleRate}))
+        std::fprintf(stderr, "CoreAudioBackend: '%s' won't run at %.0f Hz; the click may drift\n", other.name.c_str(),
+                     wanted.sampleRate);
+
+    const auto cfString = [](const std::string& text) {
+        return CFStringCreateWithCString(kCFAllocatorDefault, text.c_str(), kCFStringEncodingUTF8);
+    };
+    const auto subDevice = [&](const std::string& uid, bool driftCompensated) {
+        CFMutableDictionaryRef entry = CFDictionaryCreateMutable(kCFAllocatorDefault, 0, &kCFTypeDictionaryKeyCallBacks,
+                                                                 &kCFTypeDictionaryValueCallBacks);
+        const CFStringRef value = cfString(uid);
+        CFDictionarySetValue(entry, CFSTR(kAudioSubDeviceUIDKey), value);
+        CFRelease(value);
+        if (driftCompensated) {
+            int               one = 1;
+            const CFNumberRef on  = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &one);
+            CFDictionarySetValue(entry, CFSTR(kAudioSubDeviceDriftCompensationKey), on);
+            CFRelease(on);
+        }
+        return entry;
+    };
+
+    CFMutableArrayRef subDevices = CFArrayCreateMutable(kCFAllocatorDefault, 2, &kCFTypeArrayCallBacks);
+    for (CFMutableDictionaryRef entry : {subDevice(main.uid, false), subDevice(other.uid, true)}) {
+        CFArrayAppendValue(subDevices, entry);
+        CFRelease(entry);
+    }
+    CFMutableDictionaryRef description = CFDictionaryCreateMutable(
+        kCFAllocatorDefault, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    const CFStringRef name      = cfString("StageHand");
+    const CFStringRef uid       = cfString("com.unlikelyware.stagehand.aggregate." + std::to_string(getpid()));
+    const CFStringRef mainUid   = cfString(main.uid);
+    int               one       = 1;
+    const CFNumberRef isPrivate = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &one);
+    CFDictionarySetValue(description, CFSTR(kAudioAggregateDeviceNameKey), name);
+    CFDictionarySetValue(description, CFSTR(kAudioAggregateDeviceUIDKey), uid);
+    CFDictionarySetValue(description, CFSTR(kAudioAggregateDeviceIsPrivateKey), isPrivate);
+    CFDictionarySetValue(description, CFSTR(kAudioAggregateDeviceSubDeviceListKey), subDevices);
+    CFDictionarySetValue(description, CFSTR(kAudioAggregateDeviceMainSubDeviceKey), mainUid);
+    const OSStatus result = AudioHardwareCreateAggregateDevice(description, &aggregate);
+    for (CFTypeRef object : {static_cast<CFTypeRef>(name), static_cast<CFTypeRef>(uid), static_cast<CFTypeRef>(mainUid),
+                             static_cast<CFTypeRef>(isPrivate), static_cast<CFTypeRef>(subDevices),
+                             static_cast<CFTypeRef>(description)})
+        CFRelease(object);
+    if (result != noErr) {
+        std::fprintf(stderr, "CoreAudioBackend: can't join '%s' and '%s' (error %d)\n", main.name.c_str(),
+                     other.name.c_str(), static_cast<int>(result));
+        aggregate = 0;
+        return false;
+    }
+    // A new aggregate takes a moment to gather its devices' channels.
+    const std::uint32_t expected = mainChannels + other.outputChannels;
+    for (int i = 0; i < 50 && outputChannelCount(aggregate) < expected; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    if (outputChannelCount(aggregate) <= mainChannels) {
+        std::fprintf(stderr, "CoreAudioBackend: the joined device for the click didn't come up\n");
+        AudioHardwareDestroyAggregateDevice(aggregate);
+        aggregate = 0;
+        return false;
+    }
     return true;
 }
 
@@ -247,10 +419,10 @@ void CoreAudioBackend::setProcessor(AudioProcessor* audioProcessor) {
 }
 
 bool CoreAudioBackend::start() {
-    if (procId == nullptr || running) return false;
-    if (const OSStatus result = AudioDeviceStart(opened.id, reinterpret_cast<AudioDeviceIOProcID>(procId));
+    if (!isOpen || running || procId == nullptr) return false;
+    if (const OSStatus result = AudioDeviceStart(ioDevice, reinterpret_cast<AudioDeviceIOProcID>(procId));
         result != noErr) {
-        std::fprintf(stderr, "CoreAudioBackend: can't start '%s' (error %d)\n", opened.name.c_str(),
+        std::fprintf(stderr, "CoreAudioBackend: can't start '%s' (error %d)\n", main.name.c_str(),
                      static_cast<int>(result));
         return false;
     }
@@ -260,19 +432,20 @@ bool CoreAudioBackend::start() {
 
 void CoreAudioBackend::stop() {
     if (!running) return;
-    AudioDeviceStop(opened.id, reinterpret_cast<AudioDeviceIOProcID>(procId));   // returns once the IOProc is done
+    if (procId != nullptr) AudioDeviceStop(ioDevice, reinterpret_cast<AudioDeviceIOProcID>(procId));
     running = false;
 }
 
 void CoreAudioBackend::close() {
+    if (!isOpen) return;
     stop();
-    if (procId != nullptr) {
-        removeListeners();
-        AudioDeviceDestroyIOProcID(opened.id, reinterpret_cast<AudioDeviceIOProcID>(procId));
-        procId = nullptr;
-        if (restoreBufferSize != 0) setProperty(opened.id, kAudioDevicePropertyBufferFrameSize, UInt32{restoreBufferSize});
-        restoreBufferSize = 0;
-    }
+    tearDown();
+    const AudioObjectPropertyAddress devicesAddress = address(kAudioHardwarePropertyDevices);
+    AudioObjectRemovePropertyListener(kAudioObjectSystemObject, &devicesAddress, &propertyListener, this);
+    if (restoreBufferSize != 0 && !lost.load())
+        setProperty(main.id, kAudioDevicePropertyBufferFrameSize, UInt32{restoreBufferSize});
+    restoreBufferSize = 0;
+    isOpen            = false;
     planar.clear();
     outputPointers.clear();
     auxPointers.clear();
@@ -292,46 +465,180 @@ double CoreAudioBackend::outputLatencySeconds() const {
     const double rate = currentSampleRate.load(std::memory_order_relaxed);
     if (procId == nullptr || rate <= 0.0) return 0.0;
     UInt32 deviceLatency = 0, safetyOffset = 0, streamLatency = 0;
-    getProperty(opened.id, kAudioDevicePropertyLatency, deviceLatency, kAudioObjectPropertyScopeOutput);
-    getProperty(opened.id, kAudioDevicePropertySafetyOffset, safetyOffset, kAudioObjectPropertyScopeOutput);
+    getProperty(ioDevice, kAudioDevicePropertyLatency, deviceLatency, kAudioObjectPropertyScopeOutput);
+    getProperty(ioDevice, kAudioDevicePropertySafetyOffset, safetyOffset, kAudioObjectPropertyScopeOutput);
     AudioStreamID stream = 0;   // the first output stream's
-    if (getProperty(opened.id, kAudioDevicePropertyStreams, stream, kAudioObjectPropertyScopeOutput) && stream != 0)
+    if (getProperty(ioDevice, kAudioDevicePropertyStreams, stream, kAudioObjectPropertyScopeOutput) && stream != 0)
         getProperty(stream, kAudioStreamPropertyLatency, streamLatency);
     const std::uint32_t frames = currentBufferSize.load(std::memory_order_relaxed) + deviceLatency + safetyOffset +
                                  streamLatency;
     return frames / rate;
 }
 
+// --- AuxRouting ------------------------------------------------------------------
+
+std::vector<PlaybackDevice> CoreAudioBackend::playbackDevices() {
+    std::vector<PlaybackDevice> devices;
+    for (const AudioDeviceInfo& info : outputDevices()) {
+        PlaybackDevice device{info.name, {}};
+        for (std::uint32_t c = 1; c <= info.outputChannels; ++c) device.ports.push_back(std::to_string(c));
+        devices.push_back(std::move(device));
+    }
+    return devices;
+}
+
+bool CoreAudioBackend::connectAux(const PlaybackDevice& device) {
+    if (!isOpen || lost.load()) return false;
+    AudioDeviceInfo target;
+    bool            found = false;
+    for (const AudioDeviceInfo& info : outputDevices())
+        if (info.name == device.name) {
+            target = info;
+            found  = true;
+            break;
+        }
+    if (!found) return false;
+    if (target.uid == main.uid) {   // onto the main outputs' device: no aggregate
+        if (clickOnMain && clickUid.empty()) return true;
+        clickOnMain = true;
+        clickUid.clear();
+        return restart();
+    }
+    if (clickUid == target.uid && aggregate != 0) return true;
+    clickOnMain = false;
+    clickUid    = target.uid;
+    return restart() && aggregate != 0;
+}
+
+void CoreAudioBackend::disconnectAux() {
+    if (!clickOnMain && clickUid.empty()) return;
+    clickOnMain = false;
+    clickUid.clear();
+    if (isOpen && !lost.load()) restart();
+}
+
+bool CoreAudioBackend::takeDevicesChanged() {
+    return devicesChanged.exchange(false, std::memory_order_relaxed);
+}
+
+std::string CoreAudioBackend::mainDevice() {
+    return main.name;
+}
+
+// --- main-thread service -----------------------------------------------------------------
+
+std::vector<std::string> CoreAudioBackend::service() {
+    std::vector<std::string> notices;
+    if (!isOpen) return notices;
+    const bool listChanged = devicesChangedHere.exchange(false, std::memory_order_relaxed);
+
+    // The main device went away: silent until it's back (not the laptop's
+    // speakers instead: on stage, sound from the wrong place is worse).
+    if (lost.load()) {
+        if (!lostReported) {
+            tearDown();
+            lostReported = true;
+            notices.push_back("The output device '" + main.name + "' went away: silent until it's back.");
+        }
+        AudioDeviceInfo back;
+        if (listChanged && findByUid(main.uid, back)) {
+            main = back;
+            lost.store(false);
+            lostReported = false;
+            if (setUp() &&
+                (!running || AudioDeviceStart(ioDevice, reinterpret_cast<AudioDeviceIOProcID>(procId)) == noErr)) {
+                notices.push_back("The output device '" + main.name + "' is back: playing.");
+                devicesChanged.store(true);   // so the click is routed again
+            } else {
+                lost.store(true);   // try again on the next change
+                lostReported = true;
+                notices.push_back("The output device '" + main.name + "' is back but won't start; still waiting.");
+            }
+        }
+        return notices;
+    }
+
+    // The device chosen for this machine, stood in for until now (decision 12).
+    if (listChanged && !pendingChoice.empty()) {
+        AudioDeviceInfo chosen;
+        std::string     problem;
+        if (findDevice(pendingChoice, chosen, problem)) {
+            const std::string before = main.name;
+            main                     = chosen;
+            pendingChoice.clear();
+            if (restart())
+                notices.push_back("The output device '" + main.name + "' is here: playing on it (not '" + before + "').");
+            else
+                notices.push_back("The output device '" + main.name + "' is here but won't start.");
+        }
+    }
+
+    // The click's other device went: back to the main device alone (the
+    // controller routes it again when it returns).
+    if (listChanged && !clickUid.empty()) {
+        AudioDeviceInfo other;
+        if (!findByUid(clickUid, other)) {
+            clickUid.clear();
+            restart();
+        }
+    }
+
+    // The rate is ours while we play: the plugins were prepared for it.
+    if (rateChanged.exchange(false, std::memory_order_relaxed)) {
+        const double now = currentSampleRate.load();
+        if (now != wanted.sampleRate) {
+            const auto t = std::chrono::steady_clock::now();
+            if (rateRestores == 0 || t - firstRateRestore > kRateRestoreWindow) {
+                rateRestores     = 0;
+                firstRateRestore = t;
+            }
+            if (++rateRestores <= kMaxRateRestores &&
+                setProperty(ioDevice, kAudioDevicePropertyNominalSampleRate, Float64{wanted.sampleRate}))
+                notices.push_back("Something set '" + main.name + "' to " + hertz(now) + "; set back to " +
+                                  hertz(wanted.sampleRate) + ", the rate the plugins run at.");
+            else if (rateRestores == kMaxRateRestores + 1)
+                notices.push_back("Something keeps setting '" + main.name + "' to " + hertz(now) +
+                                  ": the plugins run at " + hertz(wanted.sampleRate) +
+                                  ", so pitch and tempo are off until it's set back.");
+        }
+    }
+    return notices;
+}
+
 // --- notifications -----------------------------------------------------------------------
 
-void CoreAudioBackend::addListeners() {
+void CoreAudioBackend::addListeners(AudioObjectID object) {
     for (const AudioObjectPropertySelector selector : kWatched) {
         const AudioObjectPropertyAddress where = address(selector);
-        AudioObjectAddPropertyListener(opened.id, &where, &propertyListener, this);
+        AudioObjectAddPropertyListener(object, &where, &propertyListener, this);
     }
-    listening = true;
+    listenedTo = object;
 }
 
 void CoreAudioBackend::removeListeners() {
-    if (!listening) return;
+    if (listenedTo == 0) return;
     for (const AudioObjectPropertySelector selector : kWatched) {
         const AudioObjectPropertyAddress where = address(selector);
-        AudioObjectRemovePropertyListener(opened.id, &where, &propertyListener, this);
+        AudioObjectRemovePropertyListener(listenedTo, &where, &propertyListener, this);
     }
-    listening = false;
+    listenedTo = 0;
 }
 
-void CoreAudioBackend::onPropertyChanged(std::uint32_t selector) noexcept {
+void CoreAudioBackend::onPropertyChanged(AudioObjectID object, std::uint32_t selector) noexcept {
     switch (selector) {
+        case kAudioHardwarePropertyDevices:
+            devicesChanged.store(true, std::memory_order_relaxed);
+            devicesChangedHere.store(true, std::memory_order_relaxed);
+            break;
         case kAudioDevicePropertyBufferFrameSize: {
             UInt32 frames = 0;
-            if (getProperty(opened.id, kAudioDevicePropertyBufferFrameSize, frames))
+            if (getProperty(object, kAudioDevicePropertyBufferFrameSize, frames))
                 currentBufferSize.store(frames, std::memory_order_relaxed);
             break;
         }
         case kAudioDevicePropertyNominalSampleRate: {
             Float64 rate = 0.0;
-            if (getProperty(opened.id, kAudioDevicePropertyNominalSampleRate, rate) &&
+            if (getProperty(object, kAudioDevicePropertyNominalSampleRate, rate) &&
                 rate != currentSampleRate.load(std::memory_order_relaxed)) {
                 currentSampleRate.store(rate, std::memory_order_relaxed);
                 rateChanged.store(true, std::memory_order_relaxed);
@@ -343,7 +650,7 @@ void CoreAudioBackend::onPropertyChanged(std::uint32_t selector) noexcept {
             break;
         case kAudioDevicePropertyDeviceIsAlive: {
             UInt32 alive = 1;
-            if (!getProperty(opened.id, kAudioDevicePropertyDeviceIsAlive, alive) || alive == 0)
+            if (!getProperty(object, kAudioDevicePropertyDeviceIsAlive, alive) || alive == 0)
                 lost.store(true, std::memory_order_relaxed);
             break;
         }
@@ -361,7 +668,7 @@ void CoreAudioBackend::render(const void* nowStamp, void* outputBufferList) noex
     if (output == nullptr || output->mNumberBuffers == 0) return;
 
     const ::AudioBuffer& first = output->mBuffers[0];
-    const std::uint32_t frames =
+    const std::uint32_t  frames =
         first.mNumberChannels == 0 ? 0 : first.mDataByteSize / (first.mNumberChannels * sizeof(float));
     if (frames == 0 || frames > capacityFrames) {   // can't happen: the range's maximum was allocated
         for (UInt32 b = 0; b < output->mNumberBuffers; ++b)
@@ -384,10 +691,12 @@ void CoreAudioBackend::render(const void* nowStamp, void* outputBufferList) noex
         processor->process(ctx);
     } else {
         for (float* channel : outputPointers) std::fill_n(channel, frames, 0.0f);
+        for (float* channel : auxPointers) std::fill_n(channel, frames, 0.0f);
     }
 
-    // Our outputs onto the device's channels, in order across its streams; any
-    // channel beyond them is silent.
+    // Our outputs onto the device's channels, in order across its streams, and
+    // the click onto its channels, mixed in; any other channel is silent.
+    // (auxChannels only changes while the IOProc is stopped.)
     std::uint32_t deviceChannel = 0;
     for (UInt32 b = 0; b < output->mNumberBuffers; ++b) {
         ::AudioBuffer&      buffer   = output->mBuffers[b];
@@ -396,12 +705,12 @@ void CoreAudioBackend::render(const void* nowStamp, void* outputBufferList) noex
         if (samples == nullptr || channels == 0) continue;
         const std::uint32_t bufferFrames = std::min<std::uint32_t>(frames, buffer.mDataByteSize / (channels * sizeof(float)));
         for (std::uint32_t c = 0; c < channels; ++c, ++deviceChannel) {
-            if (deviceChannel < outputPointers.size()) {
-                const float* source = outputPointers[deviceChannel];
-                for (std::uint32_t f = 0; f < bufferFrames; ++f) samples[f * channels + c] = source[f];
-            } else {
-                for (std::uint32_t f = 0; f < bufferFrames; ++f) samples[f * channels + c] = 0.0f;
-            }
+            const float* const ours = deviceChannel < outputPointers.size() ? outputPointers[deviceChannel] : nullptr;
+            const float*       aux  = nullptr;
+            for (std::size_t a = 0; a < auxChannels.size() && a < auxPointers.size(); ++a)
+                if (auxChannels[a] == deviceChannel) aux = auxPointers[a];
+            for (std::uint32_t f = 0; f < bufferFrames; ++f)
+                samples[f * channels + c] = (ours != nullptr ? ours[f] : 0.0f) + (aux != nullptr ? aux[f] : 0.0f);
         }
     }
     frameCounter.store(position + frames, std::memory_order_relaxed);

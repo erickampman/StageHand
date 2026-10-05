@@ -15,6 +15,7 @@
 #include "Session/AppPaths.h"
 #include "Session/RackFile.h"
 #include "Session/SetlistFile.h"
+#include "Session/AudioDeviceState.h"
 #include "Session/WindowState.h"
 
 using namespace stagehand;
@@ -196,6 +197,23 @@ void testWindowSize(const fs::path& dir) {
     CHECK(fitWindowSize({1100.0, 1900.0}, minimum, {}) == (WindowSize{1100.0, 1900.0}));   // the monitor unknown
 }
 
+// The output device chosen on this machine (macOS's; decision 12), kept between runs.
+void testAudioDeviceChoice(const fs::path& dir) {
+    const std::string path = (dir / "state/stagehand/audio.json").string();
+    AudioDeviceChoice c;
+    CHECK(!loadAudioDeviceChoice(path, c) && c.empty());
+    const AudioDeviceChoice interface{"Babyface Pro (12345)", "AppleUSBAudioEngine:RME:Babyface:12345:1"};
+    CHECK(saveAudioDeviceChoice(path, interface));
+    CHECK(loadAudioDeviceChoice(path, c) && c == interface);
+    CHECK(saveAudioDeviceChoice(path, AudioDeviceChoice{"MacBook Pro Speakers", ""}));   // no UID: by name
+    CHECK(loadAudioDeviceChoice(path, c) && c.name == "MacBook Pro Speakers" && c.uid.empty());
+    writeText(dir / "state/stagehand/audio.json", R"({"device": ""})");
+    CHECK(!loadAudioDeviceChoice(path, c) && c.name == "MacBook Pro Speakers");   // empty: none, unchanged
+    writeText(dir / "state/stagehand/audio.json", "not json");
+    CHECK(!loadAudioDeviceChoice(path, c));
+    CHECK(defaultAudioDevicePath() == appStateDir() + "/audio.json");
+}
+
 } // namespace
 
 int main() {
@@ -206,6 +224,7 @@ int main() {
     testPaths(dir);
     testLastPosition(dir);
     testWindowSize(dir);
+    testAudioDeviceChoice(dir);
     testAppPaths();
     fs::remove_all(dir);
     return test::finish("SetlistFile");
