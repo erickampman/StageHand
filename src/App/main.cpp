@@ -22,8 +22,13 @@
 #include "Midi/PlatformMidiInput.h"
 #include "Session/Session.h"
 
-// Playing, --tone and --list-plugins: Linux only until macOS has its audio
-// backend, plugin loader and windows (docs/macos.md, milestones 4 to 6).
+#ifdef __APPLE__
+#include "App/TestTone.h"
+#include "Audio/CoreAudioBackend.h"
+#endif
+
+// Playing and --list-plugins: Linux only until macOS has its plugin loader and
+// windows (docs/macos.md, milestones 4 to 6). --tone runs on both.
 #ifdef STAGEHAND_PLAY_MODES
 #include "App/AppHost.h"
 #include "App/EditorWindow.h"
@@ -71,6 +76,7 @@ void printUsage() {
         "  --list-midi          list MIDI sources (id, protocol, hardware/software/app)\n"
         "  --monitor            print incoming MIDI exactly as it arrives\n"
         "  --tone [HZ]          play a test sine (default 440 Hz) to check the audio path\n"
+        "  --list-audio         list output devices (macOS; on Linux PipeWire routes)\n"
         "  -h, --help           show this help\n"
         "\n"
         "What to play:\n"
@@ -99,6 +105,10 @@ void printUsage() {
         "                       affecting all audio on the system.\n"
         "  --channels N         output channels to register (default 2)\n"
         "  --no-connect         don't connect to the system playback ports\n"
+        "  --device NAME        macOS: the output device, by name, UID or a unique part\n"
+        "                       of its name (--list-audio). Default: the system's\n"
+        "                       output when StageHand starts, not followed afterwards.\n"
+        "                       On macOS --quantum sets this app's buffer on the device.\n"
         "\n"
         "MIDI (playing, --monitor). Every hardware MIDI input is opened by default, plus\n"
         "two virtual inputs other apps can connect to: 'MIDI 2.0 In' and 'MIDI 1.0 In'.\n"
@@ -132,7 +142,7 @@ void printUsage() {
         "  stagehand --list-plugins");
 }
 
-enum class Mode { None, Play, ListPlugins, ListMidi, Monitor, Tone };
+enum class Mode { None, Play, ListPlugins, ListMidi, ListAudio, Monitor, Tone };
 
 struct Options {
     Mode                     mode        = Mode::None;
@@ -151,6 +161,7 @@ struct Options {
     unsigned                 channels    = 2;
     unsigned                 quantum     = 0;   // 0 = leave the buffer size to PipeWire
     bool                     autoConnect = true;
+    std::string              device;    // macOS: the output device (decision 12); "" = the system's
     std::vector<std::string> midiSources;
     MidiProtocol             preference  = MidiProtocol::Midi2;
 };
@@ -172,6 +183,8 @@ int parseArguments(int argc, char** argv, Options& options) {
             options.mode = Mode::ListPlugins;
         } else if (arg == "--list-midi") {
             options.mode = Mode::ListMidi;
+        } else if (arg == "--list-audio") {
+            options.mode = Mode::ListAudio;
         } else if (arg == "--monitor") {
             options.mode = Mode::Monitor;
         } else if (arg == "--tone") {
@@ -209,6 +222,8 @@ int parseArguments(int argc, char** argv, Options& options) {
             options.quantum = static_cast<unsigned>(n);
         } else if (arg == "--no-connect") {
             options.autoConnect = false;
+        } else if (arg == "--device" && i + 1 < argc) {
+            options.device = argv[++i];
         } else if (arg == "--midi" && i + 1 < argc) {
             options.midiSources.emplace_back(argv[++i]);
         } else if (arg == "--midi-protocol" && i + 1 < argc) {
@@ -292,12 +307,17 @@ std::map<MidiSourceHandle, std::string> openMidiInputs(PlatformMidiInput& input,
     return names;
 }
 
-#ifdef STAGEHAND_PLAY_MODES
-
-// --- --tone ------------------------------------------------------------------------------
+// --- --tone / --list-audio ------------------------------------------------------------------------------
 
 int runTone(const Options& options) {
+#ifdef __APPLE__
+    CoreAudioBackend backend(options.device);
+    const auto       stopped = [&] { return backend.deviceLost(); };
+#else
+    if (!options.device.empty()) std::puts("--device is macOS's: on Linux, PipeWire routes the outputs.");
     JackBackend backend("StageHand", options.autoConnect);
+    const auto  stopped = [&] { return backend.serverShutDown(); };
+#endif
     AudioConfig requested;
     requested.outputChannels = options.channels;
     requested.bufferSize     = options.quantum;
@@ -307,20 +327,28 @@ int runTone(const Options& options) {
     std::printf("%s: %.0f Hz, %u-frame buffer, %u in / %u out\n", backend.name(),
                 negotiated.sampleRate, negotiated.bufferSize, negotiated.inputChannels,
                 negotiated.outputChannels);
+#ifdef __APPLE__
+    std::printf("Device: %s (%u outputs); output latency %.1f ms\n", backend.device().name.c_str(),
+                backend.device().outputChannels, backend.outputLatencySeconds() * 1000.0);
+#else
     std::printf("JACK clock - CLOCK_MONOTONIC: %lld ns\n",
                 static_cast<long long>(backend.clockOffset()));
+#endif
 
     TestTone tone(options.toneHz, 0.125f);   // ~-18 dBFS
     backend.setProcessor(&tone);
     if (!backend.start()) return 1;
+#ifndef __APPLE__
     if (const std::uint32_t forced = backend.forcedQuantum(); forced != 0)
         std::printf("Forcing a %u-frame quantum while running (applies at activation).\n",
                     forced);
+#endif
     std::printf("Playing %.1f Hz. Ctrl-C to stop.\n", options.toneHz);
 
     std::uint64_t lastXruns  = 0;
     std::uint32_t lastBuffer = negotiated.bufferSize;
-    while (!quitRequested.load() && !backend.serverShutDown()) {
+    double        lastRate   = negotiated.sampleRate;
+    while (!quitRequested.load() && !stopped()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
         if (const std::uint64_t x = backend.xrunCount(); x != lastXruns) {
             std::printf("xruns: %llu\n", static_cast<unsigned long long>(x));
@@ -330,8 +358,16 @@ int runTone(const Options& options) {
             std::printf("buffer size changed: %u -> %u frames\n", lastBuffer, b);
             lastBuffer = b;
         }
+        if (const double r = backend.config().sampleRate; r != lastRate) {
+            std::printf("sample rate changed: %.0f -> %.0f Hz\n", lastRate, r);
+            lastRate = r;
+        }
     }
-    if (backend.serverShutDown()) std::fprintf(stderr, "JACK server shut down\n");
+#ifdef __APPLE__
+    if (stopped()) std::fprintf(stderr, "The output device went away\n");
+#else
+    if (stopped()) std::fprintf(stderr, "JACK server shut down\n");
+#endif
 
     const std::int64_t frames = backend.framesProcessed();
     backend.close();
@@ -340,7 +376,19 @@ int runTone(const Options& options) {
     return 0;
 }
 
-#endif // STAGEHAND_PLAY_MODES
+int listAudio() {
+#ifdef __APPLE__
+    const std::vector<AudioDeviceInfo> devices = CoreAudioBackend::outputDevices();
+    if (devices.empty()) std::puts("No output devices.");
+    for (const AudioDeviceInfo& d : devices)
+        std::printf("%s %-36s %2u out  %6.0f Hz  uid %s\n", d.isDefault ? "*" : " ", d.name.c_str(),
+                    d.outputChannels, d.sampleRate, d.uid.c_str());
+    if (!devices.empty()) std::puts("(* the system's default output: StageHand's unless --device says otherwise)");
+#else
+    std::puts("On Linux PipeWire routes StageHand's outputs: choose with qpwgraph or pavucontrol.");
+#endif
+    return 0;
+}
 
 // --- --list-midi / --monitor --------------------------------------------------------------
 
@@ -817,17 +865,17 @@ int main(int argc, char** argv) {
 #ifdef STAGEHAND_PLAY_MODES
         case Mode::Play:        return runPlay(options);
         case Mode::ListPlugins: return listPlugins();
-        case Mode::Tone:        return runTone(options);
 #else
         case Mode::Play:
         case Mode::ListPlugins:
-        case Mode::Tone:
             std::fprintf(stderr,
-                         "On macOS, StageHand only lists and monitors MIDI so far (--list-midi,\n"
-                         "--monitor): playing, --tone and --list-plugins need the audio backend and\n"
-                         "the plugin loader still to come (docs/macos.md, milestones 4 and 5).\n");
+                         "On macOS, StageHand can't play yet: playing and --list-plugins need the plugin\n"
+                         "loader still to come (docs/macos.md, milestone 5). --tone, --list-audio,\n"
+                         "--list-midi and --monitor work.\n");
             return 1;
 #endif
+        case Mode::Tone:        return runTone(options);
+        case Mode::ListAudio:   return listAudio();
         case Mode::ListMidi:    return listMidi();
         case Mode::Monitor:     return runMonitor(options);
         case Mode::None:        break;

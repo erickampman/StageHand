@@ -12,7 +12,7 @@ Everything else is a system library.
 | Platform | What builds today |
 |---|---|
 | Linux | everything: the `stagehand` app (rack window, plugin hosting), its libraries, the test suites |
-| macOS | the libraries, the test suites, and the `stagehand` app with its MIDI modes only (`--list-midi`, `--monitor`, over CoreMIDI); playing waits for the CoreAudio backend and the plugin loader ([macos.md](macos.md), milestones 4 and 5) |
+| macOS | the libraries, the test suites, and the `stagehand` app with `--tone`, `--list-audio` and the MIDI modes (`--list-midi`, `--monitor`), over CoreAudio and CoreMIDI; playing waits for the plugin loader ([macos.md](macos.md), milestone 5) |
 
 ## Getting the source
 
@@ -115,7 +115,7 @@ group, and log in again.
 Apple Silicon, macOS 15 or later (the build sets `CMAKE_OSX_ARCHITECTURES`
 to `arm64` and the deployment target to 15.0; [macos.md](macos.md),
 decisions 9 and 13). The libraries, the test suites and the app build; the
-app lists and monitors MIDI (`--list-midi`, `--monitor`) but doesn't play yet.
+app plays a test tone and lists and monitors MIDI, but doesn't play racks yet.
 
 ### Dependencies
 
@@ -132,7 +132,7 @@ brew install cmake ninja
 ```
 
 No JACK, ALSA, X11 or OpenGL packages. The macOS backends use only system
-frameworks (CoreMIDI and CoreFoundation now; CoreAudio and AppKit to come).
+frameworks (CoreAudio, CoreMIDI and CoreFoundation now; AppKit to come).
 
 ### Build and test
 
@@ -148,7 +148,11 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-Then, to see MIDI arrive (Ctrl-C stops it):
+Then, to hear the audio path and see MIDI arrive (Ctrl-C stops each):
+
+```bash
+./build/stagehand --tone
+```
 
 ```bash
 ./build/stagehand --monitor

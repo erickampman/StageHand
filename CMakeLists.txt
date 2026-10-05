@@ -15,9 +15,9 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 # --- Platforms (docs/macos.md) -----------------------------------------------------
-# Linux builds everything. macOS (so far: milestone 3) builds the app with the
-# MIDI modes only (--list-midi, --monitor), over CoreMIDI; playing needs the
-# audio backend and plugin loader still to come. STAGEHAND_APP=OFF builds the
+# Linux builds everything. macOS (so far: milestones 3 and 4, in part) builds
+# the app with --tone, --list-audio and the MIDI modes (--list-midi, --monitor)
+# over CoreAudio and CoreMIDI; playing needs the plugin loader still to come. STAGEHAND_APP=OFF builds the
 # platform-free libraries and the test suites only, anywhere.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     set(stagehand_linux ON)
@@ -167,13 +167,15 @@ if(stagehand_linux_app)
 
 endif()
 
-# --- The macOS seams and the app (STAGEHAND_APP on macOS): MIDI modes only ---------
+# --- The macOS seams and the app (STAGEHAND_APP on macOS): --tone and the MIDI modes ---
 if(STAGEHAND_APP AND APPLE)
 
     add_library(stagehand-lib STATIC
+        src/Audio/CoreAudioBackend.cpp
         src/Midi/CoreMidiInput.cpp)
     target_link_libraries(stagehand-lib
-        PUBLIC  stagehand-engine "-framework CoreMIDI" "-framework CoreFoundation" Threads::Threads
+        PUBLIC  stagehand-engine "-framework CoreAudio" "-framework CoreMIDI" "-framework CoreFoundation"
+                Threads::Threads
         PRIVATE stagehand-warnings)
 
     add_executable(stagehand

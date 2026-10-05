@@ -1,7 +1,7 @@
 # StageHand — macOS (plan)
 
 Proposed 2026-10-03, reviewed the same day (notes under "Review");
-milestones 1 to 3 built (notes under "Milestones"). StageHand on macOS 15 (Sequoia) and later, keeping DGL for the UI
+milestones 1 to 3 built, 4 under way (notes under "Milestones"). StageHand on macOS 15 (Sequoia) and later, keeping DGL for the UI
 (no native Cocoa interface). Builds on:
 - architecture.md, sections 1 to 3: MIDI, audio and plugins sit behind seams
   (`MidiInput`, `AudioBackend`, `PluginFactory`) so CoreMIDI and CoreAudio
@@ -108,8 +108,18 @@ lock-free on arm64.
     toolchain for a window with nothing of its own; Swift with AppKit works
     but costs the same for 80 lines. On Linux the editor window becomes a DGL
     window too, so the raw X11 code goes.
-12. **The main output device:** deferred to milestone 4 (decided
-    2026-10-03); see "Open questions".
+12. **The main output device** (decided 2026-10-05). By default, the
+    system's default output **as it is when StageHand starts, not followed
+    afterwards**: macOS moves its default to a headset that connects, and a
+    rig that followed would put the PA mix in the headset mid-set. Chosen
+    with `--device NAME` (a device's name or UID, or a unique part of its
+    name, from `--list-audio`), later also in the window (milestone 6).
+    Kept **per machine, in the app's state** (`appStateDir()`, beside the
+    window size and the last position), not in the rig: rig.md puts the audio
+    device in the App layer, and a rig or setlist copied to another Mac (or
+    to Linux) mustn't carry this machine's interface. A saved device that's
+    missing at start: the system default, said plainly, and back to the
+    saved one when it returns. Linux has no counterpart (PipeWire routes).
 13. **arm64 only.** An arm64 process can't load x86_64 plugins (Rosetta
     doesn't mix architectures in one process), so a universal StageHand
     wouldn't help its plugins. The scan lists a plugin built only for Intel
@@ -345,8 +355,41 @@ behind `STAGEHAND_PLAY_MODES` (Linux only for now) and say so on macOS.
   unlike ALSA's converter (architecture.md, section 1). CoreMIDI also passes
   CC 101 and CC 100 through, as MIDI 2.0 controller messages, before the
   RPN.
-- **Not checked yet:** a real USB keyboard (the KeyLab 88 and Launchkey
-  were unplugged), and a UMP-native USB device.
+- **Checked since:** a Launchkey Mini (MIDI 1.0, USB) and KeyEDO's
+  published source (MIDI 2.0) in `--monitor`. Not yet: a UMP-native USB
+  device.
+
+**Milestone 4, first part (2026-10-05): the CoreAudio backend and `--tone`.**
+`Audio/CoreAudioBackend`: a HAL IOProc on one output device, chosen as
+decision 12 says (`--device`: a name, a UID or a unique part of a name;
+default the system's output at start, not followed). The engine renders into
+planar buffers allocated at open for the device's largest buffer; the IOProc
+interleaves them into the device's streams (Float32, the HAL's virtual
+format), the main outputs on its first channels in stream order. The block's
+time is the IOProc's "now" in host time (decision 4). `--quantum` sets this
+process's `kAudioDevicePropertyBufferFrameSize` (clamped to the device's
+range), and `close()` puts back what was there (the setting outlives an
+open in the same process otherwise: found by the test). Listeners on the
+HAL's own thread (`kAudioHardwarePropertyRunLoop` set to none): buffer size
+and nominal rate changes (reported by `config()`), overloads (counted as
+xruns), the device going away. `--tone` and `--list-audio` run on macOS;
+`--device` is macOS's.
+
+- **Order changed:** Cocoa's loop driving `MainLoop` waits for `--play`
+  on macOS (milestone 5's plugin loader): until then nothing on macOS runs
+  a main loop, so it couldn't be tried.
+- **Checked on a Mac** (MacBook Pro speakers, 48 kHz), silently, with a
+  processor recording each block: at 64, 128, 512 and 1024 frames every
+  block's time advances by exactly its frames (within 30 µs), `process()`
+  starts 10 to 60 µs after the block's time (so it is the period's start),
+  no overloads; output latency 18 ms at 64 frames, 27 ms at 512 (the
+  built-in speakers' safety offset is large). `--device` refuses an
+  unknown or ambiguous name, naming the matches.
+- **Still to do in milestone 4:** the saved device per machine (decision
+  12's storage, written when `--play` chooses one), the buses' channel
+  pairs, the click on its pair or through the aggregate (decision 3),
+  sample-rate changes acted on (prepared racks remade), sleep and
+  unplugging recovered from.
 
 ## Review (2026-10-03)
 
@@ -370,13 +413,8 @@ The first draft, read again against the code and Apple's APIs:
 
 ## Open questions
 
-- **The main output device** (decision 12), before milestone 4: which device
-  by default (proposed: the system's default output at start, not followed
-  afterwards, so a headset connecting mid-set can't move the PA), how it's
-  chosen (proposed: `--device NAME`, and a choice in the window), and where
-  it's kept (the rig, as the click's output, or per machine). Deferred
-  2026-10-03: nothing needs it until the CoreAudio backend.
+None now.
 
-Answered 2026-10-03: macOS 15 or later; DPF's file dialogs on Linux too; the
+Answered 2026-10-05: the main output device (decision 12). Answered 2026-10-03: macOS 15 or later; DPF's file dialogs on Linux too; the
 click can go to another interface, through a private aggregate device on
 macOS.
