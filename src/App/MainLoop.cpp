@@ -1,7 +1,7 @@
 #include "App/MainLoop.h"
 
+#include <fcntl.h>
 #include <poll.h>
-#include <sys/eventfd.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -30,12 +30,23 @@ std::uint32_t fromPoll(short revents) noexcept {
 
 } // namespace
 
-MainLoop::MainLoop() : wakeFd(eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC)) {
-    if (wakeFd < 0) std::fprintf(stderr, "MainLoop: eventfd failed\n");
+MainLoop::MainLoop() {
+    int fds[2];
+    if (::pipe(fds) != 0) {
+        std::perror("MainLoop: pipe");
+        return;
+    }
+    for (const int fd : fds) {   // no pipe2() on macOS
+        ::fcntl(fd, F_SETFL, ::fcntl(fd, F_GETFL) | O_NONBLOCK);
+        ::fcntl(fd, F_SETFD, FD_CLOEXEC);
+    }
+    wakeRead  = fds[0];
+    wakeWrite = fds[1];
 }
 
 MainLoop::~MainLoop() {
-    if (wakeFd >= 0) ::close(wakeFd);
+    if (wakeRead >= 0) ::close(wakeRead);
+    if (wakeWrite >= 0) ::close(wakeWrite);
 }
 
 TimerId MainLoop::addTimer(std::uint32_t periodMs, std::function<void()> callback) {
@@ -70,8 +81,8 @@ void MainLoop::unwatchFd(int fd) {
 
 void MainLoop::requestQuit() noexcept {
     quit.store(true);
-    const std::uint64_t one = 1;
-    [[maybe_unused]] const ssize_t n = ::write(wakeFd, &one, sizeof one);
+    const char byte = 0;   // a full pipe (EAGAIN) is fine: run() is already due to wake
+    [[maybe_unused]] const ssize_t n = ::write(wakeWrite, &byte, 1);
 }
 
 void MainLoop::run() {
@@ -89,7 +100,7 @@ void MainLoop::run() {
         }
 
         fds.clear();
-        fds.push_back(pollfd{wakeFd, POLLIN, 0});
+        fds.push_back(pollfd{wakeRead, POLLIN, 0});
         for (const auto& [fd, watch] : watches) fds.push_back(pollfd{fd, toPoll(watch.events), 0});
 
         if (::poll(fds.data(), fds.size(), timeout) < 0 && errno != EINTR) {
@@ -99,8 +110,8 @@ void MainLoop::run() {
         if (quit.load()) break;
 
         if (fds[0].revents & POLLIN) {
-            std::uint64_t value = 0;
-            [[maybe_unused]] const ssize_t n = ::read(wakeFd, &value, sizeof value);
+            char buffer[64];
+            while (::read(wakeRead, buffer, sizeof buffer) > 0) {}
         }
 
         for (std::size_t i = 1; i < fds.size(); ++i) {

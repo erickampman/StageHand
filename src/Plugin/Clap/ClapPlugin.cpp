@@ -525,17 +525,26 @@ bool ClapPlugin::loadState(const std::byte* data, std::size_t size) {
 
 // --- editor (main thread) -------------------------------------------------------------
 // CLAP's order: create -> (set_scale) -> can_resize -> get_size -> set_parent ->
-// show ... hide -> destroy. set_scale is skipped on X11 so the plugin picks its
-// own DPI (architecture.md section 4).
+// show ... hide -> destroy. set_scale is skipped: on X11 so the plugin picks its
+// own DPI (architecture.md section 4); on macOS sizes are in points and CLAP
+// says set_scale doesn't apply.
+
+namespace {
+#ifdef __APPLE__
+constexpr const char* kWindowApi = CLAP_WINDOW_API_COCOA;   // the parent is an NSView*
+#else
+constexpr const char* kWindowApi = CLAP_WINDOW_API_X11;     // the parent is an X11 Window
+#endif
+} // namespace
 
 bool ClapPlugin::hasEditor() const {
-    return guiExt != nullptr && guiExt->is_api_supported(plugin, CLAP_WINDOW_API_X11, false);
+    return guiExt != nullptr && guiExt->is_api_supported(plugin, kWindowApi, false);
 }
 
 bool ClapPlugin::openEditor(NativeWindow parent, EditorHost& host, EditorSize& size) {
     if (!hasEditor() || editorHost != nullptr || pendingGuiDestroy) return false;
     editorHost = &host;   // the plugin may call back (e.g. request_resize) from here on
-    if (!guiExt->create(plugin, CLAP_WINDOW_API_X11, false)) {
+    if (!guiExt->create(plugin, kWindowApi, false)) {
         report(LogLevel::Error, "gui create failed");
         editorHost = nullptr;
         return false;
@@ -546,8 +555,12 @@ bool ClapPlugin::openEditor(NativeWindow parent, EditorHost& host, EditorSize& s
         height = 480;
     }
     clap_window_t window{};
-    window.api = CLAP_WINDOW_API_X11;
+    window.api = kWindowApi;
+#ifdef __APPLE__
+    window.cocoa = reinterpret_cast<clap_nsview>(parent);
+#else
     window.x11 = static_cast<clap_xwnd>(parent);
+#endif
     if (!guiExt->set_parent(plugin, &window)) {
         report(LogLevel::Error, "gui set_parent failed");
         guiExt->destroy(plugin);
@@ -601,7 +614,9 @@ const void* ClapPlugin::hostGetExtension(const clap_host_t*, const char* id) {
     if (std::strcmp(id, CLAP_EXT_NOTE_PORTS) == 0)   return &kHostNotePorts;
     if (std::strcmp(id, CLAP_EXT_GUI) == 0)          return &kHostGui;
     if (std::strcmp(id, CLAP_EXT_TIMER_SUPPORT) == 0)     return &kHostTimerSupport;
+#ifndef __APPLE__   // macOS plugins use the main run loop, not the host's fds (docs/macos.md)
     if (std::strcmp(id, CLAP_EXT_POSIX_FD_SUPPORT) == 0)  return &kHostPosixFdSupport;
+#endif
     return nullptr;
 }
 

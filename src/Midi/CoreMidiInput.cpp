@@ -321,14 +321,16 @@ void CoreMidiInput::receive(const void* eventList, Receiver* receiver) noexcept 
     MidiSink* const        target = sink.load(std::memory_order_acquire);
     if (handle == kInvalidMidiSource || target == nullptr) return;
 
-    const auto*            list   = static_cast<const MIDIEventList*>(eventList);
-    const MIDIEventPacket* packet = &list->packet[0];
+    // Stamped as it reaches us, not with the packet's own host time: that's
+    // when the driver got the bytes, earlier than now by CoreMIDI's delivery,
+    // and a block that starts in between would miss the message and find it
+    // more than a period old ("late MIDI"; found at 64 frames with a USB
+    // keyboard). The engine's contract is capture time <= queue time, as
+    // ALSA's read-time stamps give (docs/macos.md, milestone 5 notes).
+    const Nanoseconds      captured = nowNanoseconds();
+    const auto*            list     = static_cast<const MIDIEventList*>(eventList);
+    const MIDIEventPacket* packet   = &list->packet[0];
     for (UInt32 p = 0; p < list->numPackets; ++p, packet = MIDIEventPacketNext(packet)) {
-        // The packet's host time: when it arrived (a device) or when the sending
-        // app stamped it. Never later than now: an app may stamp ahead.
-        const Nanoseconds now      = nowNanoseconds();
-        const Nanoseconds captured = packet->timeStamp != 0 ? std::min(hostTimeToNanoseconds(packet->timeStamp), now)
-                                                            : now;
         // A packet may hold several UMP messages, all at its time.
         for (UInt32 i = 0; i < packet->wordCount;) {
             const std::uint8_t words = ump::wordCountForType(static_cast<std::uint8_t>(packet->words[i] >> 28));

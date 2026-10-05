@@ -15,9 +15,9 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 # --- Platforms (docs/macos.md) -----------------------------------------------------
-# Linux builds everything. macOS (so far: milestones 3 and 4, in part) builds
-# the app with --tone, --list-audio and the MIDI modes (--list-midi, --monitor)
-# over CoreAudio and CoreMIDI; playing needs the plugin loader still to come. STAGEHAND_APP=OFF builds the
+# Linux builds everything. macOS (so far: milestones 3 to 5, in part) builds the
+# app over CoreAudio, CoreMIDI and CFBundle-loaded CLAP plugins, without windows:
+# it plays console only (no rack window, no plugin editors) until Cocoa's come. STAGEHAND_APP=OFF builds the
 # platform-free libraries and the test suites only, anywhere.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     set(stagehand_linux ON)
@@ -163,23 +163,28 @@ if(stagehand_linux_app)
         src/App/MainLoop.cpp
         src/App/MidiMonitor.cpp)
     target_link_libraries(stagehand PRIVATE stagehand-lib stagehand-app stagehand-ui PkgConfig::X11 stagehand-warnings)
-    target_compile_definitions(stagehand PRIVATE STAGEHAND_PLAY_MODES)   # playing, --tone, --list-plugins
+    target_compile_definitions(stagehand PRIVATE STAGEHAND_WINDOWS)   # the rack window and editor windows
 
 endif()
 
-# --- The macOS seams and the app (STAGEHAND_APP on macOS): --tone and the MIDI modes ---
+# --- The macOS seams and the app (STAGEHAND_APP on macOS): no windows yet ----------------
 if(STAGEHAND_APP AND APPLE)
 
     add_library(stagehand-lib STATIC
         src/Audio/CoreAudioBackend.cpp
-        src/Midi/CoreMidiInput.cpp)
+        src/Midi/CoreMidiInput.cpp
+        src/Plugin/Clap/ClapModule.cpp
+        src/Plugin/Clap/ClapPlugin.cpp
+        src/Plugin/Clap/ClapPluginFactory.cpp)
     target_link_libraries(stagehand-lib
         PUBLIC  stagehand-engine "-framework CoreAudio" "-framework CoreMIDI" "-framework CoreFoundation"
                 Threads::Threads
-        PRIVATE stagehand-warnings)
+        PRIVATE clap-sdk stagehand-warnings)
 
     add_executable(stagehand
         src/App/main.cpp
+        src/App/AppHost.cpp
+        src/App/MainLoop.cpp
         src/App/MidiMonitor.cpp)
     target_link_libraries(stagehand PRIVATE stagehand-lib stagehand-app stagehand-warnings)
 

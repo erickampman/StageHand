@@ -2,6 +2,7 @@
 
 #include <clap/clap.h>
 
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <sstream>
@@ -15,8 +16,13 @@ namespace stagehand {
 namespace fs = std::filesystem;
 
 ClapPluginFactory::ClapPluginFactory() {
+#ifdef __APPLE__
+    if (const char* home = std::getenv("HOME")) paths.push_back(std::string(home) + "/Library/Audio/Plug-Ins/CLAP");
+    paths.emplace_back("/Library/Audio/Plug-Ins/CLAP");
+#else
     if (const char* home = std::getenv("HOME")) paths.push_back(std::string(home) + "/.clap");
     paths.emplace_back("/usr/lib/clap");
+#endif
     if (const char* extra = std::getenv("CLAP_PATH")) {
         std::stringstream list(extra);
         std::string       dir;
@@ -34,7 +40,18 @@ std::vector<PluginDescriptor> ClapPluginFactory::scan() {
             ec);
         for (const fs::recursive_directory_iterator end; !ec && it != end; it.increment(ec)) {
             std::error_code fileError;
-            if (it->path().extension() != ".clap" || !fs::is_regular_file(it->path(), fileError)) continue;
+            if (it->path().extension() != ".clap") continue;
+#ifdef __APPLE__
+            // A bundle: a folder, the plugin itself; nothing to find inside it.
+            if (!fs::is_directory(it->path(), fileError)) continue;
+            it.disable_recursion_pending();
+            if (std::string problem; !ClapModule::isLoadableHere(it->path().string(), problem)) {
+                std::fprintf(stderr, "CLAP: %s: %s\n", it->path().filename().string().c_str(), problem.c_str());
+                continue;
+            }
+#else
+            if (!fs::is_regular_file(it->path(), fileError)) continue;
+#endif
             std::vector<PluginDescriptor> more = scanFile(it->path().string());
             found.insert(found.end(), more.begin(), more.end());
         }

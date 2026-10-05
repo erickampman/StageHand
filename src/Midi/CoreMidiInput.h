@@ -29,8 +29,10 @@ namespace stagehand {
 // no device (another app's virtual source, e.g. KeyEDO) is just "<endpoint>".
 //
 // Messages arrive on CoreMIDI's own high-priority thread: no thread of ours for
-// MIDI. Timestamps are the packet's host time on nowNanoseconds()'s clock (the
-// arrival time CoreMIDI records, sharper than a read-time stamp), or now if 0.
+// MIDI. Each is timestamped with nowNanoseconds() as it reaches us, as ALSA's
+// are when read: never earlier than it reaches the engine's queue, which the
+// engine's one-period placement needs (the packet's own host time is earlier,
+// by CoreMIDI's delivery, and made messages "late").
 //
 // Hotplug: CoreMIDI posts its notifications on the run loop of the thread that
 // made the client. So that they come whatever loop the app runs (a sleep loop,

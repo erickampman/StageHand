@@ -22,26 +22,28 @@
 #include "Midi/PlatformMidiInput.h"
 #include "Session/Session.h"
 
-#ifdef __APPLE__
-#include "App/TestTone.h"
-#include "Audio/CoreAudioBackend.h"
-#endif
-
-// Playing and --list-plugins: Linux only until macOS has its plugin loader and
-// windows (docs/macos.md, milestones 4 to 6). --tone runs on both.
-#ifdef STAGEHAND_PLAY_MODES
 #include "App/AppHost.h"
-#include "App/EditorWindow.h"
 #include "App/MainLoop.h"
 #include "App/RackController.h"
 #include "App/TestTone.h"
-#include "Audio/JackBackend.h"
 #include "Engine/Engine.h"
 #include "Plugin/Clap/ClapPluginFactory.h"
 #include "Session/RackFile.h"
 #include "Session/RigFile.h"
 #include "Session/SetlistFile.h"
 #include "Session/WindowState.h"
+
+#ifdef __APPLE__
+#include "Audio/CoreAudioBackend.h"
+#else
+#include "Audio/JackBackend.h"
+#endif
+
+// StageHand's windows: the rack window (DGL) and the plugin editors' (X11).
+// Linux only so far; on macOS StageHand plays without them, console only,
+// until milestones 5 and 6 bring Cocoa's (docs/macos.md).
+#ifdef STAGEHAND_WINDOWS
+#include "App/EditorWindow.h"
 #include "Ui/RackUi.h"
 #endif
 
@@ -50,16 +52,41 @@ using namespace stagehand;
 namespace {
 
 std::atomic<bool>      quitRequested{false};
-#ifdef STAGEHAND_PLAY_MODES
 std::atomic<MainLoop*> activeLoop{nullptr};   // --play's loop, for the signal handler
-#endif
 
 void handleSignal(int) {
     quitRequested.store(true);
-#ifdef STAGEHAND_PLAY_MODES
     if (MainLoop* loop = activeLoop.load()) loop->requestQuit();   // async-signal-safe
-#endif
 }
+
+#ifndef STAGEHAND_WINDOWS
+// No windows on this platform yet: stand-ins that never open, so playing reads
+// the same everywhere.
+struct EditorWindow {
+    static std::unique_ptr<EditorWindow> open(HostedPlugin&, MainLoop&, const std::string&,
+                                              std::function<void()> = {}) {
+        return nullptr;
+    }
+    bool isOpen() const { return false; }
+};
+struct RackUi {
+    static std::unique_ptr<RackUi> open(RackController&, const std::string& = {}) { return nullptr; }
+    void showNotice(const std::string&) {}
+    void refresh() {}
+    void idle() {}
+    bool closed() const { return true; }
+};
+#endif
+
+// The audio backend stopped under us: JACK's server went, or the Mac's output
+// device did.
+#ifdef __APPLE__
+bool audioStopped(const CoreAudioBackend& backend) { return backend.deviceLost(); }
+constexpr const char* kAudioStoppedMessage = "The output device went away";
+#else
+bool audioStopped(const JackBackend& backend) { return backend.serverShutDown(); }
+constexpr const char* kAudioStoppedMessage = "JACK server shut down";
+#endif
 
 void printUsage() {
     std::puts(
@@ -247,7 +274,6 @@ const char* protocolName(MidiProtocol protocol) {
     return protocol == MidiProtocol::Midi2 ? "MIDI 2.0" : "MIDI 1.0";
 }
 
-#ifdef STAGEHAND_PLAY_MODES
 std::string dialectNames(NoteDialectMask mask) {
     std::string text;
     auto add = [&](NoteDialectMask bit, const char* name) {
@@ -261,7 +287,6 @@ std::string dialectNames(NoteDialectMask mask) {
     add(NoteDialect::Midi2, "MIDI2");
     return text.empty() ? "none" : text;
 }
-#endif
 
 // Virtual inputs other apps (a MIDI 2.0 test tool, later KeyEDO) connect to.
 const std::vector<std::pair<std::string, MidiProtocol>> kVirtualInputs = {
@@ -429,8 +454,6 @@ int runMonitor(const Options& options) {
     monitor->drain(names);
     return 0;
 }
-
-#ifdef STAGEHAND_PLAY_MODES
 
 // --- --list-plugins / --play ---------------------------------------------------------------
 
@@ -625,7 +648,12 @@ int runPlay(const Options& options) {
     // Declaration order matters: destruction runs in reverse, so plugins (held
     // by the session) go before the engine, the host services they call, and
     // the backend.
+#ifdef __APPLE__
+    CoreAudioBackend backend(options.device);
+#else
+    if (!options.device.empty()) std::puts("--device is macOS's: on Linux, PipeWire routes the outputs.");
     JackBackend backend("StageHand", options.autoConnect);
+#endif
     AudioConfig requested;
     requested.outputChannels    = options.channels;
     requested.auxOutputChannels = 2;   // the click, connected only where the rack says
@@ -662,8 +690,10 @@ int runPlay(const Options& options) {
     if (!runnable) std::puts("Nothing plays yet: add plugins in the rack window.");
 
     if (!backend.start()) return 1;
+#ifndef __APPLE__
     if (const std::uint32_t forced = backend.forcedQuantum(); forced != 0)
         std::printf("Forcing a %u-frame quantum while running (applies at activation).\n", forced);
+#endif
 
     // Editors, saving, and the rack view's model (docs/rack-view.md, section 5).
     // Until StageHand has its own window, every editor opens at start.
@@ -693,7 +723,11 @@ int runPlay(const Options& options) {
     config.protocolPreference = options.preference;
     config.saveTarget         = saveTarget.empty() ? std::string{} : resolveRackPath(saveTarget);
     config.savingOff          = options.noSaveRack;
+#ifdef __APPLE__
+    config.clickRouting       = nullptr;   // the click's routing on macOS: milestone 4, still to come
+#else
     config.clickRouting       = &backend;
+#endif
     config.outputLatencySeconds = backend.outputLatencySeconds();   // started and connected by now
     config.lastPositionPath   = defaultLastPositionPath();
     // Devices plugged in later are opened as at start: hardware, or everything
@@ -742,8 +776,10 @@ int runPlay(const Options& options) {
         std::puts("Untitled rack: Save As in the rack window's File menu keeps it.");
     else
         std::puts("Not saving: this session has no rack. Add --save-rack PATH to keep it.");
-    std::printf("Playing %s. Send MIDI to an input above. Ctrl-Q in %s, or Ctrl-C here, stops.\n",
-                session.rackName().c_str(), ui ? "StageHand's windows" : "an editor window");
+    const char* const stopHow = ui                                 ? "Ctrl-Q in StageHand's windows, or Ctrl-C here,"
+                                : controller.openEditorCount() > 0 ? "Ctrl-Q in an editor window, or Ctrl-C here,"
+                                                                   : "Ctrl-C";
+    std::printf("Playing %s. Send MIDI to an input above. %s stops.\n", session.rackName().c_str(), stopHow);
     std::fflush(stdout);
 
     // Housekeeping on the main loop: the controller's service and tick, plus the
@@ -768,7 +804,7 @@ int runPlay(const Options& options) {
             std::puts("The plugin asked for a restart; not supported yet (reload StageHand).");
             restartReported = true;
         }
-        if (backend.serverShutDown()) loop.requestQuit();
+        if (audioStopped(backend)) loop.requestQuit();
         std::fflush(stdout);
     });
     const auto started = std::chrono::steady_clock::now();
@@ -793,7 +829,7 @@ int runPlay(const Options& options) {
     if (quitRequested.load()) loop.requestQuit();   // a signal that beat the line above
     loop.run();
     activeLoop.store(nullptr);
-    if (backend.serverShutDown()) std::fprintf(stderr, "JACK server shut down\n");
+    if (audioStopped(backend)) std::fprintf(stderr, "%s\n", kAudioStoppedMessage);
 
     // Shutdown (Engine.h): close the rack window, then the editors while the
     // plugins are fully alive; save
@@ -810,7 +846,7 @@ int runPlay(const Options& options) {
     input.reset();
     host.onStateChanged = nullptr;   // plugins may outlive `session` (in the engine's graphs)
     session.unload();
-    for (int i = 0; i < 2000 && !engine->committedGraphAdopted() && !backend.serverShutDown(); ++i)
+    for (int i = 0; i < 2000 && !engine->committedGraphAdopted() && !audioStopped(backend); ++i)
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     backend.stop();
     engine->collect();
@@ -818,6 +854,7 @@ int runPlay(const Options& options) {
     return exitCode;
 }
 
+#ifndef __APPLE__
 // Started without pw-jack (from a launcher, say) and no JACK server in reach:
 // run again under pw-jack, once. Returns if that isn't needed or didn't work;
 // the backend then reports the missing server as usual.
@@ -838,8 +875,7 @@ void restartUnderPwJackIfNeeded(int argc, char** argv) {
     std::fprintf(stderr, "Couldn't run pw-jack: %s\n", std::strerror(errno));
     unsetenv(kMarker);
 }
-
-#endif // STAGEHAND_PLAY_MODES
+#endif
 
 } // namespace
 
@@ -854,26 +890,23 @@ int main(int argc, char** argv) {
     Options options;
     if (const int result = parseArguments(argc, argv, options); result != 0)
         return result < 0 ? 0 : result;
-#ifdef STAGEHAND_PLAY_MODES
+#ifndef __APPLE__
     if (options.mode == Mode::Play || options.mode == Mode::Tone) restartUnderPwJackIfNeeded(argc, argv);
+#endif
+#ifndef STAGEHAND_WINDOWS
+    if (options.mode == Mode::Play && (options.ui || options.editor)) {
+        std::puts("No windows on macOS yet: playing console only (no rack window, no plugin editors).");
+        options.ui     = false;
+        options.editor = false;
+    }
 #endif
 
     std::signal(SIGINT, handleSignal);
     std::signal(SIGTERM, handleSignal);
 
     switch (options.mode) {
-#ifdef STAGEHAND_PLAY_MODES
         case Mode::Play:        return runPlay(options);
         case Mode::ListPlugins: return listPlugins();
-#else
-        case Mode::Play:
-        case Mode::ListPlugins:
-            std::fprintf(stderr,
-                         "On macOS, StageHand can't play yet: playing and --list-plugins need the plugin\n"
-                         "loader still to come (docs/macos.md, milestone 5). --tone, --list-audio,\n"
-                         "--list-midi and --monitor work.\n");
-            return 1;
-#endif
         case Mode::Tone:        return runTone(options);
         case Mode::ListAudio:   return listAudio();
         case Mode::ListMidi:    return listMidi();

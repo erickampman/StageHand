@@ -21,7 +21,7 @@ namespace stagehand {
 // async-signal-safe so a SIGINT handler can call it.
 class MainLoop {
 public:
-    MainLoop();    // creates the wake-up eventfd
+    MainLoop();    // creates the wake-up pipe
     ~MainLoop();
 
     MainLoop(const MainLoop&)            = delete;
@@ -42,7 +42,7 @@ public:
     void run();
 
     // Make run() return soon. Async-signal-safe: an atomic store plus a write()
-    // to the wake-up eventfd.
+    // to the wake-up pipe.
     void requestQuit() noexcept;
 
 private:
@@ -63,7 +63,8 @@ private:
     std::map<TimerId, Timer> timers;
     std::map<int, Watch>     watches;
     TimerId                  nextTimerId = 1;
-    int                      wakeFd      = -1;
+    int                      wakeRead    = -1;   // self-pipe (portable; eventfd is Linux's)
+    int                      wakeWrite   = -1;
     std::atomic<bool>        quit{false};
 };
 

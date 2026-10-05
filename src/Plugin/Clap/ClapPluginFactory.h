@@ -11,9 +11,12 @@ namespace stagehand {
 
 class ClapModule;
 
-// Finds and instantiates CLAP plugins. Searches CLAP's standard Linux locations
-// (~/.clap, /usr/lib/clap) plus $CLAP_PATH (colon-separated), recursively, for
-// .clap files. A loaded .clap module is shared by every plugin created from it.
+// Finds and instantiates CLAP plugins. Searches CLAP's standard locations
+// (Linux: ~/.clap, /usr/lib/clap; macOS: ~/Library/Audio/Plug-Ins/CLAP,
+// /Library/Audio/Plug-Ins/CLAP) plus $CLAP_PATH (colon-separated), recursively,
+// for .clap files (Linux) or bundles (macOS; one built for Intel only is named
+// as such, not loaded). A loaded .clap module is shared by every plugin
+// created from it.
 class ClapPluginFactory final : public PluginFactory {
 public:
     ClapPluginFactory();

@@ -1,7 +1,7 @@
 # StageHand — macOS (plan)
 
 Proposed 2026-10-03, reviewed the same day (notes under "Review");
-milestones 1 to 3 built, 4 under way (notes under "Milestones"). StageHand on macOS 15 (Sequoia) and later, keeping DGL for the UI
+milestones 1 to 3 built, 4 and 5 under way (notes under "Milestones"). StageHand on macOS 15 (Sequoia) and later, keeping DGL for the UI
 (no native Cocoa interface). Builds on:
 - architecture.md, sections 1 to 3: MIDI, audio and plugins sit behind seams
   (`MidiInput`, `AudioBackend`, `PluginFactory`) so CoreMIDI and CoreAudio
@@ -161,7 +161,8 @@ lock-free on arm64.
 - **"From other apps":** `MIDIDestinationCreateWithProtocol`, one per
   protocol, named as now.
 - **Ids** in the ALSA shape, `"<device>:<endpoint>"` (decision 5).
-- **Timestamps:** the packet's host time (decision 4), or now if it's 0.
+- **Timestamps:** `nowNanoseconds()` as each message reaches the input
+  (changed 2026-10-05 from the packet's host time: see milestone 5's notes).
 - **Hotplug:** the client's notifications (objects added and removed) bump
   `changes()`; `sync()` reconnects a source that came back (by its unique
   id, then its name). They arrive on the run loop of the thread that made
@@ -325,8 +326,8 @@ holding its handle, never freed before the input, so a late callback for a
 closed handle finds it cleared). Ids `"<device>:<endpoint>"`; a source with
 no device (another app's virtual source) is just `"<endpoint>"`. Hardware
 means a device on any driver but the IAC bus and network sessions. Offline
-endpoints (a known USB device unplugged) aren't listed. Timestamps are the
-packet's host time, clamped to now (an app may stamp ahead). CMake builds
+endpoints (a known USB device unplugged) aren't listed. Timestamps were the
+packet's host time, clamped to now (changed in milestone 5: see there). CMake builds
 the app on macOS by default with `src/Midi/CoreMidiInput.cpp`,
 `main.cpp` and `MidiMonitor.cpp`; playing, `--tone` and `--list-plugins` are
 behind `STAGEHAND_PLAY_MODES` (Linux only for now) and say so on macOS.
@@ -390,6 +391,52 @@ xruns), the device going away. `--tone` and `--list-audio` run on macOS;
   pairs, the click on its pair or through the aggregate (decision 3),
   sample-rate changes acted on (prepared racks remade), sleep and
   unplugging recovered from.
+
+**Milestone 5, first part (2026-10-05): the CLAP loader, and playing without
+windows.** `ClapModule` loads a bundle through CFBundle
+(`CFBundleLoadExecutableAndReturnError`, `clap_entry` by
+`CFBundleGetDataPointerForName`, `init()` given the bundle's path) and leaves
+the binary loaded at the end (unloading code a plugin may still have threads
+in is the riskier choice). `ClapModule::isLoadableHere()` reads the bundle's
+architectures without loading it: no arm64 binary is "Intel only: not
+loadable on Apple Silicon" (decision 13), printed by the scan and skipped.
+The scan looks in `~/Library/Audio/Plug-Ins/CLAP`,
+`/Library/Audio/Plug-Ins/CLAP` and `CLAP_PATH`, takes folders ending `.clap`
+as plugins and doesn't look inside them. `ClapPlugin` asks for
+`CLAP_WINDOW_API_COCOA` (an `NSView*` parent) on macOS, and doesn't offer
+`posix-fd-support` there. `MainLoop` wakes through a self-pipe (macOS has no
+`eventfd`); with no window, its `poll()` loop serves a headless `--play`
+(CoreMIDI's hotplug has its own thread, so needs no Cocoa loop). `main.cpp`
+plays on both platforms: `STAGEHAND_WINDOWS` (Linux) has the rack window and
+the editor windows; without it, stand-ins that never open, so `--play` runs
+console only and says so. The click isn't routed on macOS yet
+(`clickRouting` null, which the controller already allows).
+
+- **Checked on a Mac:** `--list-plugins` finds and loads all six installed
+  CLAP plugins (arm64 bundles: StruckSynth, PlainOldSynth, Polygraph MU,
+  IFSynth, PMDGLCanvas, GtkClapMin). `--play --plugin
+  com.unlikelyware.plainoldsynth` loads it, sees its MIDI 2.0 note port,
+  runs on CoreAudio, and quits cleanly on Ctrl-C.
+- **Found: DPF plugins' Objective-C classes collide.** DPF names its Cocoa
+  classes `<DGL_NAMESPACE>_<compiler build>_<class>` (`PuglWindow`,
+  `PuglOpenGLView`, ...), so every DPF plugin built with the default
+  namespace (`DGL`) and the same clang registers the same classes; loading
+  two in one process makes the Objective-C runtime warn ("implemented in
+  both ... may cause ... mysterious crashes"), and which class wins is
+  arbitrary. It's the plugins' to fix (each its own `DGL_NAMESPACE`, e.g.
+  `-DDGL_NAMESPACE=StruckSynthDGL`), but StageHand's own DGL window
+  (milestone 6) must set one too (`StageHandDGL`), or it collides with
+  every such plugin it hosts.
+- **Found: "late MIDI" with a USB keyboard, and fixed.** At 64 frames the
+  Launchkey made `late MIDI message(s)` notices. CoreMIDI's packet time is
+  when the driver got the bytes, earlier than the message reaches the
+  engine's queue; a block starting in between missed it, and the next found
+  it more than a period old (placed at the block's start: up to a period of
+  jitter). Messages are now stamped as they arrive, like ALSA's read-time
+  stamps, so capture time never precedes queue time. KeyEDO stamps 0, so it
+  was never affected.
+- **Still to do in milestone 5:** the editor window (decision 11), which
+  brings Cocoa's loop driving `MainLoop` and the window stand-ins' end.
 
 ## Review (2026-10-03)
 
