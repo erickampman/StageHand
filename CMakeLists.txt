@@ -71,7 +71,13 @@ if(STAGEHAND_APP)
     add_subdirectory(external/dpf EXCLUDE_FROM_ALL)
     # Shared resources (the font); the file browser on macOS (decision 10:
     # Linux too, once DPF's portal path is patched as its macOS one is); no web view.
-    dpf__add_dgl_opengl(TRUE ${APPLE} FALSE)
+    # (APPLE is unset on Linux, so it can't be passed bare: it would expand to nothing.)
+    if(APPLE)
+        set(stagehand_dgl_file_browser TRUE)
+    else()
+        set(stagehand_dgl_file_browser FALSE)
+    endif()
+    dpf__add_dgl_opengl(TRUE ${stagehand_dgl_file_browser} FALSE)
     # StageHand's own namespace (docs/macos.md, milestone 5's notes): pugl names
     # its Objective-C classes after it, and every DPF plugin built with the
     # default ("DGL") registers the same ones, so a window of ours would collide
