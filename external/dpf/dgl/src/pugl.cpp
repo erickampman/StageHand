@@ -353,7 +353,13 @@ void puglSetResizable(PuglView* const view, const bool resizable)
                          | (resizable ? NSResizableWindowMask : 0);
         [window setStyleMask:style];
     }
-    // FIXME use [view setAutoresizingMask:NSViewNotSizable] ?
+    // STAGEHAND LOCAL PATCH (was "FIXME use [view setAutoresizingMask:NSViewNotSizable] ?"):
+    // the draw view's mask is set from PUGL_RESIZABLE only when it's created, so a
+    // window made resizable after that (DGL's setResizable() once its widget, and so
+    // its GL context, exists) grew while its draw view kept the old frame: the
+    // drawing, sized to the new area, lost its top and left a band below.
+    if (NSView* const drawView = view->impl->drawView)
+        [drawView setAutoresizingMask:resizable ? (NSViewWidthSizable | NSViewHeightSizable) : NSViewNotSizable];
    #elif defined(DISTRHO_OS_WASM)
     puglUpdateSizeHints(view);
    #elif defined(DISTRHO_OS_WINDOWS)

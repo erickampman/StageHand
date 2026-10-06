@@ -1,7 +1,7 @@
 # StageHand — macOS (plan)
 
 Proposed 2026-10-03, reviewed the same day (notes under "Review");
-milestones 1 to 3 built, 4 and 5 under way (notes under "Milestones"). StageHand on macOS 15 (Sequoia) and later, keeping DGL for the UI
+milestones 1 to 5 built, 6 under way (notes under "Milestones"). StageHand on macOS 15 (Sequoia) and later, keeping DGL for the UI
 (no native Cocoa interface). Builds on:
 - architecture.md, sections 1 to 3: MIDI, audio and plugins sit behind seams
   (`MidiInput`, `AudioBackend`, `PluginFactory`) so CoreMIDI and CoreAudio
@@ -459,7 +459,7 @@ console only and says so. The click isn't routed on macOS yet
   posts an application-defined event to wake `nextEventMatchingMask:`.
 - `main.cpp`: the editor window by platform; `STAGEHAND_RACK_WINDOW`
   (Linux) has the rack window, and macOS's stand-in for it never opens, so
-  the editors open at start as with `--no-ui`. Window keys are named per
+  the editors open at start as with `--no-ui` (until milestone 6, below). Window keys are named per
   platform (`Cmd`/`Ctrl`) in the console's hints and the help.
 - **Checked on a Mac:** PlainOldSynth's, Polygraph MU's and StruckSynth's
   editors open at their sizes, in points (1200×750, 900×600, 1080×640 on a
@@ -507,6 +507,53 @@ console only and says so. The click isn't routed on macOS yet
 - **Not checked yet:** a device unplugged and plugged back in while
   playing; the click chosen in the rig on macOS (no rack window yet: by
   hand, `"clickOutput"` in the rig); sleep and wake.
+
+**Milestone 6, first part (2026-10-05): the rack window on macOS.**
+- **DGL on both platforms:** CMake builds DPF's DGL and `stagehand-ui` with
+  the app on Linux and macOS (pugl's Cocoa backend, `pugl.mm`; AppKit's
+  pre-10.12 names in it quieted, not patched). `DGL_NAMESPACE` is
+  `StageHandDGL` (a public definition on `dgl-opengl`), so pugl's
+  Objective-C classes are `StageHandDGL_<build>_PuglWindow` and so on, apart
+  from every DPF plugin's `DGL_<build>_...`. Linux sees only the C++
+  namespace change.
+- **The monitor:** `Ui/MonitorMac.cpp`, the display under the pointer
+  (`CGGetDisplaysWithPoint`, `CGDisplayBounds`), in pixels as DGL sizes
+  windows (points times the display mode's scale). The `DISPLAY` check is
+  Linux's.
+- **Cmd, not Ctrl** (decision 7): `ui::kCommand` (`kModifierSuper` on
+  macOS, `kModifierControl` on Linux) for every shortcut and modified
+  drag or wheel in the rack window and the sequence editors; the menus, the
+  sequence editor's help and the controller's "saves it" notice name Cmd
+  and Option on macOS. Text fields ignore characters typed with either
+  modifier.
+- `main.cpp`: the rack window on both, so the no-window stand-in and
+  `STAGEHAND_RACK_WINDOW` go. DGL's `idle()` runs from `MainLoop`'s 16 ms
+  timer as on Linux; AppKit's loop (`MainLoopMac.mm`) delivers the events.
+- **Checked on a Mac:** the window opens at its size on the laptop's display
+  (1100 points wide), draws the empty rack, and quits cleanly on Ctrl-C,
+  saving; with PlainOldSynth loaded, none of the Objective-C runtime's
+  duplicate-class warnings name StageHand's classes (the ones printed are
+  between the installed plugins, from `--plugin`'s scan loading each).
+- **Found: resizing cut off the top.** Growing the window left its drawing
+  shifted up (the toolbar gone, a blank band below). pugl's OpenGL view,
+  inside the window's content view, follows it only if the window was
+  resizable when the view was made, and DGL's `setResizable()` comes after
+  the widget (and so the view) exists; DPF's `puglSetResizable()` changed
+  the window's style but not the view's mask (its own FIXME). Patched in the
+  vendored DPF (README.StageHand.md); the sequence editors' windows had the
+  same order. Checked by growing and shrinking the window.
+- **File dialogs on macOS** (decision 10): `Ui/FileChooser`, DPF's file
+  browser (the system's open and save panels, as a sheet on the rack window)
+  with `FileDialog`'s start-then-poll shape and modes. The vendored DPF is
+  patched for what it lacked on macOS (README.StageHand.md): choosing a
+  folder (a rack), an extension filter (`*.setlist`, through UTType), the
+  suggested name when saving, the sheet begun at once, and closing a sheet
+  still open. Built with the file browser on macOS only; Linux keeps
+  `FileDialog` (zenity, kdialog) until DPF's portal path is patched the same
+  way and tried there. Checked by hand: Open, Save, Save As and Open setlist.
+- **Still to do in milestone 6:** the rest of the window by hand (menus,
+  Cmd keys, a sequence editor, a plugin editor beside it); DPF's portal path
+  on Linux, then `FileDialog` and `test-filedialog` go; the app bundle.
 
 ## Review (2026-10-03)
 

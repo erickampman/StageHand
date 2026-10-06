@@ -257,7 +257,7 @@ bool UiWidget::onKeyboard(const KeyboardEvent& ev) {
         f.caret = 0;
         f.all   = false;
     };
-    const bool ctrl = (ev.mod & dgl::kModifierControl) != 0;
+    const bool ctrl = (ev.mod & ui::kCommand) != 0;
     switch (ev.key) {
         case dgl::kKeyEnter: endTextEdit(true); return true;
         case dgl::kKeyEscape: endTextEdit(false); return true;
@@ -299,14 +299,14 @@ bool UiWidget::onKeyboard(const KeyboardEvent& ev) {
 
 bool UiWidget::onCharacterInput(const CharacterInputEvent& ev) {
     if (menu && menu->search && !field) {   // filtering a long menu
-        if (ev.character < 32 || ev.character == 127 || (ev.mod & dgl::kModifierControl) != 0) return false;
+        if (ev.character < 32 || ev.character == 127 || (ev.mod & (ui::kCommand | dgl::kModifierControl)) != 0) return false;
         if (menu->typed.size() < 64) menu->typed += ev.string;
         menu->scroll = 0;
         repaint();
         return true;
     }
     if (!field) return false;
-    if (ev.character < 32 || ev.character == 127 || (ev.mod & dgl::kModifierControl) != 0) return true;
+    if (ev.character < 32 || ev.character == 127 || (ev.mod & (ui::kCommand | dgl::kModifierControl)) != 0) return true;
     TextField&        f   = *field;
     const std::string add = ev.string;
     if (f.all) {

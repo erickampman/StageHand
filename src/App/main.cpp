@@ -41,16 +41,13 @@
 #endif
 
 // The plugin editors' windows: X11 on Linux, Cocoa on macOS (the same
-// interface). The rack window (DGL): Linux only so far; on macOS StageHand
-// plays without it until milestone 6 (docs/macos.md).
+// interface). The rack window is DGL's on both.
 #ifdef __APPLE__
 #include "App/EditorWindowMac.h"
 #else
 #include "App/EditorWindow.h"
 #endif
-#ifdef STAGEHAND_RACK_WINDOW
 #include "Ui/RackUi.h"
-#endif
 
 using namespace stagehand;
 
@@ -63,18 +60,6 @@ void handleSignal(int) {
     quitRequested.store(true);
     if (MainLoop* loop = activeLoop.load()) loop->requestQuit();   // async-signal-safe
 }
-
-#ifndef STAGEHAND_RACK_WINDOW
-// No rack window on this platform yet: a stand-in that never opens, so playing
-// reads the same everywhere (the editors open at start instead, as with --no-ui).
-struct RackUi {
-    static std::unique_ptr<RackUi> open(RackController&, const std::string& = {}) { return nullptr; }
-    void showNotice(const std::string&) {}
-    void refresh() {}
-    void idle() {}
-    bool closed() const { return true; }
-};
-#endif
 
 // The modifier for StageHand's keys in its windows (docs/macos.md, decision 7).
 #ifdef __APPLE__
@@ -721,7 +706,6 @@ int runPlay(const Options& options) {
 #endif
 
     // Editors, saving, and the rack view's model (docs/rack-view.md, section 5).
-    // Until StageHand has its own window, every editor opens at start.
     RackController* controllerRef = nullptr;   // for the editors' save key
     RackController::Config config;
     config.openEditor = [&loop, &controllerRef](HostedPlugin& plugin,
@@ -918,12 +902,6 @@ int main(int argc, char** argv) {
         return result < 0 ? 0 : result;
 #ifndef __APPLE__
     if (options.mode == Mode::Play || options.mode == Mode::Tone) restartUnderPwJackIfNeeded(argc, argv);
-#endif
-#ifndef STAGEHAND_RACK_WINDOW
-    if (options.mode == Mode::Play && options.ui) {
-        std::puts("No rack window on macOS yet: every plugin's editor opens at start (--no-editor: none).");
-        options.ui = false;
-    }
 #endif
 
     std::signal(SIGINT, handleSignal);

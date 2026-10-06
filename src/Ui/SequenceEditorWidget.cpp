@@ -170,7 +170,7 @@ void SequenceEditorWidget::drawGrid(const Sequence& seq) {
     region(x0, y0, w, h, [this](const Press& p) { pressCanvas(p); }, {}, true);
 }
 
-// While Ctrl-dragging: the grabbed note's velocity, in a tag above it (below it
+// While Ctrl-dragging (Cmd on macOS): the grabbed note's velocity, in a tag above it (below it
 // at the top of the grid), with a bar for how far up its range it is.
 void SequenceEditorWidget::drawVelocityReadout(const Sequence& seq) {
     const int index = editor.noteAt(velocityStart, velocityPitch);
@@ -349,13 +349,15 @@ void SequenceEditorWidget::drawStrip(const Sequence& seq) {
     button(kPad + 108.0f, 424.0f, 100.0f, 24.0f, "Redo", false, editor.canRedo(), kAccent);
     if (editor.canRedo()) region(kPad + 108.0f, 424.0f, 100.0f, 24.0f, [this](const Press&) { editor.redo(); });
 
-    static const char* const help[] = {
+    const std::string cmd = ui::kCommandName, alt = ui::kAltName;
+    const std::string help[] = {
         "Click: add a note; drag right: longer", "Drag a note: move (Shift: one way)", "Drag its right edge: length",
-        "Alt-drag: copy    Ctrl-drag: velocity", "Right- or double-click: delete", "Shift-click: select    Shift-drag: area",
-        "Arrows: move    Delete: remove", "Ctrl-Z, Ctrl-Shift-Z: undo, redo", "Space: play or stop",
-        "Wheel: scroll    Shift: sideways", "Ctrl-wheel: zoom"};
+        alt + "-drag: copy    " + cmd + "-drag: velocity", "Right- or double-click: delete",
+        "Shift-click: select    Shift-drag: area", "Arrows: move    Delete: remove",
+        cmd + "-Z, " + cmd + "-Shift-Z: undo, redo", "Space: play or stop", "Wheel: scroll    Shift: sideways",
+        cmd + "-wheel: zoom"};
     float y = 468.0f;
-    for (const char* line : help) {
+    for (const std::string& line : help) {
         label(kPad, y, line, 10.5f, kDim);
         y += 15.0f;
     }
@@ -373,7 +375,7 @@ void SequenceEditorWidget::pressCanvas(const Press& p) {
     const bool inLoop = unit >= 0 && unit < static_cast<std::int64_t>(seq->length);
     const int  index  = inLoop ? editor.noteAt(static_cast<std::uint32_t>(unit), pitch) : -1;
     const bool shift  = (p.mod & dgl::kModifierShift) != 0;
-    const bool ctrl   = (p.mod & dgl::kModifierControl) != 0;
+    const bool ctrl   = (p.mod & ui::kCommand) != 0;
     const bool alt    = (p.mod & dgl::kModifierAlt) != 0;
 
     if (p.button == dgl::kMouseButtonRight) {   // right-click deletes
@@ -398,7 +400,7 @@ void SequenceEditorWidget::pressCanvas(const Press& p) {
             return;
         }
         if (!editor.items()[static_cast<std::size_t>(index)].selected) editor.select(index, false);
-        editor.soundNote(index, ctrl);   // a click on a note plays it; Ctrl (velocity) holds it until release
+        editor.soundNote(index, ctrl);   // a click on a note plays it; Ctrl/Cmd (velocity) holds it until release
         editor.beginGesture();
         dragEnd = [this] {
             editor.endGesture();
@@ -476,7 +478,7 @@ void SequenceEditorWidget::pressCanvas(const Press& p) {
 
 void SequenceEditorWidget::wheelUnclaimed(float x, float, float notches, std::uint32_t mod) {
     if (x < canvasX()) return;
-    if ((mod & dgl::kModifierControl) != 0) {   // zoom
+    if ((mod & ui::kCommand) != 0) {   // zoom
         zoom = std::clamp(unitWidth() * (notches > 0 ? 1.25f : 0.8f), 4.0f, 200.0f);
     } else if ((mod & dgl::kModifierShift) != 0) {
         scrollX -= notches * 40.0f;
@@ -491,7 +493,7 @@ bool SequenceEditorWidget::onKeyboard(const KeyboardEvent& ev) {
     if (!ev.press) return false;
     const Sequence* seq = editor.sequence();
     if (seq == nullptr) return false;
-    const bool ctrl  = (ev.mod & dgl::kModifierControl) != 0;
+    const bool ctrl  = (ev.mod & ui::kCommand) != 0;
     const bool shift = (ev.mod & dgl::kModifierShift) != 0;
     const int  beat  = std::max(1, static_cast<int>(std::lround(seq->rate.unitsPerBeat())));
 

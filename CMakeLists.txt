@@ -15,10 +15,10 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 # --- Platforms (docs/macos.md) -----------------------------------------------------
-# Linux builds everything. macOS (so far: milestones 3 to 5, in part) builds the
-# app over CoreAudio, CoreMIDI and CFBundle-loaded CLAP plugins, without windows:
-# it plays console only (no rack window, no plugin editors) until Cocoa's come. STAGEHAND_APP=OFF builds the
-# platform-free libraries and the test suites only, anywhere.
+# Linux builds everything. macOS (milestones 3 to 6) builds the app over
+# CoreAudio, CoreMIDI and CFBundle-loaded CLAP plugins, with Cocoa editor windows
+# and the DGL rack window. STAGEHAND_APP=OFF builds the platform-free libraries
+# and the test suites only, anywhere.
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     set(stagehand_linux ON)
 else()
@@ -62,12 +62,21 @@ target_include_directories(nlohmann-json SYSTEM INTERFACE external)
 
 # --- DPF's DGL (pugl + NanoVG over OpenGL): StageHand's own UI. Vendored from PMU
 # (external/dpf/README.StageHand.md); only the DGL library, no plugin wrappers.
-# The Linux app's only, so far (macOS: docs/macos.md, milestone 4 onwards).
-if(stagehand_linux_app)
+if(STAGEHAND_APP)
+    if(APPLE)
+        enable_language(OBJCXX)   # pugl's Cocoa backend (pugl.mm), and our own .mm files
+    endif()
     set(DPF_LIBRARIES OFF CACHE BOOL "" FORCE)
     set(DPF_EXAMPLES OFF CACHE BOOL "" FORCE)
     add_subdirectory(external/dpf EXCLUDE_FROM_ALL)
-    dpf__add_dgl_opengl(TRUE FALSE FALSE)   # shared resources (the font); no file browser, no web view
+    # Shared resources (the font); the file browser on macOS (decision 10:
+    # Linux too, once DPF's portal path is patched as its macOS one is); no web view.
+    dpf__add_dgl_opengl(TRUE ${APPLE} FALSE)
+    # StageHand's own namespace (docs/macos.md, milestone 5's notes): pugl names
+    # its Objective-C classes after it, and every DPF plugin built with the
+    # default ("DGL") registers the same ones, so a window of ours would collide
+    # with the plugins it hosts. Harmless on Linux (C++ names only).
+    target_compile_definitions(dgl-opengl PUBLIC DGL_NAMESPACE=StageHandDGL)
     # Its headers are third-party: no warnings from them in our code (like clap-sdk).
     foreach(dgl_target dgl-opengl dgl-opengl-definitions)
         get_target_property(dgl_includes ${dgl_target} INTERFACE_INCLUDE_DIRECTORIES)
@@ -77,7 +86,12 @@ if(stagehand_linux_app)
     endforeach()
     # pugl.hpp includes <cstdbool>, which GCC 15 flags with a #warning in C++17
     # and later. Vendored code (copied from PMU, so not patched here): quiet it.
-    target_compile_options(dgl-opengl PRIVATE -Wno-cpp)
+    # On macOS, pugl uses AppKit's pre-10.12 names (vendored: quieted, not patched).
+    if(stagehand_linux)
+        target_compile_options(dgl-opengl PRIVATE -Wno-cpp)
+    else()
+        target_compile_options(dgl-opengl PRIVATE -Wno-deprecated-declarations)
+    endif()
 endif()
 
 # --- Warnings for our own code (not vendored/system headers) -------------------
@@ -125,7 +139,33 @@ target_link_libraries(stagehand-app
     PUBLIC  stagehand-session
     PRIVATE stagehand-warnings)
 
-# --- The Linux seams, the UI and the app (STAGEHAND_APP on Linux) ------------------
+# --- stagehand-ui: the rack window (DGL), both platforms. Only this library sees DGL.
+if(STAGEHAND_APP)
+    add_library(stagehand-ui STATIC
+        src/Ui/RackUi.cpp
+        src/Ui/RackWidget.cpp
+        src/Ui/UiWidget.cpp
+        src/Ui/SequenceEditorWidget.cpp)
+    target_link_libraries(stagehand-ui
+        PUBLIC  stagehand-app
+        PRIVATE dgl-opengl dgl-opengl-definitions stagehand-warnings)
+    if(APPLE)
+        target_sources(stagehand-ui PRIVATE src/Ui/MonitorMac.cpp src/Ui/FileChooser.cpp)
+        target_link_libraries(stagehand-ui PRIVATE "-framework CoreGraphics")
+        target_link_libraries(dgl-opengl PRIVATE "-framework UniformTypeIdentifiers")   # the browser's filter
+    else()
+        target_sources(stagehand-ui PRIVATE src/Ui/Monitor.cpp)
+        target_link_libraries(stagehand-ui PRIVATE PkgConfig::X11)
+        if(XRANDR_FOUND)
+            target_compile_definitions(stagehand-ui PRIVATE STAGEHAND_HAVE_XRANDR)
+            target_link_libraries(stagehand-ui PRIVATE PkgConfig::XRANDR)
+        else()
+            message(STATUS "xrandr not found: a new window fits the whole X screen, not its monitor")
+        endif()
+    endif()
+endif()
+
+# --- The Linux seams and the app (STAGEHAND_APP on Linux) ------------------
 if(stagehand_linux_app)
 
     # --- stagehand-lib: seam implementations (everything except main) --------------
@@ -139,23 +179,6 @@ if(stagehand_linux_app)
         PUBLIC  stagehand-engine PkgConfig::JACK PkgConfig::ALSA Threads::Threads ${CMAKE_DL_LIBS}
         PRIVATE clap-sdk stagehand-warnings)
 
-    # --- stagehand-ui: the rack window (DGL). Only this library sees DGL. -------------
-    add_library(stagehand-ui STATIC
-        src/Ui/RackUi.cpp
-        src/Ui/RackWidget.cpp
-        src/Ui/UiWidget.cpp
-        src/Ui/SequenceEditorWidget.cpp
-        src/Ui/Monitor.cpp)
-    target_link_libraries(stagehand-ui
-        PUBLIC  stagehand-app
-        PRIVATE dgl-opengl dgl-opengl-definitions PkgConfig::X11 stagehand-warnings)
-    if(XRANDR_FOUND)
-        target_compile_definitions(stagehand-ui PRIVATE STAGEHAND_HAVE_XRANDR)
-        target_link_libraries(stagehand-ui PRIVATE PkgConfig::XRANDR)
-    else()
-        message(STATUS "xrandr not found: a new window fits the whole X screen, not its monitor")
-    endif()
-
     # --- The app --------------------------------------------------------------------
     add_executable(stagehand
         src/App/main.cpp
@@ -164,13 +187,11 @@ if(stagehand_linux_app)
         src/App/MainLoop.cpp
         src/App/MidiMonitor.cpp)
     target_link_libraries(stagehand PRIVATE stagehand-lib stagehand-app stagehand-ui PkgConfig::X11 stagehand-warnings)
-    target_compile_definitions(stagehand PRIVATE STAGEHAND_RACK_WINDOW)   # the rack window (DGL)
 
 endif()
 
-# --- The macOS seams and the app (STAGEHAND_APP on macOS): editor windows, no rack window yet ---
+# --- The macOS seams and the app (STAGEHAND_APP on macOS) -----------------------------
 if(STAGEHAND_APP AND APPLE)
-    enable_language(OBJCXX)   # the Cocoa pieces (.mm): the main loop and the editor window
 
     add_library(stagehand-lib STATIC
         src/Audio/CoreAudioBackend.cpp
@@ -190,7 +211,7 @@ if(STAGEHAND_APP AND APPLE)
         src/App/MainLoopMac.mm
         src/App/MidiMonitor.cpp)
     set_source_files_properties(src/App/EditorWindowMac.mm src/App/MainLoopMac.mm PROPERTIES COMPILE_OPTIONS -fobjc-arc)
-    target_link_libraries(stagehand PRIVATE stagehand-lib stagehand-app "-framework AppKit" stagehand-warnings)
+    target_link_libraries(stagehand PRIVATE stagehand-lib stagehand-ui "-framework AppKit" stagehand-warnings)
 
 endif()
 

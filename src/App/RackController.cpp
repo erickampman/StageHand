@@ -16,6 +16,13 @@ namespace stagehand {
 
 namespace {
 
+// The save key, as the windows name it (docs/macos.md, decision 7).
+#ifdef __APPLE__
+constexpr const char* kSaveKey = "Cmd-S";
+#else
+constexpr const char* kSaveKey = "Ctrl-S";
+#endif
+
 // learningId while learning the transport's or the setlist's trigger: no sequence id can look like these.
 const std::string kTransportLearn = "\x01transport";
 const std::string kSetlistLearn   = "\x01setlist";
@@ -552,7 +559,7 @@ void RackController::takeKeptLoops() {
                 std::string problem;
                 if (session.setSequence(seq, problem))
                     notice("Kept " + setup.name + " as a sequence (" + std::to_string(seq.notes.size()) +
-                           (seq.notes.size() == 1 ? " note" : " notes") + "); Ctrl-S saves it");
+                           (seq.notes.size() == 1 ? " note" : " notes") + "); " + kSaveKey + " saves it");
                 else
                     notice("Couldn't keep " + setup.name + ": " + problem);
             }

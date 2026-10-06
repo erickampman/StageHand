@@ -17,6 +17,9 @@
 #include "App/SequenceEditor.h"
 #include "Session/WindowState.h"
 #include "Ui/Monitor.h"
+#ifdef __APPLE__
+#include "Ui/FileChooser.h"
+#endif
 #include "Ui/RackWidget.h"
 #include "Ui/SequenceEditorWidget.h"
 
@@ -107,8 +110,13 @@ struct RackUi::Impl {
 
     std::string                   windowStatePath;   // where its size is kept; empty: not kept
 
-    // The file chooser, and what to do with its answer.
+    // The file chooser, and what to do with its answer: DPF's on macOS (the
+    // system's panels), zenity or kdialog on Linux (docs/macos.md, decision 10).
+#ifdef __APPLE__
+    FileChooser                                  dialog;
+#else
     FileDialog                                   dialog;
+#endif
     std::function<void(const std::string& path)> chosen;
 };
 
@@ -140,10 +148,12 @@ void RackUi::Impl::openEditor(const std::string& id) {
 }
 
 std::unique_ptr<RackUi> RackUi::open(RackController& controller, const std::string& windowStatePath) {
+#ifndef __APPLE__
     if (std::getenv("DISPLAY") == nullptr) {
         std::fputs("No display (DISPLAY isn't set); running without the rack window.\n", stderr);
         return nullptr;
     }
+#endif
     auto  impl = std::make_unique<Impl>(controller);
     Impl* raw  = impl.get();
     {
@@ -159,8 +169,13 @@ std::unique_ptr<RackUi> RackUi::open(RackController& controller, const std::stri
         const FileDialog::Mode mode = what == RackWidget::Choose::Save      ? FileDialog::Mode::Save
                                       : what == RackWidget::Choose::Setlist ? FileDialog::Mode::OpenFile
                                                                             : FileDialog::Mode::OpenFolder;
-        if (!raw->dialog.start(mode, title, folder, what == RackWidget::Choose::Setlist ? "*.setlist" : name,
-                               problem)) {
+        const std::string shown = what == RackWidget::Choose::Setlist ? "*.setlist" : name;
+#ifdef __APPLE__
+        const bool started = raw->dialog.start(mode, title, folder, shown, raw->window.getNativeWindowHandle(), problem);
+#else
+        const bool started = raw->dialog.start(mode, title, folder, shown, problem);
+#endif
+        if (!started) {
             raw->widget->showNotice("Can't show a file dialog: " + problem, ui::nowSeconds());
             return;
         }

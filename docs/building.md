@@ -12,7 +12,7 @@ Everything else is a system library.
 | Platform | What builds today |
 |---|---|
 | Linux | everything: the `stagehand` app (rack window, plugin hosting), its libraries, the test suites |
-| macOS | the libraries, the test suites, and the `stagehand` app over CoreAudio, CoreMIDI and CLAP bundles: it plays racks with the plugins' editors, but no rack window yet ([macos.md](macos.md), milestone 6) |
+| macOS | the libraries, the test suites, and the `stagehand` app over CoreAudio, CoreMIDI and CLAP bundles: it plays racks with the rack window and the plugins' editors (no app bundle yet: [macos.md](macos.md), milestone 6) |
 
 ## Getting the source
 
@@ -132,7 +132,8 @@ brew install cmake ninja
 ```
 
 No JACK, ALSA, X11 or OpenGL packages. The macOS backends use only system
-frameworks (CoreAudio, CoreMIDI and CoreFoundation now; AppKit to come).
+frameworks (CoreAudio, CoreMIDI, CoreFoundation, CoreGraphics, AppKit and
+OpenGL; DGL is vendored).
 
 ### Build and test
 

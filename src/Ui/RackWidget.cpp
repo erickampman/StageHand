@@ -694,7 +694,7 @@ void RackWidget::drawToolbar() {
     save();
     scissor(kPad, 0, kTransportX - kPad * 2, kToolbarH);
     label(kPad, kToolbarH / 2 - (view.modified ? 6.0f : 0.0f), name, 18.0f, kText);
-    // Ctrl-S saves all of it: this rack, the others kept unsaved, the rig.
+    // Ctrl-S (Cmd-S) saves all of it: this rack, the others kept unsaved, the rig.
     const std::size_t songs = view.otherUnsaved + (view.modified ? 1 : 0);
     const std::string unsaved = view.otherUnsaved != 0 ? std::to_string(songs) + (songs == 1 ? " song unsaved" : " songs unsaved")
                                 : view.modified     ? "unsaved changes"
@@ -1880,9 +1880,10 @@ void RackWidget::openFileMenu(float x, float y) {
     // In a setlist, a rack is a song in it: New and Open add to the set rather
     // than leave it. Only Close setlist leaves it.
     const bool inSet = controller.hasSetlist();
-    m.items.push_back(MenuItem{inSet ? "New rack in this set...     Ctrl-N" : "New rack          Ctrl-N",
+    const std::string cmd = std::string(ui::kCommandName) + "-";
+    m.items.push_back(MenuItem{(inSet ? "New rack in this set...     " : "New rack          ") + cmd + "N",
                                [this] { fileAction(FileAction::New); }});
-    m.items.push_back(MenuItem{inSet ? "Add a rack to this set...  Ctrl-O" : "Open...           Ctrl-O",
+    m.items.push_back(MenuItem{(inSet ? "Add a rack to this set...  " : "Open...           ") + cmd + "O",
                                [this] { fileAction(FileAction::Open); }});
     // The one step out of the set besides Close setlist: an untitled rack on its own.
     if (inSet)
@@ -1892,7 +1893,7 @@ void RackWidget::openFileMenu(float x, float y) {
                                        else
                                            controller.newRack();   // closes the setlist
                                    }});
-    m.items.push_back(MenuItem{"Save              Ctrl-S",
+    m.items.push_back(MenuItem{"Save              " + cmd + "S",
                                savingOff ? std::function<void()>{} : [this] { fileAction(FileAction::Save); }});
     m.items.push_back(MenuItem{"Save As...",
                                savingOff ? std::function<void()>{} : [this] { fileAction(FileAction::SaveAs); }});
@@ -2892,7 +2893,7 @@ bool RackWidget::onKeyboard(const KeyboardEvent& ev) {
         return true;
     }
     // Tab: the Perform view and back (a text field took its keys above).
-    if (ev.key == dgl::kKeyTab && (ev.mod & dgl::kModifierControl) == 0 && !menuOpen()) {
+    if (ev.key == dgl::kKeyTab && (ev.mod & ui::kCommand) == 0 && !menuOpen()) {
         setPerforming(!perform);
         return true;
     }
@@ -2903,19 +2904,19 @@ bool RackWidget::onKeyboard(const KeyboardEvent& ev) {
         repaint();
         return true;
     }
-    if (ev.key == dgl::kKeySpace && (ev.mod & dgl::kModifierControl) == 0 && !menuOpen()) {
+    if (ev.key == dgl::kKeySpace && (ev.mod & ui::kCommand) == 0 && !menuOpen()) {
         controller.toggleTransport();   // Start/Stop
         repaint();
         return true;
     }
-    if ((ev.mod & dgl::kModifierControl) == 0) return false;
+    if ((ev.mod & ui::kCommand) == 0) return false;
     // With Control held, X11 may report the control character instead of the letter.
     auto is = [&ev](char letter) {
         return ev.key == static_cast<std::uint32_t>(letter) || ev.key == static_cast<std::uint32_t>(letter - 32) ||
                ev.key == static_cast<std::uint32_t>(letter - 'a' + 1);
     };
     if (is('q')) fileAction(FileAction::Quit);
-    else if (is('s')) fileAction(FileAction::Save);   // Ctrl-Shift-S too, as in plugin editors
+    else if (is('s')) fileAction(FileAction::Save);   // Shift-S too, as in plugin editors
     else if (is('n')) fileAction(FileAction::New);
     else if (is('o')) fileAction(FileAction::Open);
     else return false;

@@ -27,6 +27,17 @@ namespace ui {
 constexpr UiColor kBg{22, 24, 30}, kRowA{31, 34, 42}, kRowB{35, 38, 47}, kBarBg{16, 18, 23}, kPanel{44, 48, 59},
     kText{232, 234, 240}, kDim{140, 146, 160}, kAccent{90, 160, 255}, kAmber{240, 170, 50}, kRed{232, 72, 60},
     kGreen{80, 200, 120}, kTrack{58, 62, 74}, kLine{48, 52, 62};
+// The key StageHand's shortcuts and modified drags use (docs/macos.md, decision
+// 7): Command on macOS, Control elsewhere; and the names the windows show.
+#ifdef __APPLE__
+constexpr std::uint32_t kCommand     = DGL_NAMESPACE::kModifierSuper;
+constexpr const char*   kCommandName = "Cmd";
+constexpr const char*   kAltName     = "Option";
+#else
+constexpr std::uint32_t kCommand     = DGL_NAMESPACE::kModifierControl;
+constexpr const char*   kCommandName = "Ctrl";
+constexpr const char*   kAltName     = "Alt";
+#endif
 constexpr float kPad       = 12.0f;
 constexpr float kMenuItemH = 26.0f;
 double          nowSeconds();   // a steady clock

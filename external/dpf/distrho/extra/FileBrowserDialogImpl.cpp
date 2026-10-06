@@ -26,6 +26,7 @@
 
 #ifdef DISTRHO_OS_MAC
 # import <Cocoa/Cocoa.h>
+# import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>   // STAGEHAND LOCAL PATCH: the extension filter
 #endif
 
 #ifdef DISTRHO_OS_WASM
@@ -490,8 +491,21 @@ FileBrowserHandle fileBrowserCreate(const bool isEmbed,
         DISTRHO_SAFE_ASSERT_RETURN(nsOpenPanel != nullptr, nullptr);
 
         [nsOpenPanel setAllowsMultipleSelection:NO];
-        [nsOpenPanel setCanChooseDirectories:NO];
-        [nsOpenPanel setCanChooseFiles:YES];
+        // STAGEHAND LOCAL PATCH: a folder, or files of one extension.
+        [nsOpenPanel setCanChooseDirectories:options.directories ? YES : NO];
+        [nsOpenPanel setCanChooseFiles:options.directories ? NO : YES];
+        if (! options.directories && options.extension != nullptr && options.extension[0] != '\0')
+        {
+            if (UTType* const type = [UTType typeWithFilenameExtension:[NSString stringWithUTF8String:options.extension]])
+                [nsOpenPanel setAllowedContentTypes:@[type]];
+        }
+    }
+    else
+    {
+        // STAGEHAND LOCAL PATCH: the suggested name, and new folders allowed.
+        if (options.defaultName != nullptr)
+            [nsBasePanel setNameFieldStringValue:[NSString stringWithUTF8String:options.defaultName]];
+        [nsBasePanel setCanCreateDirectories:YES];
     }
 
     NSString* const startDirString = [[NSString alloc]
@@ -515,22 +529,23 @@ FileBrowserHandle fileBrowserCreate(const bool isEmbed,
 
     FileBrowserData* const handleptr = handle.get();
 
-    dispatch_async(dispatch_get_main_queue(), ^
+    // STAGEHAND LOCAL PATCH: begun now, not from a dispatch_async block, so a
+    // handle closed before the block ran can't be written to after it's freed
+    // (fileBrowserClose ends a sheet still open). A sheet runs no modal loop,
+    // so beginning it inside an event handler is fine.
+    [nsBasePanel beginSheetModalForWindow:[(NSView*)windowId window]
+                        completionHandler:^(NSModalResponse result)
     {
-        [nsBasePanel beginSheetModalForWindow:[(NSView*)windowId window]
-                            completionHandler:^(NSModalResponse result)
+        if (result == NSModalResponseOK && [[nsBasePanel URL] isFileURL])
         {
-            if (result == NSModalResponseOK && [[nsBasePanel URL] isFileURL])
-            {
-                NSString* const path = [[nsBasePanel URL] path];
-                handleptr->selectedFile = strdup([path UTF8String]);
-            }
-            else
-            {
-                handleptr->selectedFile = kSelectedFileCancelled;
-            }
-        }];
-    });
+            NSString* const path = [[nsBasePanel URL] path];
+            handleptr->selectedFile = strdup([path UTF8String]);
+        }
+        else
+        {
+            handleptr->selectedFile = kSelectedFileCancelled;
+        }
+    }];
 
     [startDirString release];
     [titleString release];
@@ -861,6 +876,14 @@ void fileBrowserClose(const FileBrowserHandle handle)
 #ifdef HAVE_X11
     if (Display* const x11display = handle->x11display)
         x_fib_close(x11display);
+#endif
+
+#ifdef DISTRHO_OS_MAC
+    // STAGEHAND LOCAL PATCH: a sheet still open is ended first; its completion
+    // handler runs inside endSheet:, before the handle it writes to goes.
+    if (handle->selectedFile == nullptr && handle->nsBasePanel != nullptr)
+        if (NSWindow* const parent = [handle->nsBasePanel sheetParent])
+            [parent endSheet:handle->nsBasePanel returnCode:NSModalResponseCancel];
 #endif
 
     delete handle;
