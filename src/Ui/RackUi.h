@@ -36,6 +36,12 @@ public:
     void showNotice(const std::string& text);
     // True once the user closed the window: time to quit.
     bool closed() const;
+    // Quit as Cmd-Q (Ctrl-Q) in the window does: at once, or after asking
+    // about an untitled rack's changes (the window brought forward to ask).
+    void quitAsInWindow();
+    // Open a rack or setlist from outside (RackWidget::openDocument()), the
+    // window brought forward.
+    void openDocument(const std::string& path);
 
     struct Impl;
 

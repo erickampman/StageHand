@@ -43,6 +43,7 @@
 // The plugin editors' windows: X11 on Linux, Cocoa on macOS (the same
 // interface). The rack window is DGL's on both.
 #ifdef __APPLE__
+#include "App/AppDelegateMac.h"
 #include "App/EditorWindowMac.h"
 #else
 #include "App/EditorWindow.h"
@@ -835,6 +836,21 @@ int runPlay(const Options& options) {
             if (ui->closed()) loop.requestQuit();   // closing it quits, like Ctrl-Q
         });
 
+#ifdef __APPLE__
+    // AppKit's quit (the Dock's, logging out) quits as Cmd-Q does, through
+    // StageHand's shutdown below, not AppKit's exit(). Documents opened from
+    // Finder open as the window's File menu would open them.
+    installAppHandlers(
+        [&] {
+            if (ui) ui->quitAsInWindow();
+            else loop.requestQuit();
+        },
+        [&](const std::string& path) {
+            if (ui) ui->openDocument(path);
+            else if (isSetlistFile(path)) controller.openSetlist(path);
+            else controller.openRack(path);
+        });
+#endif
     activeLoop.store(&loop);
     if (quitRequested.load()) loop.requestQuit();   // a signal that beat the line above
     loop.run();

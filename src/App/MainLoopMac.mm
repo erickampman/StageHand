@@ -160,10 +160,14 @@ void MainLoop::run() {
             launched = true;
         }
     }
+    // Not waiting forever: pugl (DGL's idle(), run from a timer) also takes
+    // every pending event, the wake-up event requestQuit() posts included, so
+    // this may never see it. Waking now and then to look at `quit` costs
+    // nothing; the wake-up event still makes most quits immediate.
     while (!quit.load()) {
         @autoreleasepool {
             NSEvent* const event = [NSApp nextEventMatchingMask:NSEventMaskAny
-                                                      untilDate:[NSDate distantFuture]
+                                                      untilDate:[NSDate dateWithTimeIntervalSinceNow:0.05]
                                                          inMode:NSDefaultRunLoopMode
                                                         dequeue:YES];
             if (event != nil && event.type != NSEventTypeApplicationDefined) [NSApp sendEvent:event];

@@ -12,7 +12,7 @@ Everything else is a system library.
 | Platform | What builds today |
 |---|---|
 | Linux | everything: the `stagehand` app (rack window, plugin hosting), its libraries, the test suites |
-| macOS | the libraries, the test suites, and the `stagehand` app over CoreAudio, CoreMIDI and CLAP bundles: it plays racks with the rack window and the plugins' editors (no app bundle yet: [macos.md](macos.md), milestone 6) |
+| macOS | the libraries, the test suites, and the `stagehand` app over CoreAudio, CoreMIDI and CLAP bundles: it plays racks with the rack window and the plugins' editors, as `StageHand.app` (not yet signed or with an icon: [macos.md](macos.md), milestones 6 and 7) |
 
 ## Getting the source
 
@@ -158,6 +158,18 @@ Then, to hear the audio path and see MIDI arrive (Ctrl-C stops each):
 ```bash
 ./build/stagehand --monitor
 ```
+
+The build makes `build/StageHand.app`. `./build/stagehand` is a small script
+that runs the app's binary by its real path, so it runs as the app (its name
+in the menu bar, its bundle id) with the terminal's output; a symbolic link
+to the binary wouldn't. To start it as Finder does:
+
+```bash
+open build/StageHand.app
+```
+
+Launched that way, its output goes nowhere; Cmd-Q, or Quit in the Dock,
+quits and saves as Ctrl-C does.
 
 ## Other platforms
 

@@ -25,8 +25,9 @@ public:
     FileChooser& operator=(const FileChooser&) = delete;
 
     // As FileDialog::start(), the sheet on `window` (DGL's native handle:
-    // the window's NSView). OpenFile's `name` is a pattern, "*.setlist": only
-    // its extension is used.
+    // the window's NSView). Opening, `name` is a pattern, "*.setlist" or
+    // "*.rack": only its extension is used (a rack, a package once StageHand.app
+    // has declared it, is chosen as a folder or as one).
     bool start(Mode mode, const std::string& title, const std::string& folder, const std::string& name,
                std::uintptr_t window, std::string& problem);
     bool running() const noexcept { return handle != nullptr; }

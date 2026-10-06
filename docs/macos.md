@@ -553,7 +553,45 @@ console only and says so. The click isn't routed on macOS yet
   way and tried there. Checked by hand: Open, Save, Save As and Open setlist.
 - **Still to do in milestone 6:** the rest of the window by hand (menus,
   Cmd keys, a sequence editor, a plugin editor beside it); DPF's portal path
-  on Linux, then `FileDialog` and `test-filedialog` go; the app bundle.
+  on Linux, then `FileDialog` and `test-filedialog` go.
+
+**Milestone 6, second part (2026-10-06): the app bundle.**
+- **`StageHand.app`** (`MACOSX_BUNDLE`, `cmake/Info.plist.in`): bundle id
+  `com.unlikelyware.stagehand`, HiDPI, macOS 15, the music category, no
+  microphone description (decision 2). Exported types: `.rack` as
+  `com.unlikelyware.stagehand.rack`, conforming to `com.apple.package`
+  (decision 6), and `.setlist` as `com.unlikelyware.stagehand.setlist`
+  (JSON); both document types StageHand's (`Owner`). No icon yet.
+- **`build/stagehand`** stays the command line's: a script that `exec`s the
+  bundle's binary by its absolute path. Not a symbolic link: run through
+  one, the binary isn't the bundle's (no bundle id, and the menu bar says
+  "stagehand").
+- **AppKit's quit** (the Dock's Quit, AppleScript's `quit`, logging out)
+  called `exit()` before: nothing saved, plugins not stopped. Found by
+  quitting the bundle through AppleScript. `App/AppDelegateMac.mm`'s
+  delegate answers `applicationShouldTerminate:` with `NSTerminateCancel`
+  and quits as Cmd-Q does instead (`RackUi::quitAsInWindow()`: asking about
+  an untitled rack's changes, if it has some). Not `NSTerminateLater`:
+  AppKit waits for that reply in a modal loop of its own, and StageHand's
+  shutdown runs after `MainLoop::run()` returns. So a logout or shutdown is
+  cancelled once; StageHand has quit cleanly by then.
+- **Found: a quit could be missed with the rack window open.** DGL's
+  `idle()` (pugl's `puglUpdate()`, from a timer) takes every pending event,
+  the wake-up event `requestQuit()` posts included, so `MainLoop::run()`
+  could wait on forever (half of ten AppleScript quits; Ctrl-C the same).
+  `run()` now waits at most 50 ms for an event before looking at its quit
+  flag again: 10 of 10 quits through AppleScript, 5 of 5 Ctrl-Cs.
+- **Choosing a rack:** once the app is registered, a `.rack` is a package (a
+  file to the open panel), so the rack chooser takes the rack type or a
+  plain folder (a rack from before, or from Linux).
+- **Checked on a Mac:** run through the script and through `open`, the
+  process is `StageHand`, `com.unlikelyware.stagehand`; with a scratch
+  `HOME`, a launch through `open` uses its own Application Support folder;
+  `MacTest.rack` reads as `com.unlikelyware.stagehand.rack`, a package, and
+  `Test.setlist` as the setlist type.
+- **Not yet:** an icon; opening a rack or setlist double-clicked in Finder
+  (the app starts, but on its last setlist: the open-documents event isn't
+  handled); choosing a rack by hand now that it's a package.
 
 ## Review (2026-10-03)
 

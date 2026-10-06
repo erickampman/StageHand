@@ -17,7 +17,8 @@ milestone 6):
   macOS, also sets the draw view's autoresizing mask, so a window made
   resizable after it's realized resizes its drawing with it.
 - distrho/extra/FileBrowserDialogImpl.hpp, .cpp: on macOS, choosing a folder
-  (`FileBrowserOptions::directories`), an extension filter
+  (`FileBrowserOptions::directories`; with an extension, a package of that
+  type too, as a rack is once StageHand.app declares it), an extension filter
   (`FileBrowserOptions::extension`, through UTType), the suggested name when
   saving, the sheet begun at once rather than from `dispatch_async`, and
   `fileBrowserClose()` ending a sheet still open.

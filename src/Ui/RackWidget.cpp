@@ -1990,6 +1990,13 @@ void RackWidget::fileAction(FileAction action) {
     keepChangesThen([this, action] { proceed(action); }, action == FileAction::Quit);
 }
 
+void RackWidget::openDocument(const std::string& path) {
+    switchSong([this, path] {
+        if (isSetlistFile(path)) controller.openSetlist(path);
+        else controller.openRack(path);
+    });
+}
+
 void RackWidget::keepChangesThen(std::function<void()> then, bool quitting) {
     Menu m;
     m.x     = width() / 2 - 150.0f;

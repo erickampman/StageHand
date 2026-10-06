@@ -171,7 +171,8 @@ std::unique_ptr<RackUi> RackUi::open(RackController& controller, const std::stri
                                                                             : FileDialog::Mode::OpenFolder;
         const std::string shown = what == RackWidget::Choose::Setlist ? "*.setlist" : name;
 #ifdef __APPLE__
-        const bool started = raw->dialog.start(mode, title, folder, shown, raw->window.getNativeWindowHandle(), problem);
+        const std::string pattern = what == RackWidget::Choose::Rack ? std::string("*.rack") : shown;   // a package
+        const bool started = raw->dialog.start(mode, title, folder, pattern, raw->window.getNativeWindowHandle(), problem);
 #else
         const bool started = raw->dialog.start(mode, title, folder, shown, problem);
 #endif
@@ -282,6 +283,18 @@ void RackUi::refresh() {
 void RackUi::showNotice(const std::string& text) {
     impl->widget->showNotice(text,
                              std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
+void RackUi::quitAsInWindow() {
+    if (impl->controller.unsavedUntitled()) impl->window.focus();   // where it asks
+    impl->widget->fileAction(RackWidget::FileAction::Quit);
+    impl->widget->repaint();
+}
+
+void RackUi::openDocument(const std::string& path) {
+    impl->window.focus();
+    impl->widget->openDocument(path);
+    impl->widget->repaint();
 }
 
 bool RackUi::closed() const {

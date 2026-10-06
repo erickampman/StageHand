@@ -212,12 +212,33 @@ if(STAGEHAND_APP AND APPLE)
 
     add_executable(stagehand
         src/App/main.cpp
+        src/App/AppDelegateMac.mm
         src/App/AppHost.cpp
         src/App/EditorWindowMac.mm
         src/App/MainLoopMac.mm
         src/App/MidiMonitor.cpp)
-    set_source_files_properties(src/App/EditorWindowMac.mm src/App/MainLoopMac.mm PROPERTIES COMPILE_OPTIONS -fobjc-arc)
+    set_source_files_properties(src/App/AppDelegateMac.mm src/App/EditorWindowMac.mm src/App/MainLoopMac.mm
+                                PROPERTIES COMPILE_OPTIONS -fobjc-arc)
     target_link_libraries(stagehand PRIVATE stagehand-lib stagehand-ui "-framework AppKit" stagehand-warnings)
+
+    # StageHand.app (docs/macos.md, "The app bundle"): the Info.plist declares
+    # HiDPI and the .rack (a package) and .setlist document types. No icon yet.
+    set_target_properties(stagehand PROPERTIES
+        OUTPUT_NAME                        StageHand
+        MACOSX_BUNDLE                      TRUE
+        MACOSX_BUNDLE_INFO_PLIST           "${CMAKE_SOURCE_DIR}/cmake/Info.plist.in"
+        MACOSX_BUNDLE_BUNDLE_NAME          StageHand
+        MACOSX_BUNDLE_GUI_IDENTIFIER       com.unlikelyware.stagehand
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
+        MACOSX_BUNDLE_BUNDLE_VERSION       "${PROJECT_VERSION}")
+    # build/stagehand stays the command line's: a script running the bundle's
+    # binary by its real path. Not a link: run through one, the binary isn't
+    # seen as the bundle's (no bundle id, name or Info.plist).
+    file(REMOVE "${CMAKE_BINARY_DIR}/stagehand")   # a link, from before: don't write through it
+    file(CONFIGURE OUTPUT "${CMAKE_BINARY_DIR}/stagehand" @ONLY CONTENT
+"#!/bin/sh\nexec \"@CMAKE_BINARY_DIR@/StageHand.app/Contents/MacOS/StageHand\" \"$@\"\n")
+    file(CHMOD "${CMAKE_BINARY_DIR}/stagehand"
+         PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
 
 endif()
 

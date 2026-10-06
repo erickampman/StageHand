@@ -43,6 +43,10 @@ public:
     // rack has changes.
     enum class FileAction { New, Open, Save, SaveAs, Quit };
     void fileAction(FileAction action);
+    // A rack or setlist to open from outside the window (Finder, on macOS): a
+    // setlist as Open setlist does, a rack on its own (leaving a setlist), as
+    // Open outside a set does; asking first if an untitled rack has changes.
+    void openDocument(const std::string& path);
     // Another rack replaced the running one: close menus and panels.
     void rackReplaced();
 

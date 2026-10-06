@@ -25,7 +25,7 @@ bool FileChooser::start(Mode mode, const std::string& title, const std::string& 
         return false;
     }
     std::string extension;
-    if (mode == Mode::OpenFile && name.rfind("*.", 0) == 0) extension = name.substr(2);
+    if (mode != Mode::Save && name.rfind("*.", 0) == 0) extension = name.substr(2);
 
     dgl::FileBrowserOptions options;
     options.saving      = mode == Mode::Save;

@@ -491,12 +491,21 @@ FileBrowserHandle fileBrowserCreate(const bool isEmbed,
         DISTRHO_SAFE_ASSERT_RETURN(nsOpenPanel != nullptr, nullptr);
 
         [nsOpenPanel setAllowsMultipleSelection:NO];
-        // STAGEHAND LOCAL PATCH: a folder, or files of one extension.
+        // STAGEHAND LOCAL PATCH: a folder, or files of one extension. A folder
+        // with an extension may be a package the system knows (a file to the
+        // panel), so then both: that type, or a plain folder.
+        const bool hasExtension = options.extension != nullptr && options.extension[0] != '\0';
+        NSString* const extension = hasExtension ? [NSString stringWithUTF8String:options.extension] : nil;
         [nsOpenPanel setCanChooseDirectories:options.directories ? YES : NO];
-        [nsOpenPanel setCanChooseFiles:options.directories ? NO : YES];
-        if (! options.directories && options.extension != nullptr && options.extension[0] != '\0')
+        [nsOpenPanel setCanChooseFiles:(! options.directories || hasExtension) ? YES : NO];
+        if (options.directories && hasExtension)
         {
-            if (UTType* const type = [UTType typeWithFilenameExtension:[NSString stringWithUTF8String:options.extension]])
+            if (UTType* const type = [UTType typeWithFilenameExtension:extension conformingToType:UTTypeDirectory])
+                [nsOpenPanel setAllowedContentTypes:@[type, UTTypeFolder]];
+        }
+        else if (hasExtension)
+        {
+            if (UTType* const type = [UTType typeWithFilenameExtension:extension])
                 [nsOpenPanel setAllowedContentTypes:@[type]];
         }
     }
