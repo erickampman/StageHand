@@ -16,5 +16,8 @@
      the click as MIDI notes.
 - **Right-click in the empty space below the rack rows** opens the same menu
   as "+ Add plugin" (added 2026-10-03), so a row can be added where rows go.
+- **The generic editor** (planned 2026-10-06, docs/generic-editor.md): a
+  window of sliders and menus for a plugin with no editor of its own, never
+  in place of one that has an editor.
 - **Later:** backing tracks (an audio file per song, in time with the
   transport); song notes in the Perform view; undo for rack edits.
