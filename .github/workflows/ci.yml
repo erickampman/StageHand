@@ -10,7 +10,7 @@ name: CI
 
 on:
   push:
-    branches: [main, rack-view]
+    branches: [main, rack-view, uw-core-switch]
   pull_request:
 
 jobs:
