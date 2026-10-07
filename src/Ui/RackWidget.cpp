@@ -538,7 +538,7 @@ void RackWidget::openSetlistMidiMenu(float x, float y) {
                                                                                   : "Press a pad, key or pedal...")
                            : "Setlist: MIDI control (wins over a rack's)";
     if (set.learning) m.items.push_back(MenuItem{"Stop learning", [this] { controller.cancelLearn(); }});
-    for (const auto [action, text] : {std::pair{SetlistTrigger::Action::Next, "Learn Move to Next Song"},
+    for (const auto& [action, text] : {std::pair{SetlistTrigger::Action::Next, "Learn Move to Next Song"},
                                       {SetlistTrigger::Action::Previous, "Learn Move to Previous Song"},
                                       {SetlistTrigger::Action::Song, "Learn Go to Song by Program Change (n: song n)"}})
         m.items.push_back(MenuItem{text, [this, a = action] { controller.learnSetlistTrigger(a); },
@@ -793,7 +793,7 @@ void RackWidget::drawTransport(float x) {
         m.w     = 140.0f;
         m.title = "Time signature";
         const TransportModel& now = controller.view().transport;
-        for (const auto [n, d] : {std::pair{2, 4}, {3, 4}, {4, 4}, {5, 4}, {6, 8}, {7, 8}, {9, 8}, {12, 8}})
+        for (const auto& [n, d] : {std::pair{2, 4}, {3, 4}, {4, 4}, {5, 4}, {6, 8}, {7, 8}, {9, 8}, {12, 8}})
             m.items.push_back(MenuItem{std::to_string(n) + "/" + std::to_string(d),
                                        [this, n, d] { controller.setTimeSignature(n, d); },
                                        now.numerator == n && now.denominator == d, false});
@@ -842,7 +842,7 @@ void RackWidget::openMetronomeMenu(float x, float y) {
                                    [this, db] { controller.setClickLevel(db); },
                                    t.click && std::fabs(t.clickLevelDb - db) < 0.5f});
     // The count-in (docs/perform.md): this song's, before bar 1 at a start.
-    for (const auto [bars, text] : {std::pair{0.0, "No count-in"}, {0.5, "Count-in: half a bar"}, {1.0, "Count-in: 1 bar"},
+    for (const auto& [bars, text] : {std::pair{0.0, "No count-in"}, {0.5, "Count-in: half a bar"}, {1.0, "Count-in: 1 bar"},
                                     {2.0, "Count-in: 2 bars"}})
         m.items.push_back(MenuItem{text, [this, b = bars] { controller.setCountIn(b); }, t.countInBars == bars});
     // The edge flash (docs/perform.md): this song's.
@@ -1497,7 +1497,7 @@ void RackWidget::drawSequenceRow(const SequenceRowModel& seq, float y) {
         m.y     = y + 36.0f;
         m.w     = 190.0f;
         m.title = "Units per beat";
-        for (const auto [n, d] : {std::pair{1, 4}, {1, 3}, {1, 2}, {1, 1}, {2, 1}, {3, 1}, {4, 1}, {8, 1}, {16, 1}}) {
+        for (const auto& [n, d] : {std::pair{1, 4}, {1, 3}, {1, 2}, {1, 1}, {2, 1}, {3, 1}, {4, 1}, {8, 1}, {16, 1}}) {
             const std::string text = d == 1 ? std::to_string(n) : std::to_string(n) + "/" + std::to_string(d);
             const auto        r    = SequenceRate{static_cast<std::uint16_t>(n), static_cast<std::uint16_t>(d)};
             m.items.push_back(MenuItem{text + (n == 4 && d == 1 ? "   (sixteenths)" : ""),
@@ -1522,7 +1522,7 @@ void RackWidget::drawSequenceRow(const SequenceRowModel& seq, float y) {
         m.y     = y + 36.0f;
         m.w     = 200.0f;
         m.title = "Play and Stop take effect at";
-        for (const auto [q, text] : {std::pair{LaunchQuantize::Bar, "The next bar"},
+        for (const auto& [q, text] : {std::pair{LaunchQuantize::Bar, "The next bar"},
                                      {LaunchQuantize::Beat, "The next beat"},
                                      {LaunchQuantize::Immediate, "Immediately"}})
             m.items.push_back(MenuItem{text, [this, id, q = q] { controller.setSequenceLaunch(id, q); }, current == q});
@@ -1666,7 +1666,7 @@ void RackWidget::drawLooperRow(const LooperRowModel& l, float y) {
         m.y     = y + 36.0f;
         m.w     = 220.0f;
         m.title = "Quantize what it records to";
-        for (const auto [beats, text] : {std::pair{0.0, "Off (as played)"}, {0.125, "1/32"}, {0.25, "1/16"},
+        for (const auto& [beats, text] : {std::pair{0.0, "Off (as played)"}, {0.125, "1/32"}, {0.25, "1/16"},
                                          {0.5, "1/8"}, {1.0, "1/4 (a beat)"}, {2.0, "1/2"}})
             m.items.push_back(MenuItem{text, [this, id, b = beats] { controller.setLooperQuantize(id, b); }, current == beats});
         openMenu(std::move(m));
@@ -1822,7 +1822,7 @@ void RackWidget::openTriggerMenu(const SequenceRowModel& seq, float x, float y) 
     m.w     = 340.0f;
     m.title = seq.learning ? "Press a pad, key or pedal..." : "MIDI control of " + seq.name;
     if (seq.learning) m.items.push_back(MenuItem{"Stop learning", [this] { controller.cancelLearn(); }});
-    for (const auto [action, text] : {std::pair{SequenceTrigger::Action::Toggle, "Learn Play/Stop"},
+    for (const auto& [action, text] : {std::pair{SequenceTrigger::Action::Toggle, "Learn Play/Stop"},
                                       {SequenceTrigger::Action::Start, "Learn Start"},
                                       {SequenceTrigger::Action::Stop, "Learn Stop"}})
         m.items.push_back(MenuItem{text, [this, id = seq.id, a = action] { controller.learnTrigger(id, a); },
@@ -1844,7 +1844,7 @@ void RackWidget::openTransportMenu(float x, float y) {
     m.w     = 340.0f;
     m.title = t.learning || t.panicLearning ? "Press a pad, key or pedal..." : "Transport: MIDI control";
     if (t.learning || t.panicLearning) m.items.push_back(MenuItem{"Stop learning", [this] { controller.cancelLearn(); }});
-    for (const auto [action, text] : {std::pair{SequenceTrigger::Action::Toggle, "Learn Start/Stop"},
+    for (const auto& [action, text] : {std::pair{SequenceTrigger::Action::Toggle, "Learn Start/Stop"},
                                       {SequenceTrigger::Action::Start, "Learn Start"},
                                       {SequenceTrigger::Action::Stop, "Learn Stop"}})
         m.items.push_back(MenuItem{text, [this, a = action] { controller.learnTransportTrigger(a); },
@@ -2601,7 +2601,7 @@ void RackWidget::drawLinkPanel() {
             fill(t.waiting ? kAmber : kAccent);
             NanoVG::fill();
         }
-        for (const auto [pos, letter] : {std::pair{bPos, "B"}, {tPos, "T"}}) {
+        for (const auto& [pos, letter] : {std::pair{bPos, "B"}, {tPos, "T"}}) {
             const float hx = barX0 + span * pos;
             box(hx - 7.0f, by - 11.0f, 14.0f, 22.0f, kAccent, 3.0f);
             label(hx, by, letter, 11.0f, kBarBg, ALIGN_CENTER | ALIGN_MIDDLE);

@@ -273,7 +273,7 @@ void testTransport() {
     controller.tick(1.0);
     CHECK(view.transport.numerator == 6 && view.transport.denominator == 8 && view.transport.beatsInBar == 2);
     // Compound meters count dotted beats; others count their notes.
-    for (const auto [n, d, lights] : {std::tuple{7, 8, 7}, {9, 8, 3}, {12, 8, 4}, {3, 8, 3}, {5, 4, 5}, {2, 4, 2}}) {
+    for (const auto& [n, d, lights] : {std::tuple{7, 8, 7}, {9, 8, 3}, {12, 8, 4}, {3, 8, 3}, {5, 4, 5}, {2, 4, 2}}) {
         controller.setTimeSignature(n, d);
         controller.tick(1.1);
         CHECK(view.transport.beatsInBar == lights);
@@ -1279,7 +1279,7 @@ void testSwitchSettings() {
     const fs::path dir = scratchDir("stagehand-switch-settings-test");
     fs::remove_all(dir);
     std::vector<std::string> racks;
-    for (const auto [name, bpm] : {std::pair{"A", 100.0}, {"B", 140.0}, {"C", 80.0}}) {
+    for (const auto& [name, bpm] : {std::pair{"A", 100.0}, {"B", 140.0}, {"C", 80.0}}) {
         Rack rack;
         rack.name     = name;
         rack.tempoBpm = bpm;
