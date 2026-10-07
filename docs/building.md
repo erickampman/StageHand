@@ -33,8 +33,16 @@ git submodule update --init --recursive
 ```
 
 When StageHand's change needs a uw-core change, commit and push uw-core
-first, then commit StageHand's new pin (`git config push.recurseSubmodules
-check` refuses a push whose pin isn't on GitHub yet).
+first, then commit StageHand's new pin. Otherwise the other machine can't
+fetch the pin. To have git refuse such a push:
+
+```bash
+git push --recurse-submodules=check             # this push only
+git config push.recurseSubmodules check         # the default for this clone
+```
+
+The `git config` line is per clone: run it in every clone that has
+submodules (StageHand, Umpire, each plugin), on the Linux PC and on the Mac.
 
 Build from `rack-view`: it's where current work is, and `main` is far behind.
 
