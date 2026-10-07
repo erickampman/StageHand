@@ -12,7 +12,8 @@
 #include <stdexcept>
 #include <utility>
 
-#include "Core/Ump.h"
+#include "uw/ump/Ump.h"
+#include "Core/UwNames.h"
 #include "Session/BundleFiles.h"
 #include "Session/ControlLinkJson.h"
 

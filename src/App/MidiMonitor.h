@@ -5,8 +5,9 @@
 #include <map>
 #include <string>
 
-#include "Core/SpscQueue.h"
-#include "Midi/MidiInput.h"
+#include "uw/base/SpscQueue.h"
+#include "uw/midi/MidiInput.h"
+#include "Core/UwNames.h"
 
 namespace stagehand {
 

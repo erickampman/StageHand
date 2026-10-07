@@ -4,10 +4,13 @@ How to build StageHand and run its tests on Linux and macOS. The CI workflow
 (`.github/workflows/ci.yml`) runs exactly these steps on both platforms, so
 if this page and the workflow ever disagree, the workflow is right.
 
-StageHand is C++20, built with CMake (3.21+) and Ninja. Third-party code is
-vendored: the CLAP SDK as a git submodule (`external/clap`, pinned to 1.2.10),
-DPF's DGL for the UI (`external/dpf`) and nlohmann/json (`external/nlohmann`).
-Everything else is a system library.
+StageHand is C++20, built with CMake (3.21+) and Ninja. The code it shares
+with Umpire (UMP, the clock and queues, the plugin seam and CLAP host, the
+JACK/ALSA and CoreAudio/CoreMIDI backends) is **uw-core**, a private git
+submodule (`external/uw-core`, namespace `uw`), which brings the CLAP SDK
+(1.2.10) as its own submodule. Its tests run in uw-core. Third-party code is
+vendored: DPF's DGL for the UI (`external/dpf`) and nlohmann/json
+(`external/nlohmann`). Everything else is a system library.
 
 | Platform | What builds today |
 |---|---|
@@ -16,7 +19,8 @@ Everything else is a system library.
 
 ## Getting the source
 
-The CLAP submodule has to be initialized in every checkout:
+The submodules (uw-core, and the CLAP SDK inside it) have to be initialized
+in every checkout. uw-core is private, so the clone needs access to it:
 
 ```bash
 git clone --recurse-submodules https://github.com/erickampman/StageHand.git
@@ -25,8 +29,12 @@ git clone --recurse-submodules https://github.com/erickampman/StageHand.git
 or, in an existing clone:
 
 ```bash
-git submodule update --init
+git submodule update --init --recursive
 ```
+
+When StageHand's change needs a uw-core change, commit and push uw-core
+first, then commit StageHand's new pin (`git config push.recurseSubmodules
+check` refuses a push whose pin isn't on GitHub yet).
 
 Build from `rack-view`: it's where current work is, and `main` is far behind.
 

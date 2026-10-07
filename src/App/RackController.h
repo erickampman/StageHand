@@ -15,10 +15,11 @@
 
 #include "App/BeatNow.h"
 #include "App/RackViewModel.h"
-#include "Audio/AuxRouting.h"
+#include "uw/audio/AuxRouting.h"
 #include "Engine/Engine.h"
-#include "Midi/MidiInput.h"
-#include "Plugin/PluginFactory.h"
+#include "uw/midi/MidiInput.h"
+#include "uw/plugin/PluginFactory.h"
+#include "Core/UwNames.h"
 #include "Session/Session.h"
 #include "Session/Setlist.h"
 

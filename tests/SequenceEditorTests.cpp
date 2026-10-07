@@ -10,7 +10,8 @@
 #include "App/RackController.h"
 #include "App/SequenceEditor.h"
 #include "Check.h"
-#include "Core/Ump.h"
+#include "uw/ump/Ump.h"
+#include "Core/UwNames.h"
 #include "FakePlugin.h"
 #include "SessionFakes.h"
 

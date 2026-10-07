@@ -4,11 +4,12 @@
 #include <memory>
 #include <vector>
 
-#include "Core/Event.h"
+#include "uw/base/Event.h"
 #include "Core/MidiFilter.h"
 #include "Engine/SlotRuntime.h"
-#include "Plugin/HostedPlugin.h"
-#include "Plugin/PortLayout.h"
+#include "uw/plugin/HostedPlugin.h"
+#include "uw/plugin/PortLayout.h"
+#include "Core/UwNames.h"
 
 namespace stagehand {
 

@@ -8,7 +8,8 @@
 #include <vector>
 
 #include "Core/Sequence.h"
-#include "Plugin/PluginDescriptor.h"
+#include "uw/plugin/PluginDescriptor.h"
+#include "Core/UwNames.h"
 #include "Session/Rack.h"
 
 namespace stagehand {

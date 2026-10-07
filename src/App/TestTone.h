@@ -4,7 +4,8 @@
 #include <cstdint>
 #include <numbers>
 
-#include "Audio/AudioBackend.h"
+#include "uw/audio/AudioBackend.h"
+#include "Core/UwNames.h"
 
 namespace stagehand {
 

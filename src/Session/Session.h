@@ -12,9 +12,10 @@
 #include <vector>
 
 #include "Engine/Engine.h"
-#include "Midi/MidiInput.h"
-#include "Plugin/HostServices.h"
-#include "Plugin/PluginFactory.h"
+#include "uw/midi/MidiInput.h"
+#include "uw/plugin/HostServices.h"
+#include "uw/plugin/PluginFactory.h"
+#include "Core/UwNames.h"
 #include "Session/Rack.h"
 #include "Session/Rig.h"
 

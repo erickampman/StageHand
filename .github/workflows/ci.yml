@@ -2,6 +2,10 @@
 # milestone 1). Linux builds everything, the app included; macOS builds the
 # libraries, the tests and the app's MIDI modes (milestone 3). The suites use
 # fakes: no audio, MIDI or display needed.
+#
+# external/uw-core is a private repo, which the workflow's own token can't
+# read: the SUBMODULES_TOKEN secret (a token with read access to uw-core) is
+# used when set.
 name: CI
 
 on:
@@ -15,7 +19,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: true
+          submodules: recursive
+          token: ${{ secrets.SUBMODULES_TOKEN || github.token }}
       - name: Install build dependencies
         run: |
           sudo apt-get update
@@ -33,7 +38,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: true
+          submodules: recursive
+          token: ${{ secrets.SUBMODULES_TOKEN || github.token }}
       - name: Install build dependencies
         run: brew install ninja
       - name: Configure

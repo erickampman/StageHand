@@ -1,6 +1,7 @@
 #pragma once
 
-#include "Core/Types.h"
+#include "uw/Types.h"
+#include "Core/UwNames.h"
 #include "Engine/Engine.h"
 
 namespace stagehand {

@@ -10,7 +10,8 @@
 #include <string>
 #include <vector>
 
-#include "Plugin/HostedPlugin.h"
+#include "uw/plugin/HostedPlugin.h"
+#include "Core/UwNames.h"
 
 namespace stagehand::test {
 

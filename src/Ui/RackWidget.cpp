@@ -7,8 +7,9 @@
 #include <cstdlib>
 #include <filesystem>
 
-#include "Core/Clock.h"
-#include "Core/Ump.h"
+#include "uw/base/Clock.h"
+#include "uw/ump/Ump.h"
+#include "Core/UwNames.h"
 #include "Session/RackFile.h"
 #include "Session/SetlistFile.h"
 

@@ -7,10 +7,11 @@
 #include <vector>
 
 #include "Core/MidiFilter.h"
-#include "Core/MidiMessage.h"
+#include "uw/ump/MidiMessage.h"
 #include "Core/Sequence.h"
 #include "Engine/SequenceSet.h"   // SequenceState
-#include "Plugin/PortLayout.h"
+#include "uw/plugin/PortLayout.h"
+#include "Core/UwNames.h"
 #include "Session/Rack.h"
 #include "Session/Rig.h"
 #include "Session/Setlist.h"

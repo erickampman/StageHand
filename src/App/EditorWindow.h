@@ -5,8 +5,9 @@
 #include <string>
 
 #include "App/MainLoop.h"
-#include "Plugin/Editor.h"
-#include "Plugin/HostedPlugin.h"
+#include "uw/plugin/Editor.h"
+#include "uw/plugin/HostedPlugin.h"
+#include "Core/UwNames.h"
 
 typedef struct _XDisplay Display;
 

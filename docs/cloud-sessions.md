@@ -70,7 +70,7 @@ Fill in the task; the rest stays the same.
 Repo: StageHand (C++20, CMake + Ninja). Work on branch rack-view; open a PR into
 rack-view when done.
 
-Setup: git submodule update --init (external/clap). Build deps: cmake, ninja-build,
+Setup: git submodule update --init --recursive (external/uw-core, a private repo, and the CLAP SDK inside it). Build deps: cmake, ninja-build,
 pkg-config, libjack-jackd2-dev, libasound2-dev (alsa >= 1.2.10), libx11-dev, libgl-dev
 (libxrandr-dev optional: a new window fits its monitor).
 Build: cmake -B build -G Ninja && cmake --build build && (cd build && ctest).

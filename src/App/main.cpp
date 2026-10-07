@@ -19,7 +19,7 @@
 #include <unistd.h>
 
 #include "App/MidiMonitor.h"
-#include "Midi/PlatformMidiInput.h"
+#include "uw/midi/PlatformMidiInput.h"
 #include "Session/Session.h"
 
 #include "App/AppHost.h"
@@ -27,17 +27,18 @@
 #include "App/RackController.h"
 #include "App/TestTone.h"
 #include "Engine/Engine.h"
-#include "Plugin/Clap/ClapPluginFactory.h"
+#include "uw/clap/ClapPluginFactory.h"
 #include "Session/RackFile.h"
 #include "Session/RigFile.h"
 #include "Session/SetlistFile.h"
 #include "Session/WindowState.h"
 
 #ifdef __APPLE__
-#include "Audio/CoreAudioBackend.h"
+#include "uw/audio/CoreAudioBackend.h"
 #include "Session/AudioDeviceState.h"
 #else
-#include "Audio/JackBackend.h"
+#include "uw/audio/JackBackend.h"
+#include "Core/UwNames.h"
 #endif
 
 // The plugin editors' windows: X11 on Linux, Cocoa on macOS (the same
@@ -52,6 +53,13 @@
 using namespace stagehand;
 
 namespace {
+
+// StageHand's name where uw-core asks for the app's: JACK and ALSA clients,
+// CoreMIDI ports, the CoreAudio aggregate device.
+constexpr const char* kAppName = "StageHand";
+#ifdef __APPLE__
+constexpr const char* kAggregateUidPrefix = "com.unlikelyware.stagehand";
+#endif
 
 std::atomic<bool>      quitRequested{false};
 std::atomic<MainLoop*> activeLoop{nullptr};   // --play's loop, for the signal handler
@@ -328,10 +336,11 @@ std::map<MidiSourceHandle, std::string> openMidiInputs(PlatformMidiInput& input,
 int runTone(const Options& options) {
 #ifdef __APPLE__
     CoreAudioBackend backend(options.device);
+    backend.setAggregateIdentity(kAppName, kAggregateUidPrefix);
     const auto       stopped = [&] { return backend.deviceLost(); };
 #else
     if (!options.device.empty()) std::puts("--device is macOS's: on Linux, PipeWire routes the outputs.");
-    JackBackend backend("StageHand", options.autoConnect);
+    JackBackend backend(kAppName, options.autoConnect);
     const auto  stopped = [&] { return backend.serverShutDown(); };
 #endif
     AudioConfig requested;
@@ -409,7 +418,7 @@ int listAudio() {
 // --- --list-midi / --monitor --------------------------------------------------------------
 
 int listMidi() {
-    const auto input = PlatformMidiInput::create();
+    const auto input = PlatformMidiInput::create(kAppName);
     if (!input) return 1;
     const std::vector<MidiSourceInfo> sources = input->enumerate();
     if (sources.empty()) {
@@ -423,7 +432,7 @@ int listMidi() {
 }
 
 int runMonitor(const Options& options) {
-    const auto input = PlatformMidiInput::create();
+    const auto input = PlatformMidiInput::create(kAppName);
     if (!input) return 1;
     input->setProtocolPreference(options.preference);
 
@@ -650,9 +659,10 @@ int runPlay(const Options& options) {
                               : haveRemembered       ? (remembered.uid.empty() ? remembered.name : remembered.uid)
                                                      : std::string{},
                               haveRemembered);
+    backend.setAggregateIdentity(kAppName, kAggregateUidPrefix);
 #else
     if (!options.device.empty()) std::puts("--device is macOS's: on Linux, PipeWire routes the outputs.");
-    JackBackend backend("StageHand", options.autoConnect);
+    JackBackend backend(kAppName, options.autoConnect);
 #endif
     AudioConfig requested;
     requested.outputChannels    = options.channels;
@@ -678,7 +688,7 @@ int runPlay(const Options& options) {
     const auto engine = std::make_unique<Engine>();
     backend.setProcessor(engine.get());
 
-    std::unique_ptr<PlatformMidiInput> input = PlatformMidiInput::create();
+    std::unique_ptr<PlatformMidiInput> input = PlatformMidiInput::create(kAppName);
     if (!input) return 1;
     input->setProtocolPreference(options.preference);
     input->setSink(engine.get());
