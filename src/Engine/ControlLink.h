@@ -3,11 +3,15 @@
 #include <cstdint>
 #include <vector>
 
-#include "Core/MidiMessage.h"
+#include "uw/ump/MidiMessage.h"
+#include "Core/UwNames.h"
+
+namespace uw {
+class HostedPlugin;
+}
 
 namespace stagehand {
 
-class HostedPlugin;
 struct SlotRuntime;
 
 // How a control's travel spreads over a target's range (docs/controls.md, 3).

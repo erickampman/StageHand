@@ -4,7 +4,8 @@
 #include <cmath>
 
 #include "Core/Sequence.h"
-#include "Core/Ump.h"
+#include "uw/ump/Ump.h"
+#include "Core/UwNames.h"
 
 namespace stagehand {
 

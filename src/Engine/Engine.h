@@ -5,12 +5,13 @@
 #include <cstdint>
 #include <memory>
 
-#include "Audio/AudioBackend.h"
-#include "Core/SpscQueue.h"
-#include "Core/Ump.h"
+#include "uw/audio/AudioBackend.h"
+#include "uw/base/SpscQueue.h"
+#include "uw/ump/Ump.h"
 #include "Engine/EngineGraph.h"
 #include "Engine/SequenceSet.h"
-#include "Midi/MidiInput.h"
+#include "uw/midi/MidiInput.h"
+#include "Core/UwNames.h"
 
 namespace stagehand {
 

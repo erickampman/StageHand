@@ -7,7 +7,8 @@
 #include <map>
 #include <memory>
 
-#include "Plugin/HostServices.h"
+#include "uw/plugin/HostServices.h"
+#include "Core/UwNames.h"
 
 namespace stagehand {
 

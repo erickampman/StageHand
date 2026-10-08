@@ -7,7 +7,8 @@
 #include <cstring>
 #include <filesystem>
 
-#include "Core/Ump.h"
+#include "uw/ump/Ump.h"
+#include "Core/UwNames.h"
 #include "Session/RackFile.h"
 #include "Session/RigFile.h"
 #include "Session/SetlistFile.h"

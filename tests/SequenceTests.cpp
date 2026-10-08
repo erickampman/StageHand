@@ -11,7 +11,8 @@
 #include <vector>
 
 #include "Check.h"
-#include "Core/Ump.h"
+#include "uw/ump/Ump.h"
+#include "Core/UwNames.h"
 #include "Engine/Engine.h"
 #include "FakePlugin.h"
 

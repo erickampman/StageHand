@@ -5,7 +5,8 @@
 #include <cstdint>
 
 #include "App/RackController.h"
-#include "Core/Ump.h"
+#include "uw/ump/Ump.h"
+#include "Core/UwNames.h"
 
 namespace stagehand {
 

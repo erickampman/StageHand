@@ -13,7 +13,8 @@
 #include <vector>
 
 #include "Core/MidiSourceRef.h"
-#include "Plugin/PluginDescriptor.h"
+#include "uw/plugin/PluginDescriptor.h"
+#include "Core/UwNames.h"
 
 namespace stagehand::bundle {
 

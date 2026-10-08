@@ -3,7 +3,8 @@
 #include <algorithm>
 #include <cmath>
 
-#include "Core/TimeInfo.h"
+#include "uw/base/TimeInfo.h"
+#include "Core/UwNames.h"
 
 namespace stagehand {
 

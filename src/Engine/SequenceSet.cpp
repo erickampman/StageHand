@@ -3,7 +3,8 @@
 #include <algorithm>
 #include <cmath>
 
-#include "Core/Ump.h"
+#include "uw/ump/Ump.h"
+#include "Core/UwNames.h"
 
 namespace stagehand {
 

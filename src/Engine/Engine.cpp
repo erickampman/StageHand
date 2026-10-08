@@ -6,9 +6,10 @@
 #include <utility>
 #include <vector>
 
-#include "Core/Clock.h"
-#include "Core/Denormals.h"
-#include "Core/Ump.h"
+#include "uw/base/Clock.h"
+#include "uw/base/Denormals.h"
+#include "uw/ump/Ump.h"
+#include "Core/UwNames.h"
 
 namespace stagehand {
 

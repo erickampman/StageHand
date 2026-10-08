@@ -3,7 +3,8 @@
 #include <cstdarg>
 #include <cstdio>
 
-#include "Core/Ump.h"
+#include "uw/ump/Ump.h"
+#include "Core/UwNames.h"
 
 namespace stagehand {
 

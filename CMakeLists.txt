@@ -40,21 +40,22 @@ else()
 endif()
 
 # --- System dependencies (docs/architecture.md, dependency summary) -----------
-# JACK API headers from libjack-jackd2-dev; at runtime the calls are served by
-# PipeWire (pipewire-jack) — run under `pw-jack`. ALSA's sequencer (UMP mode,
-# alsa-lib 1.2.10+) provides MIDI input. The Linux app's only.
+# X11 for the plugin editor windows, the Linux app's only. JACK (served by
+# PipeWire under `pw-jack`) and ALSA's sequencer come in through uw-core.
 find_package(Threads REQUIRED)
 if(stagehand_linux_app)
     find_package(PkgConfig REQUIRED)
-    pkg_check_modules(JACK REQUIRED IMPORTED_TARGET jack)
-    pkg_check_modules(ALSA REQUIRED IMPORTED_TARGET alsa>=1.2.10)
     pkg_check_modules(X11 REQUIRED IMPORTED_TARGET x11)   # plugin editor windows (M4)
     pkg_check_modules(XRANDR IMPORTED_TARGET xrandr)       # optional: the monitor a window opens on
 endif()
 
-# --- CLAP SDK: header-only, vendored submodule pinned to PMU's tag (1.2.10) ----
-add_library(clap-sdk INTERFACE)
-target_include_directories(clap-sdk SYSTEM INTERFACE external/clap/include)
+# --- uw-core (git submodule): the code StageHand shares with Umpire ------------
+# UMP, the clock and queues, the plugin seam and CLAP host (with the CLAP SDK,
+# 1.2.10), the audio and MIDI backends; namespace uw (src/Core/UwNames.h). The
+# backends (JACK and ALSA on Linux) only when building the app.
+set(UW_CORE_BACKENDS ${STAGEHAND_APP} CACHE BOOL "" FORCE)
+set(UW_CORE_TESTS OFF CACHE BOOL "" FORCE)
+add_subdirectory(external/uw-core)
 
 # --- nlohmann/json 3.11.3: single header, vendored (same copy as PMU) ----------
 add_library(nlohmann-json INTERFACE)
@@ -104,12 +105,10 @@ endif()
 add_library(stagehand-warnings INTERFACE)
 target_compile_options(stagehand-warnings INTERFACE -Wall -Wextra -Wpedantic)
 
-# --- stagehand-core: value models, UMP helpers, seam interfaces ----------------
-add_library(stagehand-core STATIC
-    src/Core/Clock.cpp
-    src/Core/Ump.cpp)
-target_include_directories(stagehand-core PUBLIC src)
-target_link_libraries(stagehand-core PRIVATE stagehand-warnings)
+# --- stagehand-core: value models (headers), over uw-core's UMP, base and seam --
+add_library(stagehand-core INTERFACE)
+target_include_directories(stagehand-core INTERFACE src)
+target_link_libraries(stagehand-core INTERFACE uw::base uw::plugin)
 
 # --- stagehand-engine: the graph runner (no platform or format dependencies) ---
 add_library(stagehand-engine STATIC
@@ -174,16 +173,9 @@ endif()
 # --- The Linux seams and the app (STAGEHAND_APP on Linux) ------------------
 if(stagehand_linux_app)
 
-    # --- stagehand-lib: seam implementations (everything except main) --------------
-    add_library(stagehand-lib STATIC
-        src/Audio/JackBackend.cpp
-        src/Midi/AlsaSeqInput.cpp
-        src/Plugin/Clap/ClapModule.cpp
-        src/Plugin/Clap/ClapPlugin.cpp
-        src/Plugin/Clap/ClapPluginFactory.cpp)
-    target_link_libraries(stagehand-lib
-        PUBLIC  stagehand-engine PkgConfig::JACK PkgConfig::ALSA Threads::Threads ${CMAKE_DL_LIBS}
-        PRIVATE clap-sdk stagehand-warnings)
+    # --- stagehand-lib: the seam implementations (uw-core's JACK, ALSA and CLAP)
+    add_library(stagehand-lib INTERFACE)
+    target_link_libraries(stagehand-lib INTERFACE stagehand-engine uw::audio uw::midi uw::clap-host)
 
     # --- The app --------------------------------------------------------------------
     add_executable(stagehand
@@ -199,16 +191,9 @@ endif()
 # --- The macOS seams and the app (STAGEHAND_APP on macOS) -----------------------------
 if(STAGEHAND_APP AND APPLE)
 
-    add_library(stagehand-lib STATIC
-        src/Audio/CoreAudioBackend.cpp
-        src/Midi/CoreMidiInput.cpp
-        src/Plugin/Clap/ClapModule.cpp
-        src/Plugin/Clap/ClapPlugin.cpp
-        src/Plugin/Clap/ClapPluginFactory.cpp)
-    target_link_libraries(stagehand-lib
-        PUBLIC  stagehand-engine "-framework CoreAudio" "-framework CoreMIDI" "-framework CoreFoundation"
-                Threads::Threads
-        PRIVATE clap-sdk stagehand-warnings)
+    # The seam implementations: uw-core's CoreAudio, CoreMIDI and CLAP.
+    add_library(stagehand-lib INTERFACE)
+    target_link_libraries(stagehand-lib INTERFACE stagehand-engine uw::audio uw::midi uw::clap-host)
 
     add_executable(stagehand
         src/App/main.cpp
@@ -243,6 +228,7 @@ if(STAGEHAND_APP AND APPLE)
 endif()
 
 # --- Tests (tests/Check.h; one executable per suite, no third-party framework) ---
+# The UMP, queue, clock and denormal tests moved to uw-core with their code.
 enable_testing()
 function(stagehand_add_test NAME SOURCE LIBRARY)
     add_executable(${NAME} ${SOURCE})
@@ -250,10 +236,6 @@ function(stagehand_add_test NAME SOURCE LIBRARY)
     target_link_libraries(${NAME} PRIVATE ${LIBRARY} stagehand-warnings Threads::Threads)
     add_test(NAME ${NAME} COMMAND ${NAME})
 endfunction()
-stagehand_add_test(test-ump    tests/UmpTests.cpp       stagehand-core)
-stagehand_add_test(test-spsc   tests/SpscQueueTests.cpp stagehand-core)
-stagehand_add_test(test-clock  tests/ClockTests.cpp     stagehand-core)
-stagehand_add_test(test-denormals tests/DenormalTests.cpp stagehand-core)
 stagehand_add_test(test-engine tests/EngineTests.cpp    stagehand-engine)
 stagehand_add_test(test-sequence tests/SequenceTests.cpp stagehand-engine)
 stagehand_add_test(test-looper  tests/LooperTests.cpp    stagehand-engine)

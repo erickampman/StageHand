@@ -251,7 +251,7 @@ void SequenceEditorWidget::drawStrip(const Sequence& seq) {
     // Protocol: only while there are no notes (changing it would be a conversion).
     settingRow(90.0f, "Protocol");
     const bool empty = seq.notes.empty();
-    for (const auto [p, text, x] : {std::tuple{MidiProtocol::Midi1, "1.0", 80.0f}, {MidiProtocol::Midi2, "2.0", 128.0f}}) {
+    for (const auto& [p, text, x] : {std::tuple{MidiProtocol::Midi1, "1.0", 80.0f}, {MidiProtocol::Midi2, "2.0", 128.0f}}) {
         button(x, 90.0f, 44.0f, 22.0f, text, seq.protocol == p, empty || seq.protocol == p, kAccent);
         if (empty && seq.protocol != p)
             region(x, 90.0f, 44.0f, 22.0f, [this, id, p = p](const Press&) {
@@ -283,7 +283,7 @@ void SequenceEditorWidget::drawStrip(const Sequence& seq) {
         m.y     = 204.0f;
         m.w     = 170.0f;
         m.title = "Units per beat";
-        for (const auto [n, d] : {std::pair{1, 4}, {1, 3}, {1, 2}, {1, 1}, {2, 1}, {3, 1}, {4, 1}, {8, 1}, {16, 1}}) {
+        for (const auto& [n, d] : {std::pair{1, 4}, {1, 3}, {1, 2}, {1, 1}, {2, 1}, {3, 1}, {4, 1}, {8, 1}, {16, 1}}) {
             const auto r = SequenceRate{static_cast<std::uint16_t>(n), static_cast<std::uint16_t>(d)};
             m.items.push_back(MenuItem{rateText(r), [this, id, r] { controller.setSequenceRate(id, r); },
                                        current.numerator == r.numerator && current.denominator == r.denominator});
@@ -308,7 +308,7 @@ void SequenceEditorWidget::drawStrip(const Sequence& seq) {
         m.y     = 264.0f;
         m.w     = 170.0f;
         m.title = "Play and Stop take effect at";
-        for (const auto [q, text] : {std::pair{LaunchQuantize::Bar, "The next bar"},
+        for (const auto& [q, text] : {std::pair{LaunchQuantize::Bar, "The next bar"},
                                      {LaunchQuantize::Beat, "The next beat"},
                                      {LaunchQuantize::Immediate, "Immediately"}})
             m.items.push_back(MenuItem{text, [this, id, q = q] { controller.setSequenceLaunch(id, q); }, current == q});

@@ -4,7 +4,8 @@
 #include <string>
 #include <vector>
 
-#include "Core/MidiMessage.h"
+#include "uw/ump/MidiMessage.h"
+#include "Core/UwNames.h"
 #include "Core/MidiSourceRef.h"
 
 namespace stagehand {

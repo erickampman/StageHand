@@ -12,7 +12,8 @@
 #include "Core/MidiFilter.h"
 #include "Core/MidiSourceRef.h"
 #include "Core/Sequence.h"
-#include "Plugin/PluginDescriptor.h"
+#include "uw/plugin/PluginDescriptor.h"
+#include "Core/UwNames.h"
 #include "Session/ControlLinks.h"
 
 namespace stagehand {

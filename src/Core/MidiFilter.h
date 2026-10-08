@@ -2,7 +2,8 @@
 
 #include <cstdint>
 
-#include "Core/MidiMessage.h"
+#include "uw/ump/MidiMessage.h"
+#include "Core/UwNames.h"
 
 namespace stagehand {
 
