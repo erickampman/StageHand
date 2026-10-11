@@ -454,8 +454,10 @@ take the non-RT `params.flush` path instead.
 - SysEx delivery: reassembly of multi-packet SysEx into a contiguous buffer for
   plugins. Leaning: MIDI thread reassembles into a preallocated pool, the event
   carries a reference (architecture.md §1).
-- Translation for native-CLAP-only and MPE-only plugins (MIDI 2.0 per-note data
-  → CLAP note expressions / MPE channel rotation). Deferred.
+- Translation for native-CLAP-only plugins (MIDI 2.0 per-note data → CLAP note
+  expressions). Deferred. MPE channel rotation for MPE-only plugins is not
+  planned: StageHand passes MPE through but never generates it (architecture.md
+  §1, "MPE").
 - Rack switch while notes are held: sustain on the old Rack (MainStage-style) or
   all-notes-off. The held-note table supports either; policy TBD.
 - ~~Host gain smoothing~~ Resolved in docs/rack-view.md, sections 2 and 3:

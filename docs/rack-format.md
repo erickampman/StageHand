@@ -136,7 +136,7 @@ get a **layer**.
 | `sends` | both off | Levels sent to the rig's effect buses A and B, after the fader (docs/rig.md): `[dbA, dbB]` in dB, `null` for off. Added 2026-10-02; additive, so the format version is unchanged |
 | `output` | `1` | First output channel (1-based) for the plugin's first channel. A mono plugin feeds two |
 | `midi.source` | `"all"` | See "Sources" |
-| `midi.channels` | `"all"` | `"all"` or a list of channels 1–16 |
+| `midi.channels` | `"all"` | `"all"` or a list of channels 1–16. An MPE controller sends each note on its own channel, so its row needs `"all"` (or every channel of its zone) |
 | `midi.groups` | `"all"` | `"all"` or a list of UMP groups 1–16 |
 | `midi.notes` | `[0, 127]` | Inclusive range of *played* keys (before transpose) |
 | `midi.velocity` | `[0, 127]` | Inclusive note-on velocity range, on the familiar 0–127 scale (compared at MIDI 2.0 resolution) |

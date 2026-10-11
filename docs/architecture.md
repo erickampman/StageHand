@@ -119,13 +119,27 @@ handled: a device plugged in after startup (needs ALSA's announce port).
 All MIDI I/O sits behind the `MidiInput` seam, so libremidi/CoreMIDI can slot in
 for Mac without touching routing or translation (both live in the engine).
 
+**MPE: pass-through only (decided 2026-10-11).** StageHand neither generates nor
+translates MPE. The policy across these projects is to support no MPE feature
+that MIDI 2.0 duplicates: synths accept MPE as a compatibility input, but the
+host (StageHand), the DAW (Umpire) and the controller (KeyboardEDO) don't
+originate it. A host needs no MPE code for MPE to work: MPE is ordinary MIDI 1.0
+spread over several channels, and the delivery policy (domain-model.md) already
+hands MIDI 1.0 to a plugin byte-for-byte, so an MPE controller reaches an
+MPE-capable plugin intact. Two things keep it intact: a slot's channel filter
+must include every channel the controller's zone uses (normally `"all"`), and
+nothing may move a note to another channel. MIDI 2.0 per-note data sent to a
+MIDI-1.0-only plugin is downconverted to channel messages, never rotated across
+channels.
+
 **Open questions**
 - SysEx transport to plugins: a message spans many UMP packets and must be
   reassembled into a contiguous buffer (CLAP `clap_event_midi_sysex`). Leaning:
   reassemble on the MIDI thread into a preallocated pool; the event carries a
   reference. Not needed for the first PMU test.
-- MIDI 2.0 → MPE downconversion (per-note data → channel rotation) for MPE-only
-  plugins. Deferred.
+- MIDI 2.0 per-note data → CLAP note expressions, for plugins whose note port is
+  native CLAP only. Deferred. (Not MPE: MIDI 2.0 → MPE channel rotation is not
+  planned; see "MPE" above.)
 - Per-slot protocol override ("force MIDI 1.0 for this plugin"). Deferred.
 
 ---
