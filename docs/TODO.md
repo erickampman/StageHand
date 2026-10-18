@@ -19,5 +19,15 @@
 - **The generic editor** (planned 2026-10-06, docs/generic-editor.md): a
   window of sliders and menus for a plugin with no editor of its own, never
   in place of one that has an editor.
+- **The house look and feel** (asked for 2026-10-18): everything should look
+  like the plugins and KeyboardEDO where it can. That's PlainOldSynth's glowing knobs,
+  group boxes, captioned dropdowns and value boxes, a linear slider in the
+  same style, and DejaVu Sans, in StageHand's own colours (KeyboardEDO's
+  `docs/decisions.md`, "Look and feel"). StageHand draws with DGL and NanoVG,
+  as the plugins do, so PlainOldSynth's `src/UI/Knob.hpp`, `GroupBox.hpp` and
+  `Dropdown.hpp` can be used nearly as they are; the slider needs porting to
+  NanoVG from KeyboardEDO's `src/app/Widgets.cpp` (ImGui). The rack view
+  first; the generic editor should be built in it from the start. Plugin
+  editors keep their own look.
 - **Later:** backing tracks (an audio file per song, in time with the
   transport); song notes in the Perform view; undo for rack edits.
