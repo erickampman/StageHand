@@ -474,7 +474,9 @@ void RackWidget::drawEdgeFlash() {
 
 // --- the setlist row (docs/setlists.md, "The setlist row") ----------------------------------
 
-// ◀ 3/12 Song name ▾ ▶, then where Next goes; the setlist's name at the right.
+// The brand, ◀ 3/12 Song name ▾ ▶, then where Next goes; the setlist's name,
+// its MIDI control and Help at the right. The top row has the brand and Help:
+// this one while a setlist is open, else the toolbar (docs/look.md).
 void RackWidget::drawSetlistRow() {
     const SetlistModel& set = controller.view().setlist;
     box(0, 0, width(), kSetlistH, kPanel);
@@ -498,8 +500,11 @@ void RackWidget::drawSetlistRow() {
         box(left ? cx - 8.0f : cx + 6.0f, cy - 7.0f, 2.5f, 14.0f, c);
     };
 
+    // The brand (docs/look.md), then a faint divider.
+    float x = kPad + brand(kPad, kSetlistH / 2, 26.0f) + 12.0f;
+    box(x - 7.0f, 8.0f, 1.0f, kSetlistH - 16.0f, kLine);
+
     // Previous.
-    float x = kPad;
     arrow(x, true, set.previous >= 0);
     if (set.previous >= 0)
         region(x, y, arrowW, h, [this](const Press&) { switchSong([this] { controller.previousSong(); }); });
@@ -547,9 +552,13 @@ void RackWidget::drawSetlistRow() {
         next = "next: " + to.name;
     }
     const std::string name = set.name;
-    // The setlist's MIDI control (section 4) at the right, before its name:
+    // Help, a "?" at the right end: the help page in the browser (openHelp).
+    const float helpX = width() - kPad - 28.0f;
+    button(helpX, y, 28.0f, h, "?", false, true, kAccent);
+    region(helpX, y, 28.0f, h, [this](const Press&) { openHelp(); });
+    // The setlist's MIDI control (section 4) left of Help, after its name:
     // lit when it has triggers, blinking amber while learning.
-    const float midiX     = width() - kPad - kMidiW;
+    const float midiX     = helpX - 8.0f - kMidiW;
     const bool  blinkOn   = std::fmod(ui::nowSeconds(), 0.5) < 0.25;
     midiButton(midiX, y, kMidiW, h, set.learning ? blinkOn : !set.triggers.empty(), set.learning ? kAmber : kAccent);
     region(midiX, y, kMidiW, h, [this, midiX](const Press&) { openSetlistMidiMenu(midiX, kSetlistH); });
@@ -727,9 +736,11 @@ void RackWidget::drawToolbar() {
     box(0, 0, width(), kToolbarH, kBarBg);
     region(0, 0, width(), kToolbarH, nullptr);
 
-    // The brand (docs/look.md), then a faint divider and the rack's name.
-    const float nameX = kPad + brand(kPad, kToolbarH / 2, 26.0f) + 12.0f;
-    box(nameX - 7.0f, 10.0f, 1.0f, kToolbarH - 20.0f, kLine);
+    // The brand (docs/look.md), then a faint divider and the rack's name. With
+    // a setlist open, the brand and Help are in its row, the top one.
+    const bool  top   = !view.setlist.open;
+    const float nameX = top ? kPad + brand(kPad, kToolbarH / 2, 26.0f) + 12.0f : kPad;
+    if (top) box(nameX - 7.0f, 10.0f, 1.0f, kToolbarH - 20.0f, kLine);
     const std::string name = view.rackName.empty() ? "Untitled rack" : view.rackName;
     save();
     scissor(nameX, 0, kTransportX - kPad - nameX, kToolbarH);
@@ -745,9 +756,11 @@ void RackWidget::drawToolbar() {
     drawTransport(kTransportX);
 
     // Help, a "?" at the right end: the help page in the browser (openHelp).
-    const float helpX = width() - kPad - 28.0f;
-    button(helpX, 8.0f, 28.0f, 28.0f, "?", false, true, kAccent);
-    region(helpX, 8.0f, 28.0f, 28.0f, [this](const Press&) { openHelp(); });
+    const float helpX = top ? width() - kPad - 28.0f : width() - kPad + 8.0f;
+    if (top) {
+        button(helpX, 8.0f, 28.0f, 28.0f, "?", false, true, kAccent);
+        region(helpX, 8.0f, 28.0f, 28.0f, [this](const Press&) { openHelp(); });
+    }
 
     // Sized to their labels, with 8 px gaps, so the transport keeps its room
     // at the default width (1100).

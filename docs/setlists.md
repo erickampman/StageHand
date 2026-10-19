@@ -164,9 +164,10 @@ rows.
 
 - **Only when a setlist is open.** A rack opened on its own looks as it does
   today.
-- **Contents:** |◀ 3/12 *Song name* ▾ ▶|, then "next: So what" with a dot
-  showing whether it's prepared (section 2). On the right: the setlist's
-  name, and its MIDI button (learn, section 4). The arrows are large, for the
+- **Contents:** the brand (docs/look.md), |◀ 3/12 *Song name* ▾ ▶|, then
+  "next: So what" with a dot showing whether it's prepared (section 2). On
+  the right: the setlist's name, its MIDI button (learn, section 4), and Help
+  (the brand and Help move here from the toolbar, 2026-10-19). The arrows are large, for the
   stage, and drawn as skip shapes (|◀ ▶|) so they can't be taken for the
   transport's Start just below. An arrow with nowhere to go is greyed out.
 - **No song playing:** after the playing song is removed from the set, the

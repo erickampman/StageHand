@@ -306,7 +306,8 @@ plugin editor windows) and Ctrl-Q.
   setlist. See docs/setlists.md.
 
 - **Help (2026-10-19):** a "?" button at the toolbar's right end, after
-  File, and the File menu's last item open the help page, `help/help.html`,
+  File (with a setlist open, at the setlist row's right end, after its MIDI
+  button: docs/look.md), and the File menu's last item open the help page, `help/help.html`,
   in the default browser (`open` on macOS, `xdg-open` on Linux), as
   KeyboardEDO's Help does. The build copies it, with the logo it shows as
   `Unlikelyware.png`, to `build/help` beside the executable (Linux) and into

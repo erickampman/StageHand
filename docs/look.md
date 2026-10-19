@@ -12,6 +12,10 @@ Begun 2026-10-19; settled with the author.
   wordmark font) with its spacing tightened. A click on the logo opens
   unlikelyware.com. Then a faint divider and the rack's name, with its
   "unsaved" note under it as before.
+- **The brand and Help are on the top row** (2026-10-19): with a setlist
+  open, that's the setlist row, the brand before the song controls and Help
+  after the setlist's MIDI button; the toolbar then starts with the rack's
+  name and ends with File.
 - **The transport moved right, to the input column's edge** (330 px, from
   280), to make room. At the default width (1100) it ends about 10 px short
   of Perform; with 9 or more beats in the bar, or a narrower window, they

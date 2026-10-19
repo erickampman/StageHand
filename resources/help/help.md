@@ -66,8 +66,9 @@ Started with no arguments, StageHand reopens the last setlist at the song it was
 - **Beat lights**: one per pulse of the bar; the downbeat in amber.
 - **⋮**: what the lights count, the click, the count-in and the edge flash ([Transport and Click](#transport)).
 - **Perform**, **+ Add plugin** and **File**.
+- **?**: this page.
 
-**Below the toolbar:** the rack's rows, then the rig's two buses, then the **Sources** dock (inputs, sequences and loopers), and the status bar at the bottom. With a setlist open, the setlist's row sits above the toolbar.
+**Below the toolbar:** the rack's rows, then the rig's two buses, then the **Sources** dock (inputs, sequences and loopers), and the status bar at the bottom. With a setlist open, the setlist's row sits above the toolbar, and the logo and **?** move up into it.
 
 **The status bar** shows the sample rate and buffer size, the DSP load, xruns, the MIDI protocol, where the rack saves (or the latest notice), and the master level.
 
@@ -239,7 +240,7 @@ A note played a little ahead of the downbeat is recorded on it. Stopping the tra
 ## Setlists
 A setlist puts racks in order, as songs, and moves between them without a gap.
 - **Making one:** File → **New setlist with this rack...** (the rack becomes song 1) or **New setlist...** (empty).
-- **The setlist row** above the toolbar: **|◀** and **▶|** for the previous and next song, the song's number and name (a menu of every song), "next: …" with a dot that's green once it's ready, the setlist's name, and its MIDI button.
+- **The setlist row** above the toolbar: the Unlikelyware logo, **|◀** and **▶|** for the previous and next song, the song's number and name (a menu of every song), "next: …" with a dot that's green once it's ready, the setlist's name, its MIDI button, and **?** for this page.
 - **In a setlist, File's New and Open add to the set:** **New rack in this set...** (Cmd-N) starts a copy of the current song's rack, ready to change; **Add a rack to this set...** (Cmd-O) adds one you have.
 - **The song menu** also has, for the current song: Add this rack again (a reprise), Move up, Move down, Rename in setlist..., and Remove from setlist. Removing a song never deletes its rack.
 - **Setlist edits are saved at once.**
