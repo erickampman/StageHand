@@ -5,7 +5,9 @@ What StageHand is built with besides code, and where each came from.
 - `StageHand.icon`: the app icon, an Icon Composer document (three bars and a
   wave in purple, green and orange). The Mac build compiles it with Xcode's
   `actool` (CMakeLists.txt; docs/macos.md, "Milestone 6, the icon"). Its
-  source is the author's artwork folder.
+  source is the author's artwork folder (the bars apart, from 2026-10-19).
+  `tools/render-mac-icon.sh` renders a `.icon` to 1024 px PNGs (full, and
+  in Apple's 824 px grid) for making an icon set by hand.
 - `brand/Unlikelyware-logo-144.png`: the Unlikelyware logo at the left of the
   toolbar, as KeyboardEDO has it (the same file: IFSynth's and
   PlainOldSynth's `Resources/Unlikelyware-Final-Color.png`, scaled to 144 px

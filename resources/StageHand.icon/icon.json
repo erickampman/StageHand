@@ -7,8 +7,8 @@
       "layers" : [
         {
           "glass" : false,
-          "image-name" : "Image.png",
-          "name" : "Image"
+          "image-name" : "StageHand.1024.bars.png",
+          "name" : "StageHand.1024.bars"
         }
       ],
       "shadow" : {
