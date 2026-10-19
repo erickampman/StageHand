@@ -561,7 +561,8 @@ console only and says so. The click isn't routed on macOS yet
   microphone description (decision 2). Exported types: `.rack` as
   `com.unlikelyware.stagehand.rack`, conforming to `com.apple.package`
   (decision 6), and `.setlist` as `com.unlikelyware.stagehand.setlist`
-  (JSON); both document types StageHand's (`Owner`). No icon yet.
+  (JSON); both document types StageHand's (`Owner`). The icon came later
+  (below).
 - **`build/stagehand`** stays the command line's: a script that `exec`s the
   bundle's binary by its absolute path. Not a symbolic link: run through
   one, the binary isn't the bundle's (no bundle id, and the menu bar says
@@ -589,9 +590,24 @@ console only and says so. The click isn't routed on macOS yet
   `HOME`, a launch through `open` uses its own Application Support folder;
   `MacTest.rack` reads as `com.unlikelyware.stagehand.rack`, a package, and
   `Test.setlist` as the setlist type.
-- **Not yet:** an icon; opening a rack or setlist double-clicked in Finder
+- **Not yet:** opening a rack or setlist double-clicked in Finder
   (the app starts, but on its last setlist: the open-documents event isn't
   handled); choosing a rack by hand now that it's a package.
+
+**Milestone 6, the icon (2026-10-19).** Three bars and a wave, in purple,
+green and orange tuned to one lightness, so it stands apart from
+KeyboardEDO's Ember (pink, orange, yellow) and KeyEDO's blues; the bars
+read as the rack's rows. Its source is `resources/StageHand.icon`, an Icon
+Composer document, compiled at build time by Xcode's `actool` (as
+KeyboardEDO's is) into `Assets.car`, which macOS 26 draws with its glass and
+its dark and tinted versions, and `StageHand.icns` for macOS 15
+(`CFBundleIconName` and `CFBundleIconFile`). Not a pre-rendered
+`.appiconset`: macOS 26 would set that on a plate, and it couldn't change
+with the appearance. Without Xcode (only the Command Line Tools) the build
+warns and the bundle has no icon. The bundle is now ad-hoc signed whole
+after the build, since the linker signs only the executable and not the
+Resources added after it. Checked: `codesign -vv` is valid, and the icon
+Finder gets for `StageHand.app` is the compiled one.
 
 ## Review (2026-10-03)
 

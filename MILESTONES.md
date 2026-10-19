@@ -19,7 +19,8 @@
 - [x] Rack window on macOS: DGL on both platforms, Cmd shortcuts, DPF file dialogs
 - [x] App bundle: `StageHand.app`, `Info.plist`, `.rack` as a package type
 - [ ] Signing, notarization, Developer ID entitlement for plugin loading
-- [ ] Icon; open-documents event (rack/setlist double-clicked in Finder)
+- [x] Icon (`resources/StageHand.icon`, compiled by actool)
+- [ ] Open-documents event (rack/setlist double-clicked in Finder)
 - [ ] DPF portal file dialog on Linux (replaces zenity/kdialog)
 
 ## M3: Performance features

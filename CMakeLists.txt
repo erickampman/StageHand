@@ -207,7 +207,7 @@ if(STAGEHAND_APP AND APPLE)
     target_link_libraries(stagehand PRIVATE stagehand-lib stagehand-ui "-framework AppKit" stagehand-warnings)
 
     # StageHand.app (docs/macos.md, "The app bundle"): the Info.plist declares
-    # HiDPI and the .rack (a package) and .setlist document types. No icon yet.
+    # HiDPI and the .rack (a package) and .setlist document types.
     set_target_properties(stagehand PROPERTIES
         OUTPUT_NAME                        StageHand
         MACOSX_BUNDLE                      TRUE
@@ -216,6 +216,39 @@ if(STAGEHAND_APP AND APPLE)
         MACOSX_BUNDLE_GUI_IDENTIFIER       com.unlikelyware.stagehand
         MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
         MACOSX_BUNDLE_BUNDLE_VERSION       "${PROJECT_VERSION}")
+    # The icon, compiled from resources/StageHand.icon (an Icon Composer document)
+    # by Xcode's actool: Assets.car for macOS 26 (its dark and tinted versions too)
+    # and StageHand.icns for macOS 15. Without Xcode (only the Command Line Tools)
+    # the bundle has no icon.
+    execute_process(COMMAND xcrun --find actool OUTPUT_VARIABLE STAGEHAND_ACTOOL
+                    OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET RESULT_VARIABLE actool_missing)
+    if(actool_missing)
+        message(WARNING "Xcode's actool not found: StageHand.app will have no icon "
+                        "(install Xcode, not just the Command Line Tools)")
+    else()
+        set(icon "${CMAKE_SOURCE_DIR}/resources/StageHand.icon")
+        set(icon_out "${CMAKE_BINARY_DIR}/icon")
+        file(GLOB_RECURSE icon_inputs CONFIGURE_DEPENDS "${icon}/*")
+        add_custom_command(
+            OUTPUT "${icon_out}/Assets.car" "${icon_out}/StageHand.icns"
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "${icon_out}"
+            COMMAND "${STAGEHAND_ACTOOL}" "${icon}" --compile "${icon_out}" --app-icon StageHand
+                    --platform macosx --target-device mac
+                    --minimum-deployment-target "${CMAKE_OSX_DEPLOYMENT_TARGET}"
+                    --output-partial-info-plist "${icon_out}/partial.plist"
+                    --errors --warnings --output-format human-readable-text
+            DEPENDS ${icon_inputs}
+            COMMENT "Compiling the app icon"
+            VERBATIM)
+        set(icon_files "${icon_out}/Assets.car" "${icon_out}/StageHand.icns")
+        target_sources(stagehand PRIVATE ${icon_files})
+        set_source_files_properties(${icon_files} PROPERTIES GENERATED TRUE MACOSX_PACKAGE_LOCATION Resources)
+    endif()
+    # Ad-hoc signed once whole: the linker signs only the executable, not the
+    # Resources added after it (milestone 7 signs it properly).
+    add_custom_command(TARGET stagehand POST_BUILD
+        COMMAND codesign --force --sign - "$<TARGET_BUNDLE_DIR:stagehand>"
+        VERBATIM)
     # build/stagehand stays the command line's: a script running the bundle's
     # binary by its real path. Not a link: run through one, the binary isn't
     # seen as the bundle's (no bundle id, name or Info.plist).
