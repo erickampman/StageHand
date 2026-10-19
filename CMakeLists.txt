@@ -167,7 +167,13 @@ if(STAGEHAND_APP)
         target_link_libraries(stagehand-ui PRIVATE "-framework CoreGraphics")
         target_link_libraries(dgl-opengl PRIVATE "-framework UniformTypeIdentifiers")   # the browser's filter
     else()
-        target_sources(stagehand-ui PRIVATE src/Ui/Monitor.cpp src/Ui/StartupId.cpp)
+        # The windows' icon (_NET_WM_ICON), embedded: tools/render-linux-icons.sh made them.
+        embed_file("${CMAKE_SOURCE_DIR}/resources/linux/icons/stagehand-128.png"
+                   "${CMAKE_BINARY_DIR}/WindowIcon128.cpp" kWindowIcon128)
+        embed_file("${CMAKE_SOURCE_DIR}/resources/linux/icons/stagehand-48.png"
+                   "${CMAKE_BINARY_DIR}/WindowIcon48.cpp" kWindowIcon48)
+        target_sources(stagehand-ui PRIVATE src/Ui/Monitor.cpp src/Ui/StartupId.cpp src/Ui/WindowIcon.cpp
+                       "${CMAKE_BINARY_DIR}/WindowIcon128.cpp" "${CMAKE_BINARY_DIR}/WindowIcon48.cpp")
         target_link_libraries(stagehand-ui PRIVATE PkgConfig::X11)
         if(XRANDR_FOUND)
             target_compile_definitions(stagehand-ui PRIVATE STAGEHAND_HAVE_XRANDR)

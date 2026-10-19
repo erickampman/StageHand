@@ -22,12 +22,35 @@
 #endif
 #include "Ui/RackWidget.h"
 #include "Ui/SequenceEditorWidget.h"
+#ifndef __APPLE__
+#include "Ui/WindowIcon.h"
+#endif
 
 namespace stagehand {
 
 namespace dgl = DGL_NAMESPACE;
 
 namespace {
+
+// DGL's Application, its windows' X11 class StageHand (WM_CLASS; DGL's own is
+// its namespace), as the .desktop file's StartupWMClass has it
+// (tools/install-desktop-entry.sh). Set before any window is created: DGL
+// realizes a window in its constructor.
+class StageHandApplication final : public dgl::Application {
+public:
+    StageHandApplication() : Application(true) {
+#ifndef __APPLE__
+        setClassName("StageHand");
+#endif
+    }
+};
+
+// Linux: the window's icon in the dock and the window switcher.
+void setIcon([[maybe_unused]] const dgl::Window& window) {
+#ifndef __APPLE__
+    ui::setWindowIcon(window.getNativeWindowHandle());
+#endif
+}
 
 // A window that remembers being closed by the user. DGL's Application counts
 // open windows, so with an editor still open, closing the rack window alone
@@ -61,7 +84,7 @@ void destroyWith(dgl::Window& window, std::unique_ptr<Widget>& widget) {
 } // namespace
 
 struct RackUi::Impl {
-    explicit Impl(RackController& rackController) : controller(rackController), app(true), window(app) {}
+    explicit Impl(RackController& rackController) : controller(rackController), window(app) {}
 
     struct Editor {
         std::unique_ptr<TrackedWindow>        window;
@@ -97,7 +120,7 @@ struct RackUi::Impl {
     }
 
     RackController&               controller;
-    dgl::Application              app;
+    StageHandApplication          app;
     TrackedWindow                 window;   // the rack window
     std::unique_ptr<RackWidget>   widget;
     std::map<std::string, Editor> editors;  // by sequence id
@@ -143,6 +166,7 @@ void RackUi::Impl::openEditor(const std::string& id) {
     e.window->setResizable(true);
     e.window->setGeometryConstraints(px(760.0), px(640.0));
     e.window->setSize(px(1040.0), px(660.0));
+    setIcon(*e.window);
     e.window->show();
     editors.emplace(id, std::move(e));
 }
@@ -207,6 +231,7 @@ std::unique_ptr<RackUi> RackUi::open(RackController& controller, const std::stri
     impl->window.setGeometryConstraints(px(minimum.width), px(minimum.height));
     impl->window.setSize(px(size.width), px(size.height));
     impl->widget->setPerforming(size.perform);   // as it was left (docs/perform.md, decision 10)
+    setIcon(impl->window);
     impl->window.show();
     return std::unique_ptr<RackUi>(new RackUi(std::move(impl)));
 }

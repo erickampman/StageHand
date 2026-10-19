@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=StageHand
+GenericName=Live Rack
+Comment=Plays CLAP plugins live, from racks and setlists
+Exec=@EXEC@
+Icon=stagehand
+Terminal=false
+Categories=AudioVideo;Audio;Music;
+Keywords=MIDI;CLAP;synth;setlist;looper;live;
+StartupWMClass=StageHand
+StartupNotify=false

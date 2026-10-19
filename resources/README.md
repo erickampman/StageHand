@@ -8,6 +8,11 @@ What StageHand is built with besides code, and where each came from.
   source is the author's artwork folder (the bars apart, from 2026-10-19).
   `tools/render-mac-icon.sh` renders a `.icon` to 1024 px PNGs (full, and
   in Apple's 824 px grid) for making an icon set by hand.
+- `linux/icons/stagehand-*.png`: the Linux icons, made from the `.icon`'s
+  artwork by `tools/render-linux-icons.sh` (rounded corners and a margin, at
+  48 to 512 px). The 128 and 48 px ones are embedded as the windows' icon
+  (`src/Ui/WindowIcon.cpp`); `tools/install-desktop-entry.sh` installs them
+  all with `linux/stagehand.desktop.in`, the launcher.
 - `brand/Unlikelyware-logo-144.png`: the Unlikelyware logo at the left of the
   toolbar, as KeyboardEDO has it (the same file: IFSynth's and
   PlainOldSynth's `Resources/Unlikelyware-Final-Color.png`, scaled to 144 px

@@ -114,6 +114,15 @@ branch there (`main` is older, and with no arguments only prints the help),
 `stagehand` changes with it. Use a separate build directory for other
 branches, such as `cmake -B build-main -G Ninja`.
 
+**In the dock and app grid.** StageHand's windows carry its icon, so the dock
+shows it however StageHand was started. To launch it from the app grid and
+keep it in the dock, install a launcher and the icons for your user (in
+`~/.local/share`; it runs this checkout's `build/stagehand`):
+
+```bash
+tools/install-desktop-entry.sh
+```
+
 **Audio.** You don't need to type `pw-jack`: started without it and with no
 JACK server to reach, StageHand restarts itself under `pw-jack`
 ([command-line.md](command-line.md), "Audio: pw-jack"). A real jackd, if one is
