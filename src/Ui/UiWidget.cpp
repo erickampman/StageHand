@@ -5,6 +5,11 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <string>
+
+#ifndef __APPLE__
+#include "Ui/StartupId.h"
+#endif
 
 // The brand's, embedded at build time (cmake/EmbedFile.cmake; resources/README.md).
 extern const unsigned char kBrandLogo[];   // the Unlikelyware logo (PNG)
@@ -275,14 +280,8 @@ float UiWidget::brand(float x, float cy, float h) {
         rect(at, cy - h / 2, w, h);
         fillPaint(imagePattern(at, cy - h / 2, w, h, 0.0f, logo, 1.0f));
         NanoVG::fill();
-        // A fixed address, so nothing typed reaches the shell.
-        region(at, cy - h / 2, w, h, [](const Press&) {
-#ifdef __APPLE__
-            const int rc = std::system("open 'https://www.unlikelyware.com'");
-#else
-            const int rc = std::system("xdg-open 'https://www.unlikelyware.com' >/dev/null 2>&1 &");
-#endif
-            (void)rc;   // nothing sensible to do if no browser opens
+        region(at, cy - h / 2, w, h, [this](const Press&) {
+            openInBrowser("https://www.unlikelyware.com");   // nothing sensible to do if no browser opens
         });
         at += w + 8.0f;
     }
@@ -654,6 +653,26 @@ bool UiWidget::menuKey(const KeyboardEvent& ev) {
     return true;
 }
 
+// --- the browser -------------------------------------------------------------------
+
+// `open` brings the browser forward on the Mac. GNOME on Wayland raises a
+// window only with an activation token: xdg-open gets an X11 startup ID as one
+// (Ui/StartupId.h), which the browser (an instance already running, too)
+// activates with. Elsewhere the two variables are ignored.
+bool UiWidget::openInBrowser(const std::string& target) {
+    // Single-quoted for the shell, its own quotes escaped.
+    std::string quoted = "'";
+    for (const char c : target) quoted += c == '\'' ? std::string("'\\''") : std::string(1, c);
+    quoted += "'";
+#ifdef __APPLE__
+    return std::system(("open " + quoted).c_str()) == 0;
+#else
+    const std::string id  = startupId(lastPressTime);
+    const std::string env = id.empty() ? "" : "XDG_ACTIVATION_TOKEN='" + id + "' DESKTOP_STARTUP_ID='" + id + "' ";
+    return std::system((env + "xdg-open " + quoted + " >/dev/null 2>&1 &").c_str()) == 0;
+#endif
+}
+
 // --- input ---------------------------------------------------------------------------
 
 bool UiWidget::onMouse(const MouseEvent& ev) {
@@ -670,6 +689,7 @@ bool UiWidget::onMouse(const MouseEvent& ev) {
         repaint();
         return true;
     }
+    lastPressTime  = ev.time;
     const float sf = scaleFactor();
     const Press p{static_cast<float>(ev.pos.getX()) / sf, static_cast<float>(ev.pos.getY()) / sf, ev.mod, ev.time,
                   ev.button};

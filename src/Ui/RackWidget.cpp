@@ -1992,17 +1992,8 @@ void RackWidget::openHelp() {
         showNotice("The help page isn't installed (help/help.html beside the app)", ui::nowSeconds());
         return;
     }
-    // Single-quoted for the shell, its own quotes escaped.
-    std::string quoted = "'";
-    for (const char c : fs::weakly_canonical(page, ec).string())
-        quoted += c == '\'' ? std::string("'\\''") : std::string(1, c);
-    quoted += "'";
-#ifdef __APPLE__
-    const int rc = std::system(("open " + quoted).c_str());
-#else
-    const int rc = std::system(("xdg-open " + quoted + " >/dev/null 2>&1 &").c_str());
-#endif
-    if (rc != 0) showNotice("Couldn't open the help page in a browser", ui::nowSeconds());
+    if (!openInBrowser(fs::weakly_canonical(page, ec).string()))
+        showNotice("Couldn't open the help page in a browser", ui::nowSeconds());
 }
 
 // How a song switch behaves (docs/setlists.md, section 5): one choice ticked

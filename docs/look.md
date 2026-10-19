@@ -10,7 +10,8 @@ Begun 2026-10-19; settled with the author.
   "StageHand" wordmark**, as KeyboardEDO's and the plugins' top strips do:
   "Stage" in the icon's purple, "Hand" in its green, in Karla (KeyboardEDO's
   wordmark font) with its spacing tightened. A click on the logo opens
-  unlikelyware.com. Then a faint divider and the rack's name, with its
+  unlikelyware.com, the browser brought to the front (on GNOME/Wayland with
+  an X11 startup ID as its activation token: Ui/StartupId.h; Help too). Then a faint divider and the rack's name, with its
   "unsaved" note under it as before.
 - **The brand and Help are on the top row** (2026-10-19): with a setlist
   open, that's the setlist row, the brand before the song controls and Help

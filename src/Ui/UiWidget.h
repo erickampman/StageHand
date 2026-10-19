@@ -133,6 +133,10 @@ protected:
     // after it, centred on `cy`; a click on the logo opens unlikelyware.com.
     // Returns the width taken.
     float brand(float x, float cy, float h);
+    // Opens `target` (a URL or a file) in the default browser, brought to the
+    // front: on Linux with an activation token from the last click (GNOME on
+    // Wayland raises no window without one). False if it couldn't be started.
+    bool  openInBrowser(const std::string& target);
     void  removeButton(float x, float y, float size);       // a red X, for "remove this row"
     // MIDI control (learned triggers, a switch): a 5-pin DIN plug, drawn as
     // button() is, lit when `on`.
@@ -195,6 +199,8 @@ private:
     bool                   brandTried = false;
     DGL_NAMESPACE::NanoImage logo;
     int                    brandFont = -1;
+
+    std::uint32_t lastPressTime = 0;   // the last click's X server time (ms), for openInBrowser
 
     std::vector<Region> regions;    // from the last draw
     float               regionDy = 0;   // beginShift()

@@ -167,7 +167,7 @@ if(STAGEHAND_APP)
         target_link_libraries(stagehand-ui PRIVATE "-framework CoreGraphics")
         target_link_libraries(dgl-opengl PRIVATE "-framework UniformTypeIdentifiers")   # the browser's filter
     else()
-        target_sources(stagehand-ui PRIVATE src/Ui/Monitor.cpp)
+        target_sources(stagehand-ui PRIVATE src/Ui/Monitor.cpp src/Ui/StartupId.cpp)
         target_link_libraries(stagehand-ui PRIVATE PkgConfig::X11)
         if(XRANDR_FOUND)
             target_compile_definitions(stagehand-ui PRIVATE STAGEHAND_HAVE_XRANDR)
