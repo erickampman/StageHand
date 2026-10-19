@@ -268,6 +268,21 @@ if(STAGEHAND_APP AND APPLE)
 
 endif()
 
+# --- The help page (both platforms) -----------------------------------------------
+# resources/help/help.html, exported from help.md (beside it) by Markdown Web
+# Writer, and the logo it shows, as Unlikelyware.png: copied to build/help,
+# beside the executable, where Help (the toolbar's "?", the File menu) looks on
+# Linux; on the Mac they also go in the bundle's Resources/help.
+if(TARGET stagehand)
+    set(help_files "${CMAKE_BINARY_DIR}/help/help.html" "${CMAKE_BINARY_DIR}/help/Unlikelyware.png")
+    configure_file(resources/help/help.html "${CMAKE_BINARY_DIR}/help/help.html" COPYONLY)
+    configure_file(resources/brand/Unlikelyware-logo-144.png "${CMAKE_BINARY_DIR}/help/Unlikelyware.png" COPYONLY)
+    if(APPLE)
+        target_sources(stagehand PRIVATE ${help_files})
+        set_source_files_properties(${help_files} PROPERTIES MACOSX_PACKAGE_LOCATION Resources/help)
+    endif()
+endif()
+
 # --- Tests (tests/Check.h; one executable per suite, no third-party framework) ---
 # The UMP, queue, clock and denormal tests moved to uw-core with their code.
 enable_testing()

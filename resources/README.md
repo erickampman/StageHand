@@ -15,6 +15,14 @@ What StageHand is built with besides code, and where each came from.
   1.1, whose text is `fonts/OFL.txt`; it must ship with the font. "Karla" is
   a Reserved Font Name, so a modified version can't be called that.
 
+- `help/help.md`: the help page's source, in Markdown Web Writer's dialect
+  (cards, disclosures, `(#anchor)` lines), as KeyboardEDO's is. Its export,
+  `help/help.html`, is made in Markdown Web Writer by the author; the page
+  shows the logo beside it as `Unlikelyware.png`. The build copies both
+  (the logo from `brand/Unlikelyware-logo-144.png`) to `build/help`, and on
+  the Mac into the bundle's `Resources/help`, where Help (the toolbar's
+  "?", the File menu) finds them (docs/rack-view.md).
+
 The logo and font are embedded in the executable at build time
 (`cmake/EmbedFile.cmake`). The rest of the window's text is DejaVu Sans,
 DGL's own (the plugins' font too).

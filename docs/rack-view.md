@@ -305,6 +305,17 @@ plugin editor windows) and Ctrl-Q.
   rack..., New setlist..., Open setlist... and, while one is open, Close
   setlist. See docs/setlists.md.
 
+- **Help (2026-10-19):** a "?" button at the toolbar's right end, after
+  File, and the File menu's last item open the help page, `help/help.html`,
+  in the default browser (`open` on macOS, `xdg-open` on Linux), as
+  KeyboardEDO's Help does. The build copies it, with the logo it shows as
+  `Unlikelyware.png`, to `build/help` beside the executable (Linux) and into
+  `StageHand.app/Contents/Resources/help` (macOS). It is exported from
+  `resources/help/help.md` by the author in Markdown Web Writer. If the page
+  is missing from the install, Help says so in the status bar. The Perform
+  view has no Help: a stray click there shouldn't put a browser over the
+  stage, and Edit (Tab) is one key away.
+
 ## Review decisions (2026-09-28)
 
 1. Add and remove are in v1, with a plain list of scanned plugins.

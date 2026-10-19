@@ -204,6 +204,7 @@ private:
     // cancelled). `quitting` words the discard choice for quitting.
     void keepChangesThen(std::function<void()> then, bool quitting);
     void openFileMenu(float x, float y);
+    void openHelp();   // help/help.html beside the app, in the default browser
     void openSwitchMenu(float x, float y);   // File > Setlist settings...
     void openTransportMenu(float x, float y);
     void openMetronomeMenu(float x, float y);

@@ -6,6 +6,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 
 #include "uw/base/Clock.h"
 #include "uw/ump/Ump.h"
@@ -741,18 +744,25 @@ void RackWidget::drawToolbar() {
     restore();
     drawTransport(kTransportX);
 
-    const float fileX = width() - kPad - 70.0f;
-    button(fileX, 8.0f, 70.0f, 28.0f, "File", false, true, kAccent);
-    region(fileX, 8.0f, 70.0f, 28.0f, [this, fileX](const Press&) { openFileMenu(fileX - 190.0f, topH()); });
+    // Help, a "?" at the right end: the help page in the browser (openHelp).
+    const float helpX = width() - kPad - 28.0f;
+    button(helpX, 8.0f, 28.0f, 28.0f, "?", false, true, kAccent);
+    region(helpX, 8.0f, 28.0f, 28.0f, [this](const Press&) { openHelp(); });
 
-    const float addX = fileX - 10.0f - 118.0f;
-    button(addX, 8.0f, 118.0f, 28.0f, "+ Add plugin", false, true, kAccent);
-    region(addX, 8.0f, 118.0f, 28.0f, [this, addX](const Press&) { openAddMenu(addX, topH()); });
+    // Sized to their labels, with 8 px gaps, so the transport keeps its room
+    // at the default width (1100).
+    const float fileX = helpX - 8.0f - 58.0f;
+    button(fileX, 8.0f, 58.0f, 28.0f, "File", false, true, kAccent);
+    region(fileX, 8.0f, 58.0f, 28.0f, [this, fileX](const Press&) { openFileMenu(fileX - 190.0f, topH()); });
+
+    const float addX = fileX - 8.0f - 104.0f;
+    button(addX, 8.0f, 104.0f, 28.0f, "+ Add plugin", false, true, kAccent);
+    region(addX, 8.0f, 104.0f, 28.0f, [this, addX](const Press&) { openAddMenu(addX, topH()); });
 
     // The Perform view (Tab).
-    const float performX = addX - 10.0f - 96.0f;
-    button(performX, 8.0f, 96.0f, 28.0f, "Perform", false, true, kAccent);
-    region(performX, 8.0f, 96.0f, 28.0f, [this](const Press&) { setPerforming(true); });
+    const float performX = addX - 8.0f - 84.0f;
+    button(performX, 8.0f, 84.0f, 28.0f, "Perform", false, true, kAccent);
+    region(performX, 8.0f, 84.0f, 28.0f, [this](const Press&) { setPerforming(true); });
 }
 
 // Tempo (drag up/down, Shift for fine; wheel; double-click for 120), Tap, time
@@ -1944,7 +1954,42 @@ void RackWidget::openFileMenu(float x, float y) {
         m.items.push_back(MenuItem{"Setlist settings...", [this, x, y] { openSwitchMenu(x, y); }});
         m.items.push_back(MenuItem{"Close setlist", [this] { controller.closeSetlist(); }});
     }
+    m.items.push_back(MenuItem{"Help", [this] { openHelp(); }});
     openMenu(std::move(m));
+}
+
+// The help page, as KeyboardEDO's (its docs/decisions.md, "Identity and help"):
+// help/help.html, which the build puts beside the executable on Linux and in
+// the bundle's Resources on the Mac, with the logo it shows, opened in the
+// default browser as the brand opens unlikelyware.com. A missing page is said
+// in the status bar.
+void RackWidget::openHelp() {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+#ifdef __APPLE__
+    char     buffer[4096];
+    uint32_t size = sizeof buffer;
+    const fs::path self = _NSGetExecutablePath(buffer, &size) == 0 ? fs::path(buffer) : fs::path();
+    const fs::path page = fs::weakly_canonical(self, ec).parent_path() / "../Resources/help/help.html";
+#else
+    const fs::path self = fs::read_symlink("/proc/self/exe", ec);
+    const fs::path page = self.parent_path() / "help/help.html";
+#endif
+    if (self.empty() || !fs::exists(page, ec)) {
+        showNotice("The help page isn't installed (help/help.html beside the app)", ui::nowSeconds());
+        return;
+    }
+    // Single-quoted for the shell, its own quotes escaped.
+    std::string quoted = "'";
+    for (const char c : fs::weakly_canonical(page, ec).string())
+        quoted += c == '\'' ? std::string("'\\''") : std::string(1, c);
+    quoted += "'";
+#ifdef __APPLE__
+    const int rc = std::system(("open " + quoted).c_str());
+#else
+    const int rc = std::system(("xdg-open " + quoted + " >/dev/null 2>&1 &").c_str());
+#endif
+    if (rc != 0) showNotice("Couldn't open the help page in a browser", ui::nowSeconds());
 }
 
 // How a song switch behaves (docs/setlists.md, section 5): one choice ticked
