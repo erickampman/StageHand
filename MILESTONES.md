@@ -32,7 +32,8 @@
 - [ ] Looper: controllers (sustain pedal) and pitch bend in loops
 
 ## M4: Editor and later
-- [ ] House look and feel (plugins' knobs, group boxes, slider, DejaVu Sans) in the rack view and generic editor
+- [x] House look and feel in the rack view: brand, house slider, dropdowns, sections (docs/look.md)
+- [ ] House look in the Perform view and panels; knobs in the generic editor
 - [ ] Generic editor: sliders and menus for plugins with no editor of their own
 - [ ] Backing tracks: an audio file per song, in time with the transport
 - [ ] Song notes in the Perform view

@@ -146,11 +146,19 @@ target_link_libraries(stagehand-app
 
 # --- stagehand-ui: the rack window (DGL), both platforms. Only this library sees DGL.
 if(STAGEHAND_APP)
+    # The toolbar's brand, embedded (resources/README.md says where each came from).
+    include(cmake/EmbedFile.cmake)
+    embed_file("${CMAKE_SOURCE_DIR}/resources/brand/Unlikelyware-logo-144.png"
+               "${CMAKE_BINARY_DIR}/BrandLogo.cpp" kBrandLogo)
+    embed_file("${CMAKE_SOURCE_DIR}/resources/fonts/Karla-Regular.ttf"
+               "${CMAKE_BINARY_DIR}/BrandFont.cpp" kBrandFont)
     add_library(stagehand-ui STATIC
         src/Ui/RackUi.cpp
         src/Ui/RackWidget.cpp
         src/Ui/UiWidget.cpp
-        src/Ui/SequenceEditorWidget.cpp)
+        src/Ui/SequenceEditorWidget.cpp
+        "${CMAKE_BINARY_DIR}/BrandLogo.cpp"
+        "${CMAKE_BINARY_DIR}/BrandFont.cpp")
     target_link_libraries(stagehand-ui
         PUBLIC  stagehand-app
         PRIVATE dgl-opengl dgl-opengl-definitions stagehand-warnings)

@@ -23,11 +23,12 @@
   like the plugins and KeyboardEDO where it can. That's PlainOldSynth's glowing knobs,
   group boxes, captioned dropdowns and value boxes, a linear slider in the
   same style, and DejaVu Sans, in StageHand's own colours (KeyboardEDO's
-  `docs/decisions.md`, "Look and feel"). StageHand draws with DGL and NanoVG,
-  as the plugins do, so PlainOldSynth's `src/UI/Knob.hpp`, `GroupBox.hpp` and
-  `Dropdown.hpp` can be used nearly as they are; the slider needs porting to
-  NanoVG from KeyboardEDO's `src/app/Widgets.cpp` (ImGui). The rack view
-  first; the generic editor should be built in it from the start. Plugin
-  editors keep their own look.
+  `docs/decisions.md`, "Look and feel"). The rack view's first pass is done
+  (2026-10-19, docs/look.md): the brand, the colours, the house slider,
+  dropdowns, value boxes and sections, drawn by `Ui/UiWidget` (immediate-mode
+  ports of the plugins' drawing, as their widgets are retained-mode
+  subwidgets). Left: the Perform view and panels, and knobs in the generic
+  editor, which should be built in the look from the start. Plugin editors
+  keep their own look.
 - **Later:** backing tracks (an audio file per song, in time with the
   transport); song notes in the Perform view; undo for rack edits.

@@ -3,11 +3,31 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cmath>
+#include <cstdlib>
+
+// The brand's, embedded at build time (cmake/EmbedFile.cmake; resources/README.md).
+extern const unsigned char kBrandLogo[];   // the Unlikelyware logo (PNG)
+extern const unsigned int  kBrandLogoSize;
+extern const unsigned char kBrandFont[];   // Karla, the wordmark's
+extern const unsigned int  kBrandFontSize;
 
 namespace stagehand {
 
 namespace dgl = DGL_NAMESPACE;
 using namespace ui;
+
+namespace {
+
+dgl::Color withAlpha(UiColor c, float a) {
+    return dgl::Color(c.r, c.g, c.b, std::clamp(a, 0.0f, 1.0f));   // DGL's alpha is 0 to 1
+}
+UiColor lighter(UiColor c, float t) {   // toward white
+    auto up = [t](int v) { return v + static_cast<int>(std::lround(static_cast<float>(255 - v) * t)); };
+    return UiColor{up(c.r), up(c.g), up(c.b)};
+}
+
+} // namespace
 
 double ui::nowSeconds() {
     return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -75,12 +95,200 @@ float UiWidget::labelWidth(const std::string& text, float size) {
 
 void UiWidget::button(float x, float y, float w, float h, const std::string& text, bool on, bool enabled,
                       UiColor onColor) {
-    box(x, y, w, h, on ? onColor : kTrack, 4.0f);
+    buttonFace(x, y, w, h, on, onColor);
     label(x + w / 2, y + h / 2, text, 13.0f, !enabled ? kDim : on ? kBarBg : kText, ALIGN_CENTER | ALIGN_MIDDLE);
 }
 
+// KeyboardEDO's buttons: a faint slate over whatever is behind, a fainter
+// border, 3 px corners; lit, the colour itself.
+void UiWidget::buttonFace(float x, float y, float w, float h, bool on, UiColor onColor) {
+    if (on) {
+        box(x, y, w, h, onColor, 3.0f);
+        return;
+    }
+    beginPath();
+    roundedRect(x, y, w, h, 3.0f);
+    fillColor(withAlpha(kSlate, 0.30f));
+    NanoVG::fill();
+    beginPath();
+    roundedRect(x + 0.5f, y + 0.5f, w - 1.0f, h - 1.0f, 3.0f);
+    strokeColor(withAlpha(kSlate, 0.35f));
+    strokeWidth(1.0f);
+    stroke();
+}
+
+// PlainOldSynth's knob body (its src/UI/Knob.hpp): a glow bright at the
+// centre fading out at the rim, a brighter core, a faint rim and a soft glint
+// at the top left.
+void UiWidget::sphere(float cx, float cy, float r, UiColor accent, float intensity) {
+    beginPath();
+    circle(cx, cy, r);
+    fillPaint(radialGradient(cx, cy, r * 0.15f, r, withAlpha(accent, 0.80f * intensity), withAlpha(accent, 0.0f)));
+    NanoVG::fill();
+    beginPath();
+    circle(cx, cy, r * 0.64f);
+    fillPaint(radialGradient(cx, cy, 0.0f, r * 0.62f, withAlpha(lighter(accent, 0.35f), 0.85f * intensity),
+                             withAlpha(accent, 0.0f)));
+    NanoVG::fill();
+    beginPath();
+    circle(cx, cy, r);
+    strokeColor(withAlpha(UiColor{255, 255, 255}, 0.14f * intensity));
+    strokeWidth(1.2f);
+    stroke();
+    const float hx = cx - r * 0.30f, hy = cy - r * 0.34f, hr = r * 0.26f;
+    beginPath();
+    circle(hx, hy, hr);
+    fillPaint(radialGradient(hx, hy, 0.0f, hr, withAlpha(UiColor{255, 255, 255}, 0.11f * intensity),
+                             withAlpha(UiColor{255, 255, 255}, 0.0f)));
+    NanoVG::fill();
+}
+
+// KeyboardEDO's slider (its src/app/Widgets.cpp), lying down: a recessed
+// slot, lit from the rest to the value with a faint glow either side, the
+// rest marked across it when it isn't an end, and the thumb a small sphere
+// with a white dot. Dimmed (muted), it's grey.
+void UiWidget::slider(float x0, float x1, float cy, float at, float rest, float thumb, UiColor accent, bool dim) {
+    const UiColor colour = dim ? UiColor{104, 108, 116} : accent;
+    const float   span = x1 - x0, half = std::max(2.0f, thumb * 0.15f);
+    const float   v = x0 + std::clamp(at, 0.0f, 1.0f) * span, r = x0 + std::clamp(rest, 0.0f, 1.0f) * span;
+    beginPath();
+    roundedRect(x0 - half, cy - half, span + half * 2, half * 2, half);
+    fill(kWell);
+    NanoVG::fill();
+    strokeColor(withAlpha(kSlate, 0.45f));
+    strokeWidth(1.0f);
+    stroke();
+
+    const float lo = std::min(r, v), hi = std::max(r, v), glow = half * 1.8f;
+    if (hi > lo) {
+        beginPath();
+        roundedRect(lo, cy - glow, hi - lo, glow * 2, std::min(glow, (hi - lo) / 2));
+        fillColor(withAlpha(colour, 0.12f));
+        NanoVG::fill();
+        beginPath();
+        roundedRect(lo, cy - half + 1.5f, hi - lo, half * 2 - 3.0f, std::min(half, (hi - lo) / 2));
+        fillColor(withAlpha(colour, 0.80f));
+        NanoVG::fill();
+    }
+    if (rest > 0.0f && rest < 1.0f) {
+        const float tick = half + thumb * 0.22f;
+        beginPath();
+        moveTo(r, cy - tick);
+        lineTo(r, cy + tick);
+        strokeColor(withAlpha(kSlate, 0.9f));
+        strokeWidth(1.5f);
+        stroke();
+    }
+
+    const float radius = thumb / 2;
+    beginPath();
+    circle(v, cy, radius * 0.95f);
+    fill(kSection);
+    NanoVG::fill();
+    sphere(v, cy, radius, colour, dim ? 0.7f : 1.0f);
+    beginPath();
+    circle(v, cy, std::max(2.0f, radius * 0.17f));
+    fill(dim ? UiColor{150, 154, 160} : UiColor{244, 247, 250});
+    NanoVG::fill();
+}
+
+// The plugins' dropdown (PlainOldSynth's src/UI/Dropdown.hpp): the choice in
+// a dark box, a chevron at its right.
+void UiWidget::dropdown(float x, float y, float w, float h, const std::string& text, UiColor ink, float size) {
+    valueBox(x, y, w, h, "", ink, size);
+    save();
+    scissor(x, y, std::max(0.0f, w - 22.0f), h);
+    label(x + 8.0f, y + h / 2, text, size, ink);
+    restore();
+    const float cx = x + w - 11.0f, cy = y + h / 2;
+    beginPath();
+    moveTo(cx - 4.0f, cy - 2.0f);
+    lineTo(cx + 4.0f, cy - 2.0f);
+    lineTo(cx, cy + 3.0f);
+    closePath();
+    fill(kDim);
+    NanoVG::fill();
+}
+
+void UiWidget::valueBox(float x, float y, float w, float h, const std::string& text, UiColor ink, float size) {
+    beginPath();
+    roundedRect(x, y, w, h, 3.0f);
+    fill(kWell);
+    NanoVG::fill();
+    beginPath();
+    roundedRect(x + 0.5f, y + 0.5f, w - 1.0f, h - 1.0f, 3.0f);
+    strokeColor(withAlpha(kSlate, 0.40f));
+    strokeWidth(1.0f);
+    stroke();
+    if (!text.empty()) label(x + w / 2, y + h / 2, text, size, ink, ALIGN_CENTER | ALIGN_MIDDLE);
+}
+
+void UiWidget::section(float x, float y, float w, float h) {
+    beginPath();
+    roundedRect(x, y, w, h, 7.0f);
+    fill(kSection);
+    NanoVG::fill();
+    beginPath();
+    roundedRect(x + 0.5f, y + 0.5f, w - 1.0f, h - 1.0f, 7.0f);
+    strokeColor(withAlpha(kSlate, 0.30f));
+    strokeWidth(1.0f);
+    stroke();
+}
+
+// As KeyboardEDO's toolbar has it (its KeyboardApp::drawBrand): the logo, then
+// both words on one baseline in Karla, a letter at a time so the spacing can
+// be tightened (Karla's is generous). "Stage" in the icon's purple, "Hand" in
+// its green.
+float UiWidget::brand(float x, float cy, float h) {
+    if (!brandTried) {
+        brandTried = true;
+        logo       = createImageFromMemory(kBrandLogo, kBrandLogoSize, IMAGE_GENERATE_MIPMAPS);
+        brandFont  = createFontFromMemory("stagehand-brand", kBrandFont, kBrandFontSize, false);
+    }
+    float at = x;
+    if (logo.isValid()) {
+        const dgl::Size<uint> size = logo.getSize();
+        const float           w    = size.getHeight() > 0 ? h * static_cast<float>(size.getWidth()) /
+                                                     static_cast<float>(size.getHeight())
+                                                          : h;
+        beginPath();
+        rect(at, cy - h / 2, w, h);
+        fillPaint(imagePattern(at, cy - h / 2, w, h, 0.0f, logo, 1.0f));
+        NanoVG::fill();
+        // A fixed address, so nothing typed reaches the shell.
+        region(at, cy - h / 2, w, h, [](const Press&) {
+#ifdef __APPLE__
+            const int rc = std::system("open 'https://www.unlikelyware.com'");
+#else
+            const int rc = std::system("xdg-open 'https://www.unlikelyware.com' >/dev/null 2>&1 &");
+#endif
+            (void)rc;   // nothing sensible to do if no browser opens
+        });
+        at += w + 8.0f;
+    }
+    if (brandFont < 0) return at - x;
+    save();
+    fontFaceId(brandFont);
+    const float size     = h * 0.82f;
+    const float tracking = -0.06f * size;
+    fontSize(size);
+    textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
+    auto word = [&](const char* text, UiColor colour) {
+        fill(colour);
+        for (const char* c = text; *c != '\0'; ++c) {
+            this->text(at, cy, c, c + 1);
+            dgl::Rectangle<float> bounds;
+            at += textBounds(0, 0, c, c + 1, bounds) + tracking;
+        }
+    };
+    word("Stage", kPurple);
+    word("Hand", kAccent);
+    restore();
+    return at - tracking - x;
+}
+
 void UiWidget::removeButton(float x, float y, float size) {
-    box(x, y, size, size, kTrack, 4.0f);
+    buttonFace(x, y, size, size, false, kTrack);
     const float in = size * 0.3f;
     beginPath();
     moveTo(x + in, y + in);
@@ -95,7 +303,7 @@ void UiWidget::removeButton(float x, float y, float size) {
 }
 
 void UiWidget::midiButton(float x, float y, float w, float h, bool on, UiColor onColor) {
-    box(x, y, w, h, on ? onColor : kTrack, 4.0f);
+    buttonFace(x, y, w, h, on, onColor);
     const UiColor ink = on ? kBarBg : kText;
     const float   cx = x + w / 2, cy = y + h / 2, r = std::min(w, h) * 0.34f;
     // The plug's rim, its notch at the top, and five pins in a half circle below.
@@ -134,7 +342,7 @@ void UiWidget::stepper(float x, float y, const std::string& value,
                        const std::function<void(int dir, bool big)>& change) {
     button(x, y, 22.0f, 22.0f, "-", false, true, kAccent);
     region(x, y, 22.0f, 22.0f, [change](const Press& p) { change(-1, (p.mod & dgl::kModifierShift) != 0); });
-    label(x + 70.0f, y + 11.0f, value, 13.0f, kText, ALIGN_CENTER | ALIGN_MIDDLE);
+    valueBox(x + 26.0f, y, 88.0f, 22.0f, value, kText);
     region(x + 22.0f, y, 96.0f, 22.0f, nullptr, [change](float notches) { change(notches > 0 ? 1 : -1, false); });
     button(x + 118.0f, y, 22.0f, 22.0f, "+", false, true, kAccent);
     region(x + 118.0f, y, 22.0f, 22.0f, [change](const Press& p) { change(1, (p.mod & dgl::kModifierShift) != 0); });

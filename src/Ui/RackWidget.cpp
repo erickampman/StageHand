@@ -29,7 +29,7 @@ constexpr float kSetlistH   = 40.0f;   // the setlist row, above the toolbar whi
 constexpr float kRowH       = 64.0f;
 constexpr float kStatusH    = 30.0f;
 constexpr float kInputW     = 330.0f;
-constexpr float kTransportX = 280.0f;   // the toolbar's transport, left of the input column's edge
+constexpr float kTransportX = kInputW;   // the toolbar's transport, at the input column's edge
 constexpr float kPluginW    = 270.0f;
 constexpr float kMinOutputW = 330.0f;
 constexpr float kRemoveSize = 26.0f;   // the red X at each row's right end
@@ -445,7 +445,8 @@ void RackWidget::drawSetlistRow() {
     const float y = 6.0f, h = 28.0f, arrowW = 44.0f;
     // Skip shapes (|◀ and ▶|), so they can't be taken for the transport's Start.
     auto arrow = [&](float x, bool left, bool enabled) {
-        box(x, y, arrowW, h, enabled ? kTrack : kBarBg, 4.0f);
+        if (enabled) buttonFace(x, y, arrowW, h, false, kAccent);
+        else box(x, y, arrowW, h, kBarBg, 3.0f);
         const float   cx = x + arrowW / 2 + (left ? 2.0f : -2.0f), cy = y + h / 2;
         const UiColor c  = enabled ? kText : kTrack;
         beginPath();
@@ -483,14 +484,10 @@ void RackWidget::drawSetlistRow() {
         song      = "Not a song in this set: " + controller.view().rackName;
         songColor = kAmber;
     }
-    const float nameW = std::min(labelWidth(song, 17.0f), std::max(80.0f, width() * 0.3f));
-    save();
-    scissor(nameX, 0, nameW, kSetlistH);
-    label(nameX, kSetlistH / 2, song, 17.0f, songColor);
-    restore();
-    label(nameX + nameW + 6.0f, kSetlistH / 2, "\xE2\x96\xBE", 14.0f, kDim);   // U+25BE small down triangle
-    region(nameX - 4.0f, y, nameW + 24.0f, h, [this, nameX](const Press&) { openSongMenu(nameX, kSetlistH); });
-    x = nameX + nameW + 28.0f;
+    const float nameW = std::min(labelWidth(song, 16.0f), std::max(80.0f, width() * 0.3f));
+    dropdown(nameX - 8.0f, y, nameW + 38.0f, h, song, songColor, 16.0f);
+    region(nameX - 8.0f, y, nameW + 38.0f, h, [this, nameX](const Press&) { openSongMenu(nameX, kSetlistH); });
+    x = nameX + nameW + 40.0f;
 
     // Next, and where it goes.
     arrow(x, false, set.next >= 0);
@@ -691,17 +688,20 @@ void RackWidget::drawToolbar() {
     box(0, 0, width(), kToolbarH, kBarBg);
     region(0, 0, width(), kToolbarH, nullptr);
 
+    // The brand (docs/look.md), then a faint divider and the rack's name.
+    const float nameX = kPad + brand(kPad, kToolbarH / 2, 26.0f) + 12.0f;
+    box(nameX - 7.0f, 10.0f, 1.0f, kToolbarH - 20.0f, kLine);
     const std::string name = view.rackName.empty() ? "Untitled rack" : view.rackName;
     save();
-    scissor(kPad, 0, kTransportX - kPad * 2, kToolbarH);
-    label(kPad, kToolbarH / 2 - (view.modified ? 6.0f : 0.0f), name, 18.0f, kText);
+    scissor(nameX, 0, kTransportX - kPad - nameX, kToolbarH);
+    label(nameX, kToolbarH / 2 - (view.modified ? 6.0f : 0.0f), name, 16.0f, kText);
     // Ctrl-S (Cmd-S) saves all of it: this rack, the others kept unsaved, the rig.
     const std::size_t songs = view.otherUnsaved + (view.modified ? 1 : 0);
     const std::string unsaved = view.otherUnsaved != 0 ? std::to_string(songs) + (songs == 1 ? " song unsaved" : " songs unsaved")
                                 : view.modified     ? "unsaved changes"
                                 : view.rig.modified ? "unsaved rig changes"
                                                     : "";
-    if (!unsaved.empty()) label(kPad, kToolbarH / 2 + 12.0f, unsaved, 11.0f, kAmber);
+    if (!unsaved.empty()) label(nameX, kToolbarH / 2 + 11.0f, unsaved, 11.0f, kAmber);
     restore();
     drawTransport(kTransportX);
 
@@ -727,8 +727,7 @@ void RackWidget::drawTransport(float x) {
     // Counting in (docs/perform.md): the countdown, in amber, where the tempo is.
     if (t.countIn > 0) std::snprintf(text, sizeof text, "Count-in %d", t.countIn);
     else std::snprintf(text, sizeof text, "%.1f BPM", t.tempoBpm);
-    box(x, 8.0f, 104.0f, 28.0f, kTrack, 4.0f);
-    label(x + 52.0f, kToolbarH / 2, text, 14.0f, t.countIn > 0 ? kAmber : kText, ALIGN_CENTER | ALIGN_MIDDLE);
+    valueBox(x, 8.0f, 104.0f, 28.0f, text, t.countIn > 0 ? kAmber : kText, 14.0f);
     region(
         x, 8.0f, 104.0f, 28.0f,
         [this](const Press& p) {
@@ -752,7 +751,7 @@ void RackWidget::drawTransport(float x) {
 
     // Start/Stop: a triangle or a square, green while running (Space too).
     const float playX = x + 164.0f;
-    box(playX, 8.0f, 34.0f, 28.0f, t.running ? kGreen : kTrack, 4.0f);
+    buttonFace(playX, 8.0f, 34.0f, 28.0f, t.running, kGreen);
     beginPath();
     if (t.running) {
         rect(playX + 11.0f, 16.0f, 12.0f, 12.0f);
@@ -768,7 +767,7 @@ void RackWidget::drawTransport(float x) {
 
     // Panic (docs/panic.md): red text on the panel, lit red for a moment after one.
     const float panicX = playX + 40.0f;
-    box(panicX, 8.0f, kPanicW, 28.0f, t.panicLit ? kRed : kPanel, 4.0f);
+    buttonFace(panicX, 8.0f, kPanicW, 28.0f, t.panicLit, kRed);
     label(panicX + kPanicW / 2, kToolbarH / 2, "Panic", 13.0f, t.panicLit ? kBarBg : kRed, ALIGN_CENTER | ALIGN_MIDDLE);
     region(panicX, 8.0f, kPanicW, 28.0f, [this](const Press&) { controller.panic(); });
 
@@ -785,7 +784,7 @@ void RackWidget::drawTransport(float x) {
 
     const float sigX = midiX + kMidiW + 6.0f;
     std::snprintf(text, sizeof text, "%d/%d", t.numerator, t.denominator);
-    button(sigX, 8.0f, 52.0f, 28.0f, text, false, true, kAccent);
+    dropdown(sigX, 8.0f, 52.0f, 28.0f, text, kText);
     region(sigX, 8.0f, 52.0f, 28.0f, [this, sigX](const Press&) {
         Menu m;
         m.x     = sigX;
@@ -920,11 +919,8 @@ void RackWidget::drawRowInput(const RowModel& row, float y) {
     NanoVG::fill();
 
     const float sourceW = kInputW - kPad * 2 - 16.0f - 62.0f;
-    save();
-    scissor(kKeyBarX, y, sourceW, kRowH);
-    const std::string source = row.sourceLabel + "  \xE2\x96\xBE";   // U+25BE small down triangle
-    label(kKeyBarX, y + 22.0f, source, 14.0f, row.sourceConnected ? kText : kRed);
-    restore();
+    dropdown(kKeyBarX - 4.0f, y + 10.0f, sourceW + 4.0f, 24.0f, row.sourceLabel, row.sourceConnected ? kText : kRed,
+             14.0f);
     region(kKeyBarX - 4.0f, y + 8.0f, sourceW + 4.0f, 28.0f,
            [this, row, y](const Press&) { openSourceMenu(row, kKeyBarX, y + 36.0f); });
 
@@ -939,7 +935,7 @@ void RackWidget::drawRowInput(const RowModel& row, float y) {
     }
 
     const MidiFilter f = filterOf(row);
-    box(kKeyBarX, y + 39.0f, 128.0f, 10.0f, kBarBg);
+    box(kKeyBarX, y + 39.0f, 128.0f, 10.0f, kWell);
     box(kKeyBarX + f.noteLow, y + 39.0f, static_cast<float>(f.noteHigh - f.noteLow + 1), 10.0f, kAccent);
     region(kKeyBarX - 6.0f, y + 34.0f, 140.0f, 20.0f,
            [this, row](const Press& p) { startKeyRangeDrag(row, kKeyBarX, p); });
@@ -948,7 +944,7 @@ void RackWidget::drawRowInput(const RowModel& row, float y) {
     if (f.transpose != 0) summary += (f.transpose > 0 ? "  +" : "  ") + std::to_string(f.transpose);
     const float chipX = kKeyBarX + 136.0f, chipW = kInputW - kPad - chipX;
     const bool  open  = filterId == row.id;
-    box(chipX, y + 35.0f, chipW, 18.0f, open ? kAccent : kTrack, 4.0f);
+    buttonFace(chipX, y + 35.0f, chipW, 18.0f, open, kAccent);
     save();
     scissor(chipX, y, chipW - 4.0f, kRowH);
     label(chipX + 6.0f, y + 44.0f, summary, 12.0f, open ? kBarBg : kText);
@@ -1014,10 +1010,7 @@ void RackWidget::drawRowOutput(const RowModel& row, float y) {
     }
 
     const float x0 = faderX0(), x1 = faderX1();
-    box(x0, y + 17.0f, x1 - x0, 6.0f, kTrack, 3.0f);
-    box(x0 + (x1 - x0) * dbToPos(0.0f) - 0.5f, y + 13.0f, 1.0f, 14.0f, kDim);   // 0 dB mark
-    const float thumb = x0 + (x1 - x0) * dbToPos(row.gainDb);
-    box(thumb - 5.0f, y + 9.0f, 10.0f, 22.0f, row.muted ? kDim : kText, 2.0f);
+    slider(x0, x1, y + 20.0f, dbToPos(row.gainDb), dbToPos(0.0f), 20.0f, kAccent, row.muted);
     region(
         x0 - 8.0f, y + 5.0f, x1 - x0 + 16.0f, 28.0f,
         [this, id = row.id, span = x1 - x0](const Press& p) {
@@ -1054,7 +1047,7 @@ void RackWidget::drawRowOutput(const RowModel& row, float y) {
     // The output pair: a menu when there's more than one pair to choose from.
     const std::string out = "out " + std::to_string(row.firstOutput + 1) + "-" + std::to_string(row.firstOutput + 2);
     if (controller.view().status.outputs > 2) {
-        label(x1 + 30.0f, y + 44.0f, out + " \xE2\x96\xBE", 12.0f, kText);   // U+25BE small down triangle
+        dropdown(x1 + 26.0f, y + 35.0f, 76.0f, 19.0f, out, kText, 12.0f);
         region(x1 + 26.0f, y + 34.0f, 70.0f, 20.0f,
                [this, row, x = x1 + 26.0f, y](const Press&) { openOutputMenu(row, x, y + 56.0f); });
     } else {
@@ -1144,10 +1137,7 @@ void RackWidget::drawStatus() {
 void RackWidget::dbFader(float x0, float x1, float cy, float db, bool dim, float thumbH, const std::string& key,
                          std::function<std::optional<float>()> current, std::function<void(float)> set,
                          std::function<void(const Press&)> right) {
-    box(x0, cy - 3.0f, x1 - x0, 6.0f, kTrack, 3.0f);
-    box(x0 + (x1 - x0) * dbToPos(0.0f) - 0.5f, cy - 7.0f, 1.0f, 14.0f, kDim);   // 0 dB mark
-    const float thumb = x0 + (x1 - x0) * dbToPos(db);
-    box(thumb - 5.0f, cy - thumbH / 2, 10.0f, thumbH, dim ? kDim : kText, 2.0f);
+    slider(x0, x1, cy, dbToPos(db), dbToPos(0.0f), thumbH, kAccent, dim);
     region(
         x0 - 8.0f, cy - thumbH / 2 - 2.0f, x1 - x0 + 16.0f, thumbH + 4.0f,
         [this, key, current, set, right, span = x1 - x0](const Press& p) {
@@ -1235,10 +1225,10 @@ void RackWidget::drawRig() {
 // Bus A: its two effects in series (each a menu, with its editor), then the
 // return as a row's output: mute, fader over the meter, level, output pair.
 void RackWidget::drawBusStrip(const BusModel& bus, std::size_t index, float y) {
-    box(0, y, width(), kBusH, kPanel);
-    box(0, y + kBusH - 1.0f, width(), 1.0f, kLine);
+    box(0, y, width(), kBusH, kBg);
+    section(4.0f, y + 2.0f, width() - 8.0f, kBusH - 4.0f);
     region(0, y, width(), kBusH, nullptr);
-    label(kPad, y + 17.0f, "Bus " + bus.name, 15.0f, kText);
+    label(kPad, y + 17.0f, "Bus " + bus.name, 15.0f, kAccent);
     label(kPad + 56.0f, y + 17.0f, "DSP " + std::to_string(bus.loadPercent) + "%", 11.0f,   // its effects'
           bus.loadPercent > 50 ? kAmber : kDim);
     label(kPad, y + 35.0f, index == 0 ? "rig: " + controller.view().rig.name + (controller.view().rig.modified ? " *" : "")
@@ -1253,13 +1243,8 @@ void RackWidget::drawBusStrip(const BusModel& bus, std::size_t index, float y) {
         const float           linkW  = effect.name.empty() ? 0.0f : 30.0f;   // its Control Links
         const float chipW = slotW - 8.0f - (editW > 0.0f ? editW + 4.0f : 0.0f) - (linkW > 0.0f ? linkW + 4.0f : 0.0f);
         const std::string     text   = std::to_string(e + 1) + "  " + (effect.name.empty() ? "empty" : effect.name) +
-                                 (effect.problem.empty() ? "" : " (not loaded)") + "  \xE2\x96\xBE";
-        box(x, y + 11.0f, chipW, 26.0f, kTrack, 4.0f);
-        save();
-        scissor(x, y, chipW - 4.0f, kBusH);
-        label(x + 8.0f, y + kBusH / 2, text, 13.0f,
-              !effect.problem.empty() ? kAmber : effect.name.empty() ? kDim : kText);
-        restore();
+                                 (effect.problem.empty() ? "" : " (not loaded)");
+        dropdown(x, y + 11.0f, chipW, 26.0f, text, !effect.problem.empty() ? kAmber : effect.name.empty() ? kDim : kText);
         region(x, y + 11.0f, chipW, 26.0f, [this, index, e, x, y](const Press&) { openEffectMenu(index, e, x, y + kBusH); });
         if (editW > 0.0f) {
             const float ex = x + chipW + 4.0f;
@@ -1296,7 +1281,7 @@ void RackWidget::drawBusStrip(const BusModel& bus, std::size_t index, float y) {
     label(x1 + 30.0f, y + 17.0f, bus.muted ? "muted" : dbText(bus.returnDb), 13.0f, bus.muted ? kAmber : kText);
     const std::string out = "out " + std::to_string(bus.firstOutput + 1) + "-" + std::to_string(bus.firstOutput + 2);
     if (controller.view().status.outputs > 2) {
-        label(x1 + 30.0f, y + 36.0f, out + " \xE2\x96\xBE", 12.0f, kText);
+        dropdown(x1 + 26.0f, y + 27.0f, 76.0f, 19.0f, out, kText, 12.0f);
         region(x1 + 26.0f, y + 27.0f, 70.0f, 20.0f,
                [this, index, x = x1 + 26.0f, y](const Press&) { openBusOutputMenu(index, x, y + kBusH); });
     } else {
@@ -1354,8 +1339,9 @@ void RackWidget::drawDock() {
         dockScroll = std::clamp(dockScroll - notches * kSeqRowH / 2.0f, 0.0f, dockMaxScroll());
     });
 
-    // Header: title, + Sequence, Stop all.
-    label(kPad, top + kDockHeadH / 2, "Sources", 13.0f, kDim);
+    // Header: title, + Sequence, Stop all; with the inputs, a section.
+    section(4.0f, top + 2.0f, width() - 8.0f, kDockHeadH + kInputsH - 3.0f);
+    label(kPad, top + kDockHeadH / 2, "Sources", 13.0f, kPurple);
     const float stopX = width() - kPad - 80.0f, addX = stopX - 8.0f - 110.0f;
     button(addX, top + 3.0f, 110.0f, 22.0f, "+ Sequence", false, true, kAccent);
     region(addX, top + 3.0f, 110.0f, 22.0f, [this, addX, top](const Press&) {
@@ -1387,7 +1373,10 @@ void RackWidget::drawDock() {
         // A device that left: amber, until it's back.
         const std::string text = chip.label + (chip.connected ? "" : " (disconnected)");
         const float       w    = labelWidth(text, 12.0f) + 30.0f;
-        box(x, iy + 6.0f, w, 22.0f, kTrack, 11.0f);
+        beginPath();
+        roundedRect(x, iy + 6.0f, w, 22.0f, 11.0f);
+        fillColor(kSlate.r, kSlate.g, kSlate.b, 77);   // the button face's slate, as a pill
+        NanoVG::fill();
         beginPath();
         circle(x + 11.0f, iy + 17.0f, 4.0f);
         fill(!chip.connected ? kAmber : chip.active ? kGreen : kBarBg);
@@ -1423,7 +1412,7 @@ void RackWidget::drawSequenceRow(const SequenceRowModel& seq, float y) {
     const bool pending = seq.state == SequenceState::Starting || seq.state == SequenceState::Stopping;
     const bool running = seq.state == SequenceState::Playing || seq.state == SequenceState::Stopping;
     const bool blinkOn = std::fmod(ui::nowSeconds(), 0.5) < 0.25;
-    box(kPad, y + 8.0f, 32.0f, 28.0f, pending ? (blinkOn ? kAmber : kTrack) : running ? kGreen : kTrack, 4.0f);
+    buttonFace(kPad, y + 8.0f, 32.0f, 28.0f, pending ? blinkOn : running, pending ? kAmber : kGreen);
     beginPath();
     if (running) {
         rect(kPad + 10.0f, y + 16.0f, 12.0f, 12.0f);
@@ -1464,7 +1453,7 @@ void RackWidget::drawSequenceRow(const SequenceRowModel& seq, float y) {
            [this, id = seq.id, name = seq.name](const Press&) { startRename(id, name); });
     region(nameX, y + 25.0f, editX - nameX - 10.0f, kSeqRowH - 29.0f,
            [this, id = seq.id, nameX, y](const Press&) { openTargetsMenu(id, nameX, y + kSeqRowH - 4.0f); });
-    button(editX, y + 10.0f, 44.0f, 24.0f, "Edit", false, true, kAccent);
+    button(editX, y + 10.0f, 44.0f, 24.0f, "Edit", false, true, kPurple);
     region(editX, y + 10.0f, 44.0f, 24.0f, openEditor);
     region(mapX, y + 10.0f, mapW, 24.0f, openEditor);
 
@@ -1476,21 +1465,21 @@ void RackWidget::drawSequenceRow(const SequenceRowModel& seq, float y) {
         for (double u = 0.0; u < seq.length; u += unitsPerBeat)
             box(mapX + static_cast<float>(u) * unitW, y + 10.0f, 1.0f, 24.0f, kTrack);
     for (const std::uint32_t start : seq.noteStarts)
-        box(mapX + static_cast<float>(start) * unitW, y + 16.0f, std::max(2.0f, unitW - 1.0f), 12.0f, kAccent, 1.0f);
+        box(mapX + static_cast<float>(start) * unitW, y + 16.0f, std::max(2.0f, unitW - 1.0f), 12.0f, kPurple, 1.0f);
     if (running)
         box(mapX + static_cast<float>(seq.position) * unitW - 1.0f, y + 8.0f, 2.0f, 28.0f, kAmber);
 
     // At Start (starts with the transport), rate, length, launch, Repeat, MIDI;
     // the red X at the right end.
     float x = mapX + mapW + 8.0f;
-    button(x, y + 10.0f, 62.0f, 24.0f, "At Start", seq.atStart, true, kAccent);
+    button(x, y + 10.0f, 62.0f, 24.0f, "At Start", seq.atStart, true, kPurple);
     region(x, y + 10.0f, 62.0f, 24.0f,
            [this, id = seq.id, on = seq.atStart](const Press&) { controller.setSequenceAtStart(id, !on); });
     x += 72.0f;
     const std::string rate = seq.rate.denominator == 1
                                  ? std::to_string(seq.rate.numerator)
                                  : std::to_string(seq.rate.numerator) + "/" + std::to_string(seq.rate.denominator);
-    button(x, y + 10.0f, 70.0f, 24.0f, "Rate " + rate, false, true, kAccent);
+    dropdown(x, y + 10.0f, 70.0f, 24.0f, "Rate " + rate, kText);
     region(x, y + 10.0f, 70.0f, 24.0f, [this, id = seq.id, x, y, current = seq.rate](const Press&) {
         Menu m;
         m.x     = x;
@@ -1515,8 +1504,8 @@ void RackWidget::drawSequenceRow(const SequenceRowModel& seq, float y) {
     });
     x += 148.0f;
     const char* launch = seq.launch == LaunchQuantize::Bar ? "Bar" : seq.launch == LaunchQuantize::Beat ? "Beat" : "Now";
-    button(x, y + 10.0f, 56.0f, 24.0f, launch, false, true, kAccent);
-    region(x, y + 10.0f, 56.0f, 24.0f, [this, id = seq.id, x, y, current = seq.launch](const Press&) {
+    dropdown(x, y + 10.0f, 60.0f, 24.0f, launch, kText);
+    region(x, y + 10.0f, 60.0f, 24.0f, [this, id = seq.id, x, y, current = seq.launch](const Press&) {
         Menu m;
         m.x     = x;
         m.y     = y + 36.0f;
@@ -1528,13 +1517,13 @@ void RackWidget::drawSequenceRow(const SequenceRowModel& seq, float y) {
             m.items.push_back(MenuItem{text, [this, id, q = q] { controller.setSequenceLaunch(id, q); }, current == q});
         openMenu(std::move(m));
     });
-    x += 62.0f;
-    button(x, y + 10.0f, 64.0f, 24.0f, "Repeat", seq.repeat, true, kAccent);
+    x += 66.0f;
+    button(x, y + 10.0f, 64.0f, 24.0f, "Repeat", seq.repeat, true, kPurple);
     region(x, y + 10.0f, 64.0f, 24.0f,
            [this, id = seq.id, repeat = seq.repeat](const Press&) { controller.setSequenceRepeat(id, !repeat); });
     x += 70.0f;
     // MIDI triggers: lit when it has some, blinking amber while learning one.
-    midiButton(x, y + 10.0f, kMidiW, 24.0f, seq.learning ? blinkOn : !seq.triggers.empty(), seq.learning ? kAmber : kAccent);
+    midiButton(x, y + 10.0f, kMidiW, 24.0f, seq.learning ? blinkOn : !seq.triggers.empty(), seq.learning ? kAmber : kPurple);
     region(x, y + 10.0f, kMidiW, 24.0f, [this, seq, x, y](const Press&) { openTriggerMenu(seq, x, y + 36.0f); });
     x += kMidiW + 6.0f;
     const float rx = std::max(x + 8.0f, width() - kPad - kRemoveSize), ry = y + (kSeqRowH - kRemoveSize) / 2;
@@ -1566,8 +1555,8 @@ void RackWidget::drawLooperRow(const LooperRowModel& l, float y) {
     const bool    blinkOn   = std::fmod(ui::nowSeconds(), 0.5) < 0.25;
     const bool    recording = l.state == LooperState::Recording || l.state == LooperState::Overdubbing;
     const bool    playing   = l.state == LooperState::Playing;
-    const UiColor face      = l.waiting ? (blinkOn ? kAmber : kTrack) : recording ? kRed : playing ? kGreen : kTrack;
-    box(kPad, y + 8.0f, 32.0f, 28.0f, face, 4.0f);
+    buttonFace(kPad, y + 8.0f, 32.0f, 28.0f, l.waiting ? blinkOn : recording || playing,
+               l.waiting ? kAmber : recording ? kRed : kGreen);
     beginPath();
     if (l.state == LooperState::Empty || l.state == LooperState::Armed || recording) {
         circle(kPad + 16.0f, y + 22.0f, 6.0f);
@@ -1632,19 +1621,19 @@ void RackWidget::drawLooperRow(const LooperRowModel& l, float y) {
     // Undo, Clear; then its settings: input, quantize, start, length.
     float x = mapX + mapW + 8.0f;
     const bool undo = l.passes > 1 || l.state == LooperState::Overdubbing;
-    button(x, y + 10.0f, 50.0f, 24.0f, "Undo", false, undo, kAccent);
+    button(x, y + 10.0f, 50.0f, 24.0f, "Undo", false, undo, kPurple);
     if (undo) region(x, y + 10.0f, 50.0f, 24.0f, [this, id = l.id](const Press&) { controller.undoLooper(id); });
     x += 56.0f;
     const bool clear = l.state != LooperState::Empty;
-    button(x, y + 10.0f, 50.0f, 24.0f, "Clear", false, clear, kAccent);
+    button(x, y + 10.0f, 50.0f, 24.0f, "Clear", false, clear, kPurple);
     if (clear) region(x, y + 10.0f, 50.0f, 24.0f, [this, id = l.id](const Press&) { controller.clearLooper(id); });
     x += 56.0f;
     // Keep: convert to a sequence in this rack (saved with it); the looper plays on.
     const bool keep = l.lengthBeats > 0.0;
-    button(x, y + 10.0f, 50.0f, 24.0f, "Keep", false, keep, kAccent);
+    button(x, y + 10.0f, 50.0f, 24.0f, "Keep", false, keep, kPurple);
     if (keep) region(x, y + 10.0f, 50.0f, 24.0f, [this, id = l.id](const Press&) { controller.keepLooperAsSequence(id); });
     x += 62.0f;
-    button(x, y + 10.0f, 64.0f, 24.0f, "Input", false, true, l.inputConnected ? kAccent : kAmber);
+    button(x, y + 10.0f, 64.0f, 24.0f, "Input", false, true, l.inputConnected ? kPurple : kAmber);
     region(x, y + 10.0f, 64.0f, 24.0f, [this, id = l.id, x, y](const Press&) {
         controller.refreshSources();
         Menu m;
@@ -1659,7 +1648,7 @@ void RackWidget::drawLooperRow(const LooperRowModel& l, float y) {
         openMenu(std::move(m));
     });
     x += 70.0f;
-    button(x, y + 10.0f, 74.0f, 24.0f, "Q " + beatsText(l.quantize), false, true, kAccent);
+    dropdown(x, y + 10.0f, 74.0f, 24.0f, "Q " + beatsText(l.quantize), kText);
     region(x, y + 10.0f, 74.0f, 24.0f, [this, id = l.id, x, y, current = l.quantize](const Press&) {
         Menu m;
         m.x     = x;
@@ -1672,8 +1661,8 @@ void RackWidget::drawLooperRow(const LooperRowModel& l, float y) {
         openMenu(std::move(m));
     });
     x += 80.0f;
-    button(x, y + 10.0f, 50.0f, 24.0f, l.atBar ? "Bar" : "Beat", false, true, kAccent);
-    region(x, y + 10.0f, 50.0f, 24.0f, [this, id = l.id, x, y, atBar = l.atBar](const Press&) {
+    dropdown(x, y + 10.0f, 58.0f, 24.0f, l.atBar ? "Bar" : "Beat", kText);
+    region(x, y + 10.0f, 58.0f, 24.0f, [this, id = l.id, x, y, atBar = l.atBar](const Press&) {
         Menu m;
         m.x     = x;
         m.y     = y + 36.0f;
@@ -1683,11 +1672,11 @@ void RackWidget::drawLooperRow(const LooperRowModel& l, float y) {
         m.items.push_back(MenuItem{"The next beat", [this, id] { controller.setLooperStart(id, false); }, !atBar});
         openMenu(std::move(m));
     });
-    x += 56.0f;
+    x += 64.0f;
     const std::string length = l.fixedLength == 0 ? "By press"
                                : std::to_string(l.fixedLength) + (l.fixedInBars ? (l.fixedLength == 1 ? " bar" : " bars")
                                                                                 : (l.fixedLength == 1 ? " beat" : " beats"));
-    button(x, y + 10.0f, 76.0f, 24.0f, length, false, true, kAccent);
+    dropdown(x, y + 10.0f, 76.0f, 24.0f, length, kText);
     region(x, y + 10.0f, 76.0f, 24.0f, [this, id = l.id, x, y, l](const Press&) {
         Menu m;
         m.x     = x;
@@ -1708,7 +1697,7 @@ void RackWidget::drawLooperRow(const LooperRowModel& l, float y) {
     });
     x += 82.0f;
     // Clean: a fat finger's slip (the short note beside the right one) isn't played.
-    button(x, y + 10.0f, 50.0f, 24.0f, "Clean", l.cleanup, true, kAccent);
+    button(x, y + 10.0f, 50.0f, 24.0f, "Clean", l.cleanup, true, kPurple);
     region(x, y + 10.0f, 50.0f, 24.0f,
            [this, id = l.id, on = l.cleanup](const Press&) { controller.setLooperCleanup(id, !on); });
     x += 56.0f;
@@ -1717,7 +1706,7 @@ void RackWidget::drawLooperRow(const LooperRowModel& l, float y) {
     // connected, blinking amber while learning.
     const RackViewModel& view = controller.view();
     midiButton(x, y + 10.0f, kMidiW, 24.0f, view.looperSwitchLearning ? blinkOn : !view.looperSwitch.empty(),
-               view.looperSwitchLearning || !view.looperSwitchConnected ? kAmber : kAccent);
+               view.looperSwitchLearning || !view.looperSwitchConnected ? kAmber : kPurple);
     region(x, y + 10.0f, kMidiW, 24.0f, [this, x, y](const Press&) { openLooperSwitchMenu(x, y + 36.0f); });
     x += kMidiW + 6.0f;
 

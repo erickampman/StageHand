@@ -24,9 +24,17 @@ struct UiColor {
 };
 
 namespace ui {
-constexpr UiColor kBg{22, 24, 30}, kRowA{31, 34, 42}, kRowB{35, 38, 47}, kBarBg{16, 18, 23}, kPanel{44, 48, 59},
-    kText{232, 234, 240}, kDim{140, 146, 160}, kAccent{90, 160, 255}, kAmber{240, 170, 50}, kRed{232, 72, 60},
-    kGreen{80, 200, 120}, kTrack{58, 62, 74}, kLine{48, 52, 62};
+// StageHand's colours (docs/look.md): neutral charcoal panels, so the icon's
+// three colours carry it. The accent is the icon's green (what's on, lit or
+// chosen), purple the second (sequences, loopers, the sources), orange only
+// in the brand; amber stays the warning colour.
+constexpr UiColor kBg{20, 22, 26}, kRowA{30, 32, 37}, kRowB{34, 36, 42}, kBarBg{15, 16, 19}, kPanel{38, 41, 48},
+    kText{232, 234, 240}, kDim{140, 145, 156}, kAccent{116, 201, 142}, kPurple{180, 160, 234}, kOrange{242, 166, 94},
+    kAmber{240, 170, 50}, kRed{232, 72, 60}, kGreen{80, 200, 120}, kTrack{58, 62, 72}, kLine{46, 49, 56},
+    // The house look's (KeyboardEDO's docs/decisions.md, "Look and feel"), in
+    // StageHand's neutrals: sections a step up from the panel, value boxes and
+    // slots darker, borders a faint slate.
+    kSection{31, 34, 40}, kWell{14, 15, 18}, kSlate{110, 116, 128};
 // The key StageHand's shortcuts and modified drags use (docs/macos.md, decision
 // 7): Command on macOS, Control elsewhere; and the names the windows show.
 #ifdef __APPLE__
@@ -104,6 +112,24 @@ protected:
     void  label(float x, float y, const std::string& text, float size, UiColor c, int align = ALIGN_LEFT | ALIGN_MIDDLE);
     float labelWidth(const std::string& text, float size);
     void  button(float x, float y, float w, float h, const std::string& text, bool on, bool enabled, UiColor onColor);
+    // A button's face without its text: faint slate with a border, or `onColor`
+    // when on (its ink is then kBarBg).
+    void  buttonFace(float x, float y, float w, float h, bool on, UiColor onColor);
+    // The house look (KeyboardEDO's docs/decisions.md, "Look and feel"; the
+    // plugins' PlainOldSynth): the knob's glowing sphere; a horizontal slider,
+    // its thumb's centre at `at` from x0 (0) to x1 (1), lit from `rest`, the
+    // thumb `thumb` across; a dropdown (text and a chevron in a dark box); a
+    // value box (centred text in one); a section (a rounded box a step up from
+    // the panel, for a group of controls; its caller writes the title).
+    void  sphere(float cx, float cy, float r, UiColor accent, float intensity = 1.0f);
+    void  slider(float x0, float x1, float cy, float at, float rest, float thumb, UiColor accent, bool dim);
+    void  dropdown(float x, float y, float w, float h, const std::string& text, UiColor ink, float size = 13.0f);
+    void  valueBox(float x, float y, float w, float h, const std::string& text, UiColor ink, float size = 13.0f);
+    void  section(float x, float y, float w, float h);
+    // The Unlikelyware logo, `h` high, and the two-colour "StageHand" wordmark
+    // after it, centred on `cy`; a click on the logo opens unlikelyware.com.
+    // Returns the width taken.
+    float brand(float x, float cy, float h);
     void  removeButton(float x, float y, float size);       // a red X, for "remove this row"
     // MIDI control (learned triggers, a switch): a 5-pin DIN plug, drawn as
     // button() is, lit when `on`.
@@ -161,6 +187,11 @@ private:
         std::function<void(const std::string&)> done;
     };
     std::optional<TextField> field;
+
+    // The brand's, made on first use (the context exists by then).
+    bool                   brandTried = false;
+    DGL_NAMESPACE::NanoImage logo;
+    int                    brandFont = -1;
 
     std::vector<Region> regions;    // from the last draw
     float               regionDy = 0;   // beginShift()

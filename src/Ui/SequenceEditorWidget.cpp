@@ -152,7 +152,7 @@ void SequenceEditorWidget::drawGrid(const Sequence& seq) {
         const int alpha = 45 + static_cast<int>(210.0 * n.velocity / maxVelocity);   // brighter is louder
         beginPath();
         roundedRect(x + 1.0f, y + 1.0f, std::max(2.0f, nw - 2.0f), kRowH - 2.0f, 2.0f);
-        fill(kAccent, alpha);
+        fill(kPurple, alpha);
         NanoVG::fill();
         if (item.selected) outline(x + 1.0f, y + 1.0f, std::max(2.0f, nw - 2.0f), kRowH - 2.0f, kText, 2.0f);
     }
@@ -164,7 +164,7 @@ void SequenceEditorWidget::drawGrid(const Sequence& seq) {
     if (velocityDrag) drawVelocityReadout(seq);
     if (banding) {
         const float bx = std::min(bandX0, bandX1), by = std::min(bandY0, bandY1);
-        outline(bx, by, std::fabs(bandX1 - bandX0), std::fabs(bandY1 - bandY0), kAccent, 0.0f);
+        outline(bx, by, std::fabs(bandX1 - bandX0), std::fabs(bandY1 - bandY0), kPurple, 0.0f);
     }
     restore();
     region(x0, y0, w, h, [this](const Press& p) { pressCanvas(p); }, {}, true);
@@ -188,10 +188,10 @@ void SequenceEditorWidget::drawVelocityReadout(const Sequence& seq) {
     float       y = rowY(n.pitch) - h - 4.0f;
     if (y < canvasY() + 2.0f) y = rowY(n.pitch) + kRowH + 4.0f;
     box(x, y, w, h, kPanel, 4.0f);
-    outline(x, y, w, h, kAccent, 4.0f);
+    outline(x, y, w, h, kPurple, 4.0f);
     label(x + 8.0f, y + 11.0f, text, 11.0f, kText);
     box(x + 8.0f, y + 21.0f, w - 16.0f, 4.0f, kTrack, 2.0f);
-    box(x + 8.0f, y + 21.0f, std::max(2.0f, (w - 16.0f) * static_cast<float>(frac)), 4.0f, kAccent, 2.0f);
+    box(x + 8.0f, y + 21.0f, std::max(2.0f, (w - 16.0f) * static_cast<float>(frac)), 4.0f, kPurple, 2.0f);
 }
 
 void SequenceEditorWidget::drawRuler(const Sequence& seq) {
@@ -238,7 +238,7 @@ void SequenceEditorWidget::drawStrip(const Sequence& seq) {
     const bool running = state == SequenceState::Playing || state == SequenceState::Stopping;
     const bool pending = state == SequenceState::Starting || state == SequenceState::Stopping;
     const bool blink   = std::fmod(nowSeconds(), 0.5) < 0.25;
-    box(kPad, 52.0f, 90.0f, 26.0f, pending ? (blink ? kAmber : kTrack) : running ? kGreen : kTrack, 4.0f);
+    buttonFace(kPad, 52.0f, 90.0f, 26.0f, pending ? blink : running, pending ? kAmber : kGreen);
     label(kPad + 45.0f, 65.0f, running ? "Stop" : "Play", 13.0f, running || (pending && blink) ? kBarBg : kText,
           ALIGN_CENTER | ALIGN_MIDDLE);
     region(kPad, 52.0f, 90.0f, 26.0f, [this, id](const Press&) { controller.togglePlay(id); });
@@ -252,7 +252,7 @@ void SequenceEditorWidget::drawStrip(const Sequence& seq) {
     settingRow(90.0f, "Protocol");
     const bool empty = seq.notes.empty();
     for (const auto& [p, text, x] : {std::tuple{MidiProtocol::Midi1, "1.0", 80.0f}, {MidiProtocol::Midi2, "2.0", 128.0f}}) {
-        button(x, 90.0f, 44.0f, 22.0f, text, seq.protocol == p, empty || seq.protocol == p, kAccent);
+        button(x, 90.0f, 44.0f, 22.0f, text, seq.protocol == p, empty || seq.protocol == p, kPurple);
         if (empty && seq.protocol != p)
             region(x, 90.0f, 44.0f, 22.0f, [this, id, p = p](const Press&) {
                 controller.setSequenceProtocol(id, p);
@@ -276,7 +276,7 @@ void SequenceEditorWidget::drawStrip(const Sequence& seq) {
     }
 
     settingRow(180.0f, "Rate");
-    button(80.0f, 180.0f, 140.0f, 22.0f, rateText(seq.rate) + " per beat", false, true, kAccent);
+    dropdown(80.0f, 180.0f, 140.0f, 22.0f, rateText(seq.rate) + " per beat", kText);
     region(80.0f, 180.0f, 140.0f, 22.0f, [this, id, current = seq.rate](const Press&) {
         Menu m;
         m.x     = 80.0f;
@@ -301,7 +301,7 @@ void SequenceEditorWidget::drawStrip(const Sequence& seq) {
     const char* launch = seq.launch == LaunchQuantize::Bar    ? "Next bar"
                          : seq.launch == LaunchQuantize::Beat ? "Next beat"
                                                               : "Immediately";
-    button(80.0f, 240.0f, 140.0f, 22.0f, launch, false, true, kAccent);
+    dropdown(80.0f, 240.0f, 140.0f, 22.0f, launch, kText);
     region(80.0f, 240.0f, 140.0f, 22.0f, [this, id, current = seq.launch](const Press&) {
         Menu m;
         m.x     = 80.0f;
@@ -316,7 +316,7 @@ void SequenceEditorWidget::drawStrip(const Sequence& seq) {
     });
 
     settingRow(270.0f, "Repeat");
-    button(80.0f, 270.0f, 70.0f, 22.0f, seq.repeat ? "On" : "Off", seq.repeat, true, kAccent);
+    button(80.0f, 270.0f, 70.0f, 22.0f, seq.repeat ? "On" : "Off", seq.repeat, true, kPurple);
     region(80.0f, 270.0f, 70.0f, 22.0f,
            [this, id, repeat = seq.repeat](const Press&) { controller.setSequenceRepeat(id, !repeat); });
 
@@ -344,9 +344,9 @@ void SequenceEditorWidget::drawStrip(const Sequence& seq) {
             std::max(1, static_cast<int>(editor.newNoteLength()) + dir * (big ? 4 : 1))));
     });
 
-    button(kPad, 424.0f, 100.0f, 24.0f, "Undo", false, editor.canUndo(), kAccent);
+    button(kPad, 424.0f, 100.0f, 24.0f, "Undo", false, editor.canUndo(), kPurple);
     if (editor.canUndo()) region(kPad, 424.0f, 100.0f, 24.0f, [this](const Press&) { editor.undo(); });
-    button(kPad + 108.0f, 424.0f, 100.0f, 24.0f, "Redo", false, editor.canRedo(), kAccent);
+    button(kPad + 108.0f, 424.0f, 100.0f, 24.0f, "Redo", false, editor.canRedo(), kPurple);
     if (editor.canRedo()) region(kPad + 108.0f, 424.0f, 100.0f, 24.0f, [this](const Press&) { editor.redo(); });
 
     const std::string cmd = ui::kCommandName, alt = ui::kAltName;
