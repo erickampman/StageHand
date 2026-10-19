@@ -235,6 +235,26 @@ void UiWidget::section(float x, float y, float w, float h) {
     stroke();
 }
 
+void UiWidget::tintedSection(float x, float y, float w, float h, UiColor left, UiColor right, UiColor stripe,
+                             float stripeW) {
+    beginPath();
+    roundedRect(x, y, w, h, 7.0f);
+    fillPaint(linearGradient(x, y, x + w, y, Color(left.r, left.g, left.b), Color(right.r, right.g, right.b)));
+    NanoVG::fill();
+    save();
+    intersectScissor(x, y, stripeW, h);
+    beginPath();
+    roundedRect(x, y, w, h, 7.0f);
+    fill(stripe);
+    NanoVG::fill();
+    restore();
+    beginPath();
+    roundedRect(x + 0.5f, y + 0.5f, w - 1.0f, h - 1.0f, 7.0f);
+    strokeColor(withAlpha(kSlate, 0.30f));
+    strokeWidth(1.0f);
+    stroke();
+}
+
 // As KeyboardEDO's toolbar has it (its KeyboardApp::drawBrand): the logo, then
 // both words on one baseline in Karla, a letter at a time so the spacing can
 // be tightened (Karla's is generous). "Stage" in the icon's purple, "Hand" in

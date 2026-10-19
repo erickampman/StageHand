@@ -52,7 +52,19 @@ stands apart from KeyboardEDO's plum and slate blue:
 - **Value boxes** (`valueBox()`): the tempo and the steppers' values.
 - **Sections** (`section()`): the plugins' group boxes, a rounded box a step
   up from the panel, its title in a colour. Each bus strip, and the dock's
-  header and inputs.
+  header and inputs. Each rack row is one too (`tintedSection()`, added
+  2026-10-19), keeping its colour: the tint across it and the stripe down
+  its left edge, inside the rounding; a 4 px gap between rows instead of a
+  line. The sequence and looper rows stay full width.
+
+## Adding an instrument
+- **The space below the rows has a large + in its middle** (a faint circle
+  and cross, added 2026-10-19). A right-click anywhere in that space, or a
+  click on the +, opens the plugin list with only the instruments ("Add an
+  instrument"); the choice is added at the bottom, as + Add plugin's is.
+  The toolbar's + Add plugin still lists everything. With no rows, the
+  rack's "no plugins yet" note sits under the +. When the space is too short
+  for the +, the right-click still works there.
 
 ## Not yet
 - Knobs: StageHand has none yet; `sphere()` is the knob's body, ready for

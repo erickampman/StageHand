@@ -230,11 +230,15 @@ Implemented in step 5:
   than two outputs, and a red X at the row's right end removes the row, after
   a Remove / Cancel confirmation. (Until 2026-10-01 a "..." menu held
   Enabled, the output pair and Remove. Enabled is gone: Mute does its job.)
-  Sequence rows end with the same red X.
+  Sequence rows end with the same red X. Shift-click on the X removes it at
+  once, without asking (2026-10-19; the confirmation says so). There's no
+  undo for it yet.
 - A muted row is dimmed like a placeholder (since 2026-10-01), except its M
   button, which stays bright.
 - "+ Add plugin" lists the scanned plugins (scanned once, on first use) and
-  adds the choice at the bottom. `--save-rack PATH` alone starts a new,
+  adds the choice at the bottom. A right-click below the rows, or a click on
+  the + there, lists only the instruments (docs/look.md, 2026-10-19).
+  `--save-rack PATH` alone starts a new,
   empty rack. With the window, a rack with nothing runnable no longer exits.
 - Placeholder rows show no output controls.
 - Menus and the panel are overlays inside the window (DGL has no native

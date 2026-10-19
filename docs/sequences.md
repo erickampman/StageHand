@@ -166,8 +166,9 @@ main window:
     the last note's end and says why; notes are deleted in the editor, never
     by the length control.
   - A launch menu, a Repeat toggle, and a red X at the row's right end that
-    removes it after a Remove / Cancel confirmation (a "•••" menu until
-    2026-10-01, which also held Edit notes... and Rename...).
+    removes it after a Remove / Cancel confirmation, or at once with Shift
+    held (2026-10-19) (a "•••" menu until 2026-10-01, which also held Edit
+    notes... and Rename...).
 - **Rows' source menus** list the sequences after the devices.
 - **Size:** the dock grows with its sequences up to a little over half the
   window, then scrolls with the wheel.

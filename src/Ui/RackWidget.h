@@ -173,13 +173,16 @@ private:
     void startRename(const std::string& id, const std::string& name);
     void openTriggerMenu(const SequenceRowModel& seq, float x, float y);
     void openSourceMenu(const RowModel& row, float x, float y);
+    void removeRow(const std::string& id);   // at once (Shift-click on its X), or once confirmed
     void confirmRemoveRow(const std::string& id, const std::string& name, float right, float y);
     void openOutputMenu(const RowModel& row, float x, float y);
-    void openAddMenu(float x, float y);
+    void openAddMenu(float x, float y, bool instrumentsOnly = false);
+    void drawAddArea(float top, float bottom);   // the empty space below the rows
     // The plugin list (scans once). `none`, if not empty, is a first item that
     // calls `chosen` with an empty descriptor (e.g. "No instrument for now").
     void openPluginMenu(float x, float y, const std::string& title,
-                        std::function<void(const PluginDescriptor&)> chosen, const std::string& none = {});
+                        std::function<void(const PluginDescriptor&)> chosen, const std::string& none = {},
+                        bool instrumentsOnly = false);
     // Where a sequence plays: its rows (ticked = playing into), and New row....
     void openTargetsMenu(const std::string& seqId, float x, float y);
     // "+ Sequence": after the protocol, choose where it plays (a row, a new row,

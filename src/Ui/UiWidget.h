@@ -126,6 +126,9 @@ protected:
     void  dropdown(float x, float y, float w, float h, const std::string& text, UiColor ink, float size = 13.0f);
     void  valueBox(float x, float y, float w, float h, const std::string& text, UiColor ink, float size = 13.0f);
     void  section(float x, float y, float w, float h);
+    // A section shaded from `left` to `right`, with a `stripe`-coloured band
+    // `stripeW` wide down its left edge, inside its rounding (a rack row).
+    void  tintedSection(float x, float y, float w, float h, UiColor left, UiColor right, UiColor stripe, float stripeW);
     // The Unlikelyware logo, `h` high, and the two-colour "StageHand" wordmark
     // after it, centred on `cy`; a click on the logo opens unlikelyware.com.
     // Returns the width taken.

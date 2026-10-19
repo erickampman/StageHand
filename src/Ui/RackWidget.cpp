@@ -250,9 +250,7 @@ void RackWidget::draw() {
         if (y + kRowH < topH() || y > topH() + rowsHeight()) continue;
         drawRow(view.rows[i], i);
     }
-    if (view.rows.empty())
-        label(width() / 2, topH() + rowsHeight() / 2, "This rack has no plugins yet. Add one with + Add plugin.",
-              16.0f, kDim, ALIGN_CENTER | ALIGN_MIDDLE);
+    drawAddArea(view.rows.empty() ? topH() : rowY(view.rows.size() - 1) + kRowH, topH() + rowsHeight());
     resetScissor();
 
     // Drawn after the rows, so their regions cover rows scrolled under them.
@@ -264,6 +262,44 @@ void RackWidget::draw() {
     if (view.setlist.open) drawSetlistRow();
     drawStatus();
     drawEdgeFlash();
+}
+
+// The space below the rows: a large + in its middle, and a right-click
+// anywhere in it (or a click on the +) lists the instruments to add
+// (docs/look.md). Too short to hold the +, it only takes the right-click.
+void RackWidget::drawAddArea(float top, float bottom) {
+    const float h = bottom - top;
+    if (h < 8.0f) return;
+    const bool  empty = controller.view().rows.empty();
+    const float cx = width() / 2, cy = top + h / 2 - (empty ? 14.0f : 0.0f), r = 30.0f;
+    const bool  plus = h >= r * 2 + 16.0f;
+    if (plus) {
+        beginPath();
+        circle(cx, cy, r);
+        strokeColor(kSlate.r, kSlate.g, kSlate.b, 64);
+        strokeWidth(1.5f);
+        stroke();
+        beginPath();
+        moveTo(cx - r * 0.5f, cy);
+        lineTo(cx + r * 0.5f, cy);
+        moveTo(cx, cy - r * 0.5f);
+        lineTo(cx, cy + r * 0.5f);
+        strokeColor(kSlate.r, kSlate.g, kSlate.b, 140);
+        strokeWidth(4.0f);
+        lineCap(ROUND);
+        stroke();
+        lineCap(BUTT);
+        if (empty)
+            label(cx, cy + r + 22.0f, "This rack has no plugins yet. Add an instrument here, or with + Add plugin.",
+                  16.0f, kDim, ALIGN_CENTER | ALIGN_MIDDLE);
+    }
+    region(
+        0, top, width(), h,
+        [this, cx, cy, r, plus](const Press& p) {
+            const bool onPlus = plus && std::hypot(p.x - cx, p.y - cy) <= r;
+            if (p.button == dgl::kMouseButtonRight || onPlus) openAddMenu(p.x, p.y, true);
+        },
+        {}, true);
 }
 
 // --- the Perform view (docs/perform.md, decisions 10 to 15) --------------------------------
@@ -889,9 +925,9 @@ void RackWidget::drawRow(const RowModel& row, std::size_t index) {
     const float   y     = rowY(index);
     const UiColor color = kRowColors[index % kRowColorCount];
     const UiColor base  = index % 2 ? kRowB : kRowA;
-    gradientBox(0, y, width(), kRowH, mix(base, color, kTintLeft), mix(base, color, kTintRight));
-    box(0, y, kStripeW, kRowH, color);
-    box(0, y + kRowH - 1.0f, width(), 1.0f, kLine);
+    // A section, as the bus strips are (docs/look.md), in the row's colour.
+    tintedSection(4.0f, y + 2.0f, width() - 8.0f, kRowH - 4.0f, mix(base, color, kTintLeft),
+                  mix(base, color, kTintRight), color, kStripeW + 1.0f);
     box(kInputW, y + 8.0f, 1.0f, kRowH - 16.0f, kLine);
     box(outputX(), y + 8.0f, 1.0f, kRowH - 16.0f, kLine);
 
@@ -905,8 +941,10 @@ void RackWidget::drawRow(const RowModel& row, std::size_t index) {
     // Remove: the red X at the right end, asking first.
     const float rx = outputX() + outputW() - kPad - kRemoveSize, ry = y + (kRowH - kRemoveSize) / 2;
     removeButton(rx, ry, kRemoveSize);
-    region(rx, ry, kRemoveSize, kRemoveSize, [this, id = row.id, name = row.name, rx, ry](const Press&) {
-        confirmRemoveRow(id, name, rx + kRemoveSize, ry + kRemoveSize + 2.0f);
+    // Shift-click removes it at once, without asking.
+    region(rx, ry, kRemoveSize, kRemoveSize, [this, id = row.id, name = row.name, rx, ry](const Press& p) {
+        if ((p.mod & dgl::kModifierShift) != 0) removeRow(id);
+        else confirmRemoveRow(id, name, rx + kRemoveSize, ry + kRemoveSize + 2.0f);
     });
 }
 
@@ -1528,8 +1566,10 @@ void RackWidget::drawSequenceRow(const SequenceRowModel& seq, float y) {
     x += kMidiW + 6.0f;
     const float rx = std::max(x + 8.0f, width() - kPad - kRemoveSize), ry = y + (kSeqRowH - kRemoveSize) / 2;
     removeButton(rx, ry, kRemoveSize);
-    region(rx, ry, kRemoveSize, kRemoveSize, [this, id = seq.id, name = seq.name, rx, ry](const Press&) {
-        confirmRemoveSequence(id, name, rx + kRemoveSize, ry + kRemoveSize + 2.0f);
+    // Shift-click removes it at once, without asking.
+    region(rx, ry, kRemoveSize, kRemoveSize, [this, id = seq.id, name = seq.name, rx, ry](const Press& p) {
+        if ((p.mod & dgl::kModifierShift) != 0) controller.removeSequence(id);
+        else confirmRemoveSequence(id, name, rx + kRemoveSize, ry + kRemoveSize + 2.0f);
     });
 }
 
@@ -1794,11 +1834,12 @@ void RackWidget::openLooperSwitchMenu(float x, float y) {
 
 void RackWidget::confirmRemoveSequence(const std::string& id, const std::string& name, float right, float y) {
     Menu m;
-    m.w     = 230.0f;
+    m.w     = 260.0f;
     m.x     = std::max(8.0f, right - m.w);
     m.y     = y;
     m.title = "Remove " + name + "?";
     m.items.push_back(MenuItem{"Remove", [this, id] { controller.removeSequence(id); }, false, true});
+    m.items.push_back(MenuItem{"(Shift-click the X to skip this)", {}});
     m.items.push_back(MenuItem{"Cancel", [] {}});
     openMenu(std::move(m));
 }
@@ -2092,17 +2133,19 @@ void RackWidget::openSourceMenu(const RowModel& row, float x, float y) {
 
 void RackWidget::confirmRemoveRow(const std::string& id, const std::string& name, float right, float y) {
     Menu m;
-    m.w     = 220.0f;
+    m.w     = 260.0f;
     m.x     = std::max(8.0f, right - m.w);
     m.y     = y;
     m.title = "Remove " + name + "?";
-    m.items.push_back(MenuItem{"Remove", [this, id] {
-                                   if (filterId == id) filterId.clear();
-                                   controller.removeSlot(id);
-                               },
-                               false, true});
+    m.items.push_back(MenuItem{"Remove", [this, id] { removeRow(id); }, false, true});
+    m.items.push_back(MenuItem{"(Shift-click the X to skip this)", {}});
     m.items.push_back(MenuItem{"Cancel", [] {}});
     openMenu(std::move(m));
+}
+
+void RackWidget::removeRow(const std::string& id) {
+    if (filterId == id) filterId.clear();
+    controller.removeSlot(id);
 }
 
 // Which backend output pair the row plays into.
@@ -2119,15 +2162,19 @@ void RackWidget::openOutputMenu(const RowModel& row, float x, float y) {
     openMenu(std::move(m));
 }
 
-void RackWidget::openAddMenu(float x, float y) {
-    openPluginMenu(x, y, "Add a plugin (added at the bottom)", [this](const PluginDescriptor& plugin) {
-        controller.addPlugin(plugin, controller.view().rows.size());
-        scrollY = 1e9f;   // show the new row (clamped when drawn)
-    });
+void RackWidget::openAddMenu(float x, float y, bool instrumentsOnly) {
+    openPluginMenu(
+        x, y, instrumentsOnly ? "Add an instrument" : "Add a plugin (added at the bottom)",
+        [this](const PluginDescriptor& plugin) {
+            controller.addPlugin(plugin, controller.view().rows.size());
+            scrollY = 1e9f;   // show the new row (clamped when drawn)
+        },
+        {}, instrumentsOnly);
 }
 
 void RackWidget::openPluginMenu(float x, float y, const std::string& title,
-                                std::function<void(const PluginDescriptor&)> chosen, const std::string& none) {
+                                std::function<void(const PluginDescriptor&)> chosen, const std::string& none,
+                                bool instrumentsOnly) {
     Menu m;
     m.x     = x;
     m.y     = y;
@@ -2156,9 +2203,11 @@ void RackWidget::openPluginMenu(float x, float y, const std::string& title,
         }
     };
     section(PluginKind::Instrument, "Instruments", true);
-    section(PluginKind::Other, "Other (note effects)", true);
-    section(PluginKind::Effect, "Effects (for the rig's buses, below the rows)", false);
-    if (plugins.empty()) m.items.push_back(MenuItem{"No CLAP plugins found", {}, false, false});
+    if (!instrumentsOnly) {
+        section(PluginKind::Other, "Other (note effects)", true);
+        section(PluginKind::Effect, "Effects (for the rig's buses, below the rows)", false);
+    }
+    if (m.items.empty()) m.items.push_back(MenuItem{instrumentsOnly ? "No CLAP instruments found" : "No CLAP plugins found", {}, false, false});
     openMenu(std::move(m));
 }
 
