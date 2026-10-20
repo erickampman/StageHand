@@ -26,6 +26,8 @@
 ## M3: Performance features
 - [ ] Count-in per song; Perform view with large beat display
 - [ ] Panic: all notes off and pedals up, button and learned trigger; CPU and xrun display
+- [ ] Panic clears retuned keys: track keys sent Pitch 7.25, send Per-Note Management Reset to those only
+- [ ] Take the uw-core pin with Pitch 7.25 transpose (value moves with the key)
 - [ ] MIDI controllers to plugin parameters (knobs, faders, expression pedal), learned per rack or global
 - [ ] Velocity curves per row, or fixed velocity
 - [ ] MIDI out: program changes at song switch, MIDI clock, click as MIDI notes
