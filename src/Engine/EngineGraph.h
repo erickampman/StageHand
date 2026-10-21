@@ -9,6 +9,7 @@
 #include "Engine/SlotRuntime.h"
 #include "uw/plugin/HostedPlugin.h"
 #include "uw/plugin/PortLayout.h"
+#include "uw/ump/Ump.h"
 #include "Core/UwNames.h"
 
 namespace stagehand {
@@ -37,6 +38,12 @@ struct SlotConfig {
     // (and through the same filter). Preallocated here; read-only on the audio thread.
     std::vector<MidiSourceHandle> sequenceSources;
     std::uint16_t notePort    = 0;      // plugin note-input port that receives it
+    // The row's MIDI effects (CLAP note effects), in order, on its input side
+    // (docs/architecture.md, "Sequencer UI"): what the slot hears goes to the
+    // first one's note port 0, each one's output to the next, and the last
+    // one's to `plugin`, all in the same block. Their audio isn't heard.
+    // Activated with kMaxPluginBlockFrames like `plugin`; none may be null.
+    std::vector<std::shared_ptr<HostedPlugin>> midiEffects;
     std::uint32_t firstOutput = 0;      // backend output for the plugin's first channel
     // A slot of the rack switched away from, ringing out (docs/setlists.md,
     // section 3): no new note-ons reach it, the rest of its MIDI does (a
@@ -89,9 +96,24 @@ public:
 private:
     friend class Engine;
 
+    // Audio-thread working state for one of a slot's MIDI effects.
+    struct EffectState {
+        NoteDialectMask     dialects      = 0;   // of its note port 0 (0 = no MIDI in)
+        std::uint32_t       audioChannels = 0;   // of its main output: written, never heard
+        std::vector<float>  audio;               // audioChannels * kMaxPluginBlockFrames
+        std::vector<float*> channels;
+        // Its output stream, upconverted for a next stage that takes only MIDI 2.0.
+        ump::UpconvertState upconvert;
+    };
+
     // Audio-thread working state for one slot; sized at construction.
     struct SlotState {
-        NoteDialectMask     dialects      = 0;   // of the slot's note port (0 = no MIDI in)
+        // Of the note port the slot's MIDI goes to first: the first MIDI
+        // effect's, else the plugin's (0 = no MIDI in).
+        NoteDialectMask     dialects      = 0;
+        NoteDialectMask     pluginDialects = 0;  // of the plugin's own note port
+        std::vector<EffectState> effects;        // one per SlotConfig::midiEffects
+        std::vector<Event>  chain[2];            // a chunk's effect outputs, in turn; fixed capacity
         std::uint32_t       audioChannels = 0;   // of the plugin's main output port
         std::vector<Event>  events;              // one block's events; fixed capacity
         std::uint32_t       eventCount    = 0;

@@ -10,6 +10,7 @@ rack window); a macOS port is under way.
 - Design: [architecture](docs/architecture.md),
   [domain model](docs/domain-model.md), [rack format](docs/rack-format.md),
   [setlists](docs/setlists.md), [rig](docs/rig.md),
+  [MIDI effects](docs/midi-effects.md),
   [macOS port](docs/macos.md)
 - [Working with cloud sessions](docs/cloud-sessions.md)
 

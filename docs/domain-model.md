@@ -89,7 +89,10 @@ AlsaSeqInput, ClapPlugin) are the only things touching a dependency.
 **v1 topology is MainStage-style, not a chain.** Incoming MIDI fans out to every
 plugin slot whose MidiFilter accepts it, and each slot's main output is summed
 into the backend outputs. That's exactly what layers and splits need (M5), and a
-single plugin is just the one-slot case. Insert effects, general routing, and the
+single plugin is just the one-slot case. **The one chain is a row's MIDI
+effects** (added 2026-10-21, docs/midi-effects.md): note effects run in order in
+front of the slot's plugin in the same block, each one's output the next one's
+input; routing, the held-note table and Panic deliver to the first of them. Insert effects, general routing, and the
 sequencer (a MIDI source like any other) extend the graph type later. The
 long-term vocabulary still applies: sources, plugin nodes, outputs, and typed
 connections between them.

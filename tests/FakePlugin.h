@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "uw/plugin/HostedPlugin.h"
+#include "uw/ump/Ump.h"
 #include "Core/UwNames.h"
 
 namespace stagehand::test {
@@ -151,6 +152,78 @@ public:
     int              resets            = 0;
     bool             processing        = false;
     std::uint32_t    lastInputChannels = 0;
+
+private:
+    PortLayout layout;
+};
+
+// A note effect (a CLAP "note-effect"): no audio ports, one note input and one
+// note output. Each note on/off it's given leaves `semitones` higher (MIDI 1.0
+// and 2.0 alike), and a MIDI 2.0 one `pitch79` 1/512 semitones higher on top,
+// written as a Pitch 7.9 attribute; everything else leaves unchanged, at its
+// offset, in its own protocol. `emitLate` adds a note-on at that offset (out of
+// time order: after the rest). Records what it's given.
+class FakeNoteEffect final : public HostedPlugin {
+public:
+    explicit FakeNoteEffect(int transpose = 0, NoteDialectMask dialects = NoteDialect::Midi | NoteDialect::Midi2)
+        : semitones(transpose) {
+        desc.id   = "test.note-effect";
+        desc.name = "Fake note effect";
+        desc.kind = PluginKind::Other;
+        layout.noteInputs.push_back(NotePortInfo{"in", dialects, NoteDialect::Midi2});
+        layout.noteOutputs.push_back(NotePortInfo{"out", dialects, NoteDialect::Midi2});
+    }
+
+    const PluginDescriptor&    descriptor() const override { return desc; }
+    PortLayout                 portLayout() const override { return layout; }
+    std::vector<ParameterInfo> parameters() const override { return {}; }
+    bool                       activate(double, std::uint32_t) override { return true; }
+    void                       deactivate() override {}
+    double                     paramValue(std::uint32_t) const override { return 0.0; }
+    void                       flushParams(const EventBlock&, EventSink*) override {}
+    bool                       saveState(std::vector<std::byte>&) const override { return true; }
+    bool                       loadState(const std::byte*, std::size_t) override { return true; }
+    void                       idle() override {}
+
+    void process(const ProcessContext& ctx) noexcept override {
+        ++processed;
+        processing = true;
+        lastAudioChannels = ctx.audioOut.channelCount;
+        for (std::uint32_t i = 0; i < ctx.eventsIn.count; ++i) {
+            Event e = ctx.eventsIn.events[i];
+            received.push_back(e);   // allocates: fine in a test
+            if (e.type != EventType::Midi || ctx.eventsOut == nullptr) continue;
+            if (ump::isNoteOn(e.midi) || ump::isNoteOff(e.midi)) {
+                if (semitones != 0) ump::transposeNote(e.midi, semitones);
+                if (pitch79 != 0) ump::transposeNote79(e.midi, pitch79);
+            }
+            e.portIndex = 0;
+            ctx.eventsOut->push(e);
+        }
+        if (emitLate >= 0 && ctx.eventsOut != nullptr) {
+            Event late;
+            late.sampleOffset   = static_cast<std::uint32_t>(emitLate);
+            late.midi.words[0]  = 0x20907F40;   // MIDI 1.0 note 127
+            late.midi.wordCount = 1;
+            ctx.eventsOut->push(late);
+        }
+    }
+    void stopProcessing() noexcept override {
+        if (processing) ++stops;
+        processing = false;
+    }
+    void reset() noexcept override { ++resets; }
+
+    PluginDescriptor   desc;
+    int                semitones;
+    int                pitch79           = 0;
+    int                emitLate          = -1;
+    int                processed         = 0;
+    std::vector<Event> received;
+    int                stops             = 0;
+    int                resets            = 0;
+    bool               processing        = false;
+    std::uint32_t      lastAudioChannels = 99;
 
 private:
     PortLayout layout;

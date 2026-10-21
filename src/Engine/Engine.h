@@ -375,6 +375,10 @@ private:
     HeldNote*            findHeld(MidiSourceHandle source, const MidiMessage& m) noexcept;
     HeldNote*            claimHeld(MidiSourceHandle source, const MidiMessage& m) noexcept;
     void                 runSlots(const AudioCallbackContext& ctx) noexcept;
+    // Run a slot's MIDI effects over one chunk's events, in order; returns what
+    // the last one sent, ready for the slot's plugin (`input` if it has none).
+    EventBlock           runMidiEffects(std::size_t slot, const TimeInfo& time, std::uint32_t chunk,
+                                        EventBlock input) noexcept;
     void                 advanceTransport(const AudioCallbackContext& ctx) noexcept;
     void                 makeSequenceBlock(const AudioCallbackContext& ctx) noexcept;
     void                 renderClick(const AudioCallbackContext& ctx) noexcept;
@@ -493,6 +497,24 @@ private:
         }
     };
     ParamFeedback feedback{this};
+    // A MIDI effect's output (runMidiEffects()): its notes and MIDI, translated
+    // for the next stage's note port as deliver() does, into that stage's
+    // buffer at their offsets; its parameter changes, as ParamFeedback's.
+    struct ChainSink final : EventSink {
+        explicit ChainSink(Engine* owner) noexcept : engine(owner) {}
+        Engine*              engine;
+        const HostedPlugin*  plugin    = nullptr;   // the effect processing
+        Event*               events    = nullptr;   // the next stage's input
+        std::uint32_t        capacity  = 0;
+        std::uint32_t        count     = 0;
+        std::uint32_t        frames    = 0;         // the chunk's length: offsets past it are clamped
+        NoteDialectMask      dialects  = 0;         // of the next stage's note port
+        std::uint16_t        port      = 0;         // and its index
+        ump::UpconvertState* upconvert = nullptr;   // the effect's output stream's
+        void push(const Event& event) noexcept override;
+        void add(const MidiMessage& message, std::uint32_t offset) noexcept;
+    };
+    ChainSink chainSink{this};
     double        linkMasterDb = 0.0;   // the master's control link level (audio thread)
     // linkStates(): written at the end of each block.
     struct ShownLinkTarget {

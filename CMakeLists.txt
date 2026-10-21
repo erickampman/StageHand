@@ -309,3 +309,6 @@ stagehand_add_test(test-rackcontroller tests/RackControllerTests.cpp stagehand-a
 stagehand_add_test(test-sequenceeditor tests/SequenceEditorTests.cpp stagehand-app)
 stagehand_add_test(test-beatnow tests/BeatNowTests.cpp stagehand-app)
 stagehand_add_test(test-filedialog tests/FileDialogTests.cpp stagehand-app)
+if(TARGET stagehand-lib)   # real plugins: a note effect in front of an instrument (skips unless installed)
+    stagehand_add_test(test-note-effects tests/NoteEffectTests.cpp stagehand-lib)
+endif()

@@ -64,7 +64,26 @@ EngineGraph::EngineGraph(std::vector<SlotConfig> slotConfigs, std::vector<BusCon
 
         const PortLayout layout = configs[i].plugin->portLayout();
         if (configs[i].notePort < layout.noteInputs.size())
-            state.dialects = layout.noteInputs[configs[i].notePort].supportedDialects;
+            state.pluginDialects = layout.noteInputs[configs[i].notePort].supportedDialects;
+        state.dialects = state.pluginDialects;
+
+        const std::vector<std::shared_ptr<HostedPlugin>>& effects = configs[i].midiEffects;
+        state.effects.resize(effects.size());
+        for (std::size_t e = 0; e < effects.size(); ++e) {
+            EffectState&     effect = state.effects[e];
+            const PortLayout own    = effects[e]->portLayout();
+            if (!own.noteInputs.empty()) effect.dialects = own.noteInputs[0].supportedDialects;
+            if (const int main = mainAudioOutput(own); main >= 0)
+                effect.audioChannels = own.audioOutputs[static_cast<std::size_t>(main)].channelCount;
+            effect.audio.assign(std::size_t{effect.audioChannels} * kMaxPluginBlockFrames, 0.0f);
+            effect.channels.resize(effect.audioChannels);
+            for (std::uint32_t c = 0; c < effect.audioChannels; ++c)
+                effect.channels[c] = effect.audio.data() + std::size_t{c} * kMaxPluginBlockFrames;
+        }
+        if (!effects.empty()) {
+            state.dialects = state.effects[0].dialects;
+            for (std::vector<Event>& buffer : state.chain) buffer.resize(maxEventsPerSlotBlock);
+        }
         if (const int main = mainAudioOutput(layout); main >= 0)
             state.audioChannels = layout.audioOutputs[static_cast<std::size_t>(main)].channelCount;
 
@@ -76,8 +95,11 @@ EngineGraph::EngineGraph(std::vector<SlotConfig> slotConfigs, std::vector<BusCon
 }
 
 bool EngineGraph::contains(const HostedPlugin* plugin) const noexcept {
-    for (const SlotConfig& slot : configs)
+    for (const SlotConfig& slot : configs) {
         if (slot.plugin.get() == plugin) return true;
+        for (const auto& effect : slot.midiEffects)
+            if (effect.get() == plugin) return true;
+    }
     for (const BusConfig& bus : busConfigs)
         for (const auto& effect : bus.effects)
             if (effect.get() == plugin) return true;

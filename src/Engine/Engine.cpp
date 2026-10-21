@@ -680,8 +680,11 @@ void Engine::adoptPendingGraph() noexcept {
                                 (currentGraph == nullptr || !currentGraph->contains(slot.plugin.get()));
     }
     if (currentGraph != nullptr) {
-        for (const SlotConfig& slot : currentGraph->configs)
+        for (const SlotConfig& slot : currentGraph->configs) {
             if (slot.plugin && !next->contains(slot.plugin.get())) slot.plugin->stopProcessing();
+            for (const auto& effect : slot.midiEffects)   // a MIDI effect that left (or moved off) its row
+                if (!next->contains(effect.get())) effect->stopProcessing();
+        }
         for (const BusConfig& bus : currentGraph->busConfigs)   // and effects that left the rig
             for (const auto& effect : bus.effects)
                 if (effect && !next->contains(effect.get())) effect->stopProcessing();
@@ -942,8 +945,10 @@ void Engine::silence(const AudioCallbackContext& ctx, std::uint32_t offset) noex
             }
         }
         if (cut) {
-            for (const SlotConfig& config : currentGraph->configs)
+            for (const SlotConfig& config : currentGraph->configs) {
                 if (config.plugin) config.plugin->reset();
+                for (const auto& effect : config.midiEffects) effect->reset();
+            }
             for (const BusConfig& bus : currentGraph->busConfigs)
                 for (const auto& effect : bus.effects)
                     if (effect) effect->reset();
@@ -1238,7 +1243,8 @@ bool Engine::append(std::size_t slot, const MidiMessage& message, std::uint32_t 
     event.sampleOffset = offset;
     event.type         = EventType::Midi;
     event.midi         = message;
-    event.portIndex    = currentGraph->configs[slot].notePort;
+    const SlotConfig& config = currentGraph->configs[slot];
+    event.portIndex    = config.midiEffects.empty() ? config.notePort : 0;   // a MIDI effect's own: port 0
     if (deliveredNote != nullptr) *deliveredNote = ump::noteNumber(message);
     return true;
 }
@@ -1321,19 +1327,24 @@ void Engine::runSlots(const AudioCallbackContext& ctx) noexcept {
                 if (config.draining && runtime.suspended)   // muted as well, and gone quiet: done too
                     runtime.drained.store(true, std::memory_order_relaxed);
                 if (runtime.suspended && state.cursor == first) continue;   // nothing for it: not run, silent
+                auto stopRow = [&] {
+                    for (const auto& effect : config.midiEffects) effect->stopProcessing();
+                    config.plugin->stopProcessing();
+                };
 
                 ProcessContext pc;
                 pc.frameCount           = chunk;
                 pc.time                 = timeAt(ctx, chunkStart);
                 pc.audioOut             = AudioBuffer{state.channels.data(), state.audioChannels, chunk};
-                pc.eventsIn             = EventBlock{state.events.data() + first, state.cursor - first};
+                const Nanoseconds start = nowNanoseconds();
+                pc.eventsIn             = runMidiEffects(i, pc.time, chunk,
+                                                         EventBlock{state.events.data() + first, state.cursor - first});
                 pc.eventsOut            = &feedback;
                 feedback.plugin         = config.plugin.get();
-                const Nanoseconds start = nowNanoseconds();
                 config.plugin->process(pc);
                 state.processNs += nowNanoseconds() - start;
                 if (runtime.suspended) {   // run only for its events (a controller, a note-off), and unheard
-                    config.plugin->stopProcessing();
+                    stopRow();
                     continue;
                 }
 
@@ -1386,14 +1397,14 @@ void Engine::runSlots(const AudioCallbackContext& ctx) noexcept {
                     runtime.mutedFrames += chunk;
                     if (runtime.quietFrames >= kQuietSeconds * rate || runtime.mutedFrames >= kMaxMutedSeconds * rate) {
                         runtime.suspended = true;
-                        config.plugin->stopProcessing();
+                        stopRow();
                     }
                 } else if (config.draining && !runtime.muteApplied) {   // ringing out at its own gain
                     runtime.quietFrames = ownPeak() < kQuietLevel ? runtime.quietFrames + chunk : 0;
                     runtime.drainFrames += chunk;
                     if (runtime.quietFrames >= kQuietSeconds * rate || runtime.drainFrames >= kMaxDrainSeconds * rate) {
                         runtime.suspended = true;
-                        config.plugin->stopProcessing();
+                        stopRow();
                         runtime.drained.store(true, std::memory_order_relaxed);
                     }
                 }
@@ -1431,6 +1442,83 @@ void Engine::runSlots(const AudioCallbackContext& ctx) noexcept {
         for (std::uint32_t f = 0; f < ctx.frameCount; ++f) peak = std::max(peak, std::fabs(ctx.output.channels[c][f]));
         outputLevels.add(c, peak);
     }
+}
+
+EventBlock Engine::runMidiEffects(std::size_t slot, const TimeInfo& time, std::uint32_t chunk,
+                                  EventBlock input) noexcept {
+    const SlotConfig&       config = currentGraph->configs[slot];
+    EngineGraph::SlotState& state  = currentGraph->states[slot];
+    const std::size_t       count  = config.midiEffects.size();
+    for (std::size_t e = 0; e < count; ++e) {
+        EngineGraph::EffectState& effect = state.effects[e];
+        std::vector<Event>&       out    = state.chain[e % 2];   // the input is the other one (or the slot's)
+        const bool                last   = e + 1 == count;
+        chainSink.plugin    = config.midiEffects[e].get();
+        chainSink.events    = out.data();
+        chainSink.capacity  = static_cast<std::uint32_t>(out.size());
+        chainSink.count     = 0;
+        chainSink.frames    = chunk;
+        chainSink.dialects  = last ? state.pluginDialects : state.effects[e + 1].dialects;
+        chainSink.port      = last ? config.notePort : 0;
+        chainSink.upconvert = &effect.upconvert;
+
+        ProcessContext pc;
+        pc.frameCount = chunk;
+        pc.time       = time;
+        pc.audioOut   = AudioBuffer{effect.channels.data(), effect.audioChannels, chunk};
+        pc.eventsIn   = input;
+        pc.eventsOut  = &chainSink;
+        config.midiEffects[e]->process(pc);
+
+        // CLAP asks a plugin for its output in time order; keep it so if one
+        // doesn't (an insertion sort: nothing to do when it's in order).
+        Event* const events = out.data();
+        for (std::uint32_t k = 1; k < chainSink.count; ++k)
+            for (std::uint32_t j = k; j > 0 && events[j].sampleOffset < events[j - 1].sampleOffset; --j)
+                std::swap(events[j], events[j - 1]);
+        input = EventBlock{events, chainSink.count};
+    }
+    chainSink.plugin = nullptr;
+    return input;
+}
+
+void Engine::ChainSink::push(const Event& event) noexcept {
+    if (event.type == EventType::ParamValue) {
+        engine->parameterChanged(plugin, event.param.id, event.value);
+        return;
+    }
+    if (event.type != EventType::Midi || dialects == 0) return;
+    const std::uint32_t    offset = std::min(event.sampleOffset, frames > 0 ? frames - 1 : 0u);
+    const MidiMessage&     m      = event.midi;
+    const ump::MessageType type   = ump::messageType(m);
+    if (dialectAccepts(dialects, m)) {   // its own protocol: unchanged
+        add(m, offset);
+        return;
+    }
+    MidiMessage translated[ump::kMaxTranslatedMessages];
+    std::size_t n = 0;   // nothing is normal for an upconversion: bank select, RPN selection
+    if (type == ump::MessageType::Midi2ChannelVoice && acceptsMidi1(dialects)) {
+        n = ump::downconvert(m, translated, ump::kMaxTranslatedMessages);
+    } else if (type == ump::MessageType::Midi1ChannelVoice && (dialects & NoteDialect::Midi2) != 0) {
+        n = ump::upconvert(m, *upconvert, translated, ump::kMaxTranslatedMessages);
+    } else {
+        engine->unsupportedDialect.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    for (std::size_t j = 0; j < n; ++j) add(translated[j], offset);
+}
+
+void Engine::ChainSink::add(const MidiMessage& message, std::uint32_t offset) noexcept {
+    if (count == capacity) {
+        engine->slotEventsFull.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    Event& event       = events[count++];
+    event              = Event{};
+    event.sampleOffset = offset;
+    event.type         = EventType::Midi;
+    event.midi         = message;
+    event.portIndex    = port;
 }
 
 // The click, on the aux outputs: a blip at each pulse in this block (before a

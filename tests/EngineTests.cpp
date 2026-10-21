@@ -16,6 +16,7 @@
 
 using namespace stagehand;
 using stagehand::test::FakeEffect;
+using stagehand::test::FakeNoteEffect;
 using stagehand::test::FakePlugin;
 
 namespace {
@@ -1062,6 +1063,153 @@ void testCountIn() {
     engine->collect();
 }
 
+// A row's MIDI effects run before its plugin, in order, in the same block:
+// what the row hears goes to the first, each one's output to the next, and the
+// last one's to the plugin, at the same offsets, translated for each port.
+void testMidiEffects() {
+    {   // Two in a row: +12 then +7. A note-off follows its note-on through them.
+        auto engine = std::make_unique<Engine>();
+        auto first  = std::make_shared<FakeNoteEffect>(12);
+        auto second = std::make_shared<FakeNoteEffect>(7);
+        auto synth  = std::make_shared<FakePlugin>();
+        SlotConfig slot = slotFor(synth);
+        slot.midiEffects = {first, second};
+        engine->commit(graphOf({slot}));
+
+        engine->onMidi(1, note(T - 9 * ms, 60));            // offset 48 (one period behind: 480 at 48 kHz)
+        TimedMidiMessage off = note(T - 5 * ms, 60);
+        off.message.words[0] = 0x20803C00;                  // note-off, offset 240
+        engine->onMidi(1, off);
+        Block block(480, 48000.0, T);
+        engine->process(block.ctx);
+
+        CHECK(first->received.size() == 2 && second->received.size() == 2);
+        if (second->received.size() == 2) CHECK(ump::noteNumber(second->received[0].midi) == 72);
+        CHECK(synth->calls.size() == 1 && synth->calls[0].events.size() == 2);
+        if (synth->calls.size() == 1 && synth->calls[0].events.size() == 2) {
+            const std::vector<Event>& e = synth->calls[0].events;
+            CHECK(e[0].midi.words[0] == 0x20904F64 && e[0].sampleOffset == 48);   // 60 + 19, MIDI 1.0 kept
+            CHECK(e[1].midi.words[0] == 0x20804F00 && e[1].sampleOffset == 240);
+        }
+        CHECK(first->lastAudioChannels == 0);                // no audio ports: none given
+        CHECK(block.samples[0][0] == 1.0f);                  // the plugin is heard; the effects aren't
+        CHECK(engine->stats().unsupportedDialect == 0);
+    }
+    {   // Translation at each port: a MIDI-2.0-only effect, a MIDI-1.0-only plugin.
+        auto engine = std::make_unique<Engine>();
+        auto effect = std::make_shared<FakeNoteEffect>(0, NoteDialect::Midi2);
+        effect->pitch79 = 256;                               // half a semitone up
+        auto midi1  = std::make_shared<FakePlugin>(2, NoteDialect::Midi);
+        SlotConfig slot = slotFor(midi1);
+        slot.midiEffects = {effect};
+        engine->commit(graphOf({slot}));
+        engine->onMidi(1, note(T - 9 * ms, 60));             // MIDI 1.0 note-on, vel 100
+        Block block(480, 48000.0, T);
+        engine->process(block.ctx);
+        CHECK(effect->received.size() == 1);
+        if (effect->received.size() == 1) {                  // upconverted for the effect
+            CHECK(effect->received[0].midi.words[0] == 0x40903C00);
+            CHECK(effect->received[0].portIndex == 0);
+        }
+        CHECK(midi1->calls.size() == 1 && midi1->calls[0].events.size() == 1);
+        if (midi1->calls.size() == 1 && midi1->calls[0].events.size() == 1)   // and down again: 60.5 plays 60
+            CHECK(midi1->calls[0].events[0].midi.words[0] == 0x20903C64);
+    }
+    {   // A MIDI 2.0 plugin gets the effect's pitch attribute.
+        auto engine = std::make_unique<Engine>();
+        auto effect = std::make_shared<FakeNoteEffect>(0);
+        effect->pitch79 = 198;                               // one step of 31-EDO
+        auto midi2  = std::make_shared<FakePlugin>(2, NoteDialect::Midi2);
+        SlotConfig slot = slotFor(midi2);
+        slot.midiEffects = {effect};
+        engine->commit(graphOf({slot}));
+        TimedMidiMessage on;
+        on.captureTime       = T - 9 * ms;
+        on.message.words[0]  = 0x40903C00;
+        on.message.words[1]  = 0x80000000;
+        on.message.wordCount = 2;
+        engine->onMidi(1, on);
+        Block block(480, 48000.0, T);
+        engine->process(block.ctx);
+        CHECK(midi2->calls.size() == 1 && midi2->calls[0].events.size() == 1);
+        if (midi2->calls.size() == 1 && midi2->calls[0].events.size() == 1)
+            CHECK(ump::notePitch79(midi2->calls[0].events[0].midi) == 60 * 512 + 198);
+    }
+    {   // Output out of time order is sorted, and past the block clamped into it.
+        auto engine = std::make_unique<Engine>();
+        auto effect = std::make_shared<FakeNoteEffect>(0);
+        effect->emitLate = 10;
+        auto synth  = std::make_shared<FakePlugin>();
+        SlotConfig slot = slotFor(synth);
+        slot.midiEffects = {effect};
+        engine->commit(graphOf({slot}));
+        engine->onMidi(1, note(T - 5 * ms, 60));             // offset 240
+        Block block(480, 48000.0, T);
+        engine->process(block.ctx);
+        CHECK(synth->calls.size() == 1 && synth->calls[0].events.size() == 2);
+        if (synth->calls.size() == 1 && synth->calls[0].events.size() == 2) {
+            CHECK(synth->calls[0].events[0].sampleOffset == 10 && ump::noteNumber(synth->calls[0].events[0].midi) == 127);
+            CHECK(synth->calls[0].events[1].sampleOffset == 240);
+        }
+        effect->emitLate = 5000;                             // no events in: it still runs, and still emits
+        engine->process(block.ctx);
+        CHECK(synth->calls.size() == 2 && synth->calls[1].events.size() == 1);
+        if (synth->calls.size() == 2 && synth->calls[1].events.size() == 1)
+            CHECK(synth->calls[1].events[0].sampleOffset == 479);
+    }
+    {   // Split blocks: each chunk's output is the plugin's input for that chunk.
+        auto engine = std::make_unique<Engine>();
+        auto effect = std::make_shared<FakeNoteEffect>(1);
+        auto synth  = std::make_shared<FakePlugin>();
+        SlotConfig slot = slotFor(synth);
+        slot.midiEffects = {effect};
+        engine->commit(graphOf({slot}));
+        const std::uint32_t frames      = kMaxPluginBlockFrames + 100;
+        const Nanoseconds   windowStart = T - Nanoseconds{frames} * 1000;
+        engine->onMidi(1, note(windowStart + 8200 * 1000 + 500, 64));   // offset 8200
+        Block block(frames, 1'000'000.0, T);
+        engine->process(block.ctx);
+        CHECK(effect->processed == 2 && synth->calls.size() == 2);
+        if (synth->calls.size() == 2) {
+            CHECK(synth->calls[0].events.empty() && synth->calls[1].events.size() == 1);
+            if (synth->calls[1].events.size() == 1) {
+                CHECK(synth->calls[1].events[0].sampleOffset == 8200 - kMaxPluginBlockFrames);
+                CHECK(ump::noteNumber(synth->calls[1].events[0].midi) == 65);
+            }
+        }
+    }
+    {   // A Panic's note-offs go through the effects; a second resets them too.
+        // An effect that leaves the graph stops processing.
+        auto engine = std::make_unique<Engine>();
+        auto effect = std::make_shared<FakeNoteEffect>(12);
+        auto synth  = std::make_shared<FakePlugin>(2, NoteDialect::Midi);
+        SlotConfig slot = slotFor(synth);
+        slot.midiEffects = {effect};
+        engine->commit(graphOf({slot}));
+        engine->onMidi(1, note(T - 9 * ms, 60));
+        Block block(480, 48000.0, T);
+        engine->process(block.ctx);
+        engine->panic();
+        Block next(480, 48000.0, T + 10 * ms);
+        engine->process(next.ctx);
+        CHECK(synth->calls.size() == 2);
+        if (synth->calls.size() == 2) {
+            const std::vector<Event>& e = synth->calls[1].events;
+            CHECK(!e.empty() && e[0].midi.words[0] == 0x20804800);   // note 72 off, through the effect
+        }
+        engine->panic();
+        Block third(480, 48000.0, T + 20 * ms);
+        engine->process(third.ctx);
+        CHECK(effect->resets == 1 && synth->resets == 1);
+
+        CHECK(effect->processing);
+        engine->commit(graphOf({slotFor(synth)}));           // the row without its effect
+        engine->process(third.ctx);
+        CHECK(effect->stops == 1 && !effect->processing && synth->stops == 0);
+        engine->collect();
+    }
+}
+
 void testGraphLifecycle() {
     auto engine = std::make_unique<Engine>();
     auto first  = std::make_shared<FakePlugin>();
@@ -1493,6 +1641,7 @@ int main() {
     testPanic();
     testDspLoad();
     testControlLinks();
+    testMidiEffects();
     testGraphLifecycle();
     return test::finish("Engine");
 }
