@@ -12,6 +12,7 @@
 #include <utility>
 #include <vector>
 
+#include "App/ParameterEditor.h"
 #include "App/RackController.h"
 #include "Check.h"
 #include "FakePlugin.h"
@@ -46,12 +47,14 @@ struct Rig {
     std::unique_ptr<Session> session;
     std::shared_ptr<int>     editorsOpen = std::make_shared<int>(0);
     std::vector<FakeEditor*> editors;
+    std::vector<HostedPlugin*> genericFor;   // what the generic editor was opened for
     int                      quits = 0;
 
     Rig() {
         factory.installed = {installedPlugin("synth", "/clap/Synth.clap"), installedPlugin("bass", "/clap/Bass.clap"),
                              installedPlugin("old", "/clap/Old.clap")};
         factory.dialects["old"] = NoteDialect::Midi;   // MIDI 1.0 only
+        factory.withEditor      = {"synth", "bass", "old"};   // their own editors
         midi.sources = {MidiSourceInfo{"Through:Port 0", "Midi Through", false, false, MidiProtocol::Midi1},
                         MidiSourceInfo{"Keys:Keys MIDI 1", "Keys", false, true, MidiProtocol::Midi2}};
         session = std::make_unique<Session>(factory, host, midi, *engine);
@@ -59,6 +62,10 @@ struct Rig {
 
     RackController::Config config(const std::string& saveTarget = {}) {
         RackController::Config c;
+        c.openGenericEditor = [this](HostedPlugin& plugin, const std::string&) -> std::unique_ptr<EditorHandle> {
+            genericFor.push_back(&plugin);
+            return std::make_unique<FakeEditor>(editorsOpen);
+        };
         c.openEditor = [this](HostedPlugin&, const std::string&) -> std::unique_ptr<EditorHandle> {
             auto editor = std::make_unique<FakeEditor>(editorsOpen);
             editors.push_back(editor.get());
@@ -277,6 +284,90 @@ void testMidiEffects() {
     CHECK(*rig.editorsOpen == 1);
     controller.removeSlot("a");                   // its effects' editors close with it
     CHECK(*rig.editorsOpen == 0);
+}
+
+ParameterInfo param(std::uint32_t id, const char* name, double low, double high, double def, bool stepped = false) {
+    ParameterInfo p;
+    p.id           = id;
+    p.name         = name;
+    p.minValue     = low;
+    p.maxValue     = high;
+    p.defaultValue = def;
+    p.isStepped    = stepped;
+    return p;
+}
+
+// The generic editor (docs/generic-editor.md): offered (and opened) only for a
+// plugin with no editor of its own and parameters to show, never by
+// openAllEditors(); its model's rows, kinds, snapping and read-back; its
+// changes reach the running plugin and modify the rack.
+void testGenericEditor() {
+    Rig rig;
+    rig.factory.withEditor = {"bass"};   // synth and old have none
+    ParameterInfo hidden = param(9, "Internal", 0, 1, 0);
+    hidden.isHidden = true;
+    ParameterInfo meter = param(8, "Level", 0, 1, 0);
+    meter.isReadOnly = true;
+    rig.factory.params["synth"] = {param(0, "Cutoff", 20, 20000, 1000), param(1, "Mono", 0, 1, 0, true),
+                                   param(2, "Wave", 0, 3, 0, true), param(3, "Divisions", 1, 96, 12, true), hidden, meter};
+    rig.factory.params["old"] = {hidden};   // nothing to show
+    Session::LoadReport report;
+    rig.session->load(testRack(), 48000.0, report);
+    RackController controller(*rig.session, *rig.engine, rig.midi, rig.factory, rig.config());
+    controller.tick(1.0);
+    const auto& rows = controller.view().rows;   // a synth, b missing, c bass, d old, e synth
+    CHECK(rows[0].hasEditor && rows[2].hasEditor && !rows[3].hasEditor);
+
+    controller.openAllEditors();   // the plugins' own only
+    CHECK(*rig.editorsOpen == 1 && rig.genericFor.empty());
+    controller.openEditor("d");    // nothing to show: nothing opens
+    CHECK(*rig.editorsOpen == 1 && rig.genericFor.empty());
+    controller.openEditor("a");
+    CHECK(*rig.editorsOpen == 2 && rig.genericFor.size() == 1 && rig.genericFor[0] == rig.session->slot("a")->plugin.get());
+    controller.tick(1.1);
+    CHECK(controller.view().rows[0].editorOpen);
+
+    // The model.
+    auto* synth = dynamic_cast<FakePlugin*>(rig.session->slot("a")->plugin.get());
+    CHECK(synth != nullptr);
+    if (synth == nullptr) return;
+    synth->values[0] = 440.0;
+    ParameterEditor editor(controller, *synth);
+    const auto& list = editor.rows();
+    CHECK(list.size() == 5);   // not the hidden one
+    if (list.size() != 5) return;
+    CHECK(list[0].kind == ParameterEditor::Kind::Slider && list[0].value == 440.0 && list[0].text == "440");
+    CHECK(list[1].kind == ParameterEditor::Kind::Switch && list[2].kind == ParameterEditor::Kind::Menu);
+    CHECK(list[3].kind == ParameterEditor::Kind::Slider && list[4].info.isReadOnly);
+    CHECK(editor.choices(2).size() == 4 && editor.choices(2)[3].second == "3");
+
+    rig.session->markSaved();
+    editor.set(3, 31.4);       // snapped
+    editor.set(0, 99999.0);    // clamped
+    editor.set(4, 0.5);        // read-only: not set
+    CHECK(list[3].value == 31.0 && list[3].text == "31" && list[0].value == 20000.0 && list[4].value == 0.0);
+    CHECK(rig.session->modified());
+    runBlock(*rig.engine);
+    const auto sent = [&](std::uint32_t id) {
+        for (const auto& call : synth->calls)
+            for (const Event& e : call.events)
+                if (e.type == EventType::ParamValue && e.param.id == id) return e.value;
+        return -1.0;
+    };
+    CHECK(sent(3) == 31.0 && sent(0) == 20000.0 && sent(8) == -1.0);
+
+    // Read back from the plugin once the change has had time to land.
+    synth->values[3] = 19.0;
+    editor.sync();
+    CHECK(list[3].value == 31.0);   // just set: not yet
+    for (int i = 0; i < 4; ++i) editor.sync();
+    CHECK(list[3].value == 19.0 && list[3].text == "19");
+    editor.reset(3);
+    CHECK(list[3].value == 12.0);
+
+    double v = 0;
+    CHECK(ParameterEditor::parseValue("0.25", v) && v == 0.25 && !ParameterEditor::parseValue("abc", v));
+    CHECK(ParameterEditor::editable(*synth) && !ParameterEditor::editable(*rig.session->slot("d")->plugin));
 }
 
 void testAddPlugin() {
@@ -2121,6 +2212,7 @@ int main() {
     testMetersAndActivity();
     testEditorsAndRemove();
     testMidiEffects();
+    testGenericEditor();
     testAddPlugin();
     testSave();
     testFiles();

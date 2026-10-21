@@ -165,6 +165,15 @@ public:
     // bus effect reset (HostedPlugin::reset()). Panic's learned control
     // (TransportControl::panic) does the same at its own frame. Any thread.
     void panic() noexcept { panicRequested.store(true, std::memory_order_relaxed); }
+
+    // Set a plugin's parameter from the host's own controls (the generic
+    // editor; docs/generic-editor.md): a ParamValue at the start of the next
+    // block, to whichever plugin in the running graph `plugin` is (a row's, a
+    // row's MIDI effect, a bus effect). Control links pick it up as they do
+    // the plugin's own changes. Main thread; false if the queue is full.
+    bool setParameter(const HostedPlugin* plugin, std::uint32_t param, double value) noexcept {
+        return parameterRequests.push(ParameterRequest{plugin, param, value});
+    }
     static constexpr double kPanicCutSeconds = 2.0;
     struct Panics {
         std::uint32_t count = 0;       // so far (the button and the control)
@@ -377,8 +386,10 @@ private:
     void                 runSlots(const AudioCallbackContext& ctx) noexcept;
     // Run a slot's MIDI effects over one chunk's events, in order; returns what
     // the last one sent, ready for the slot's plugin (`input` if it has none).
-    EventBlock           runMidiEffects(std::size_t slot, const TimeInfo& time, std::uint32_t chunk,
-                                        EventBlock input) noexcept;
+    // `input` is the slot's events for this chunk: its MIDI goes through the
+    // effects, its parameter changes to the plugin, each effect getting its own.
+    EventBlock           runMidiEffects(std::size_t slot, const TimeInfo& time, std::uint32_t chunkStart,
+                                        std::uint32_t chunk, EventBlock input) noexcept;
     void                 advanceTransport(const AudioCallbackContext& ctx) noexcept;
     void                 makeSequenceBlock(const AudioCallbackContext& ctx) noexcept;
     void                 renderClick(const AudioCallbackContext& ctx) noexcept;
@@ -432,6 +443,15 @@ private:
         LooperCommand    command = LooperCommand::Press;
     };
     SpscQueue<QueuedLooperCommand, 64> looperCommands;
+    struct ParameterRequest {
+        const HostedPlugin* plugin = nullptr;
+        std::uint32_t       param  = 0;
+        double              value  = 0.0;
+    };
+    SpscQueue<ParameterRequest, 256> parameterRequests;   // main -> audio (setParameter())
+    // A parameter change for `plugin`, wherever it runs in the current graph,
+    // queued in time order with that plugin's other events.
+    void appendParameter(const HostedPlugin* plugin, const Event& event) noexcept;
     void                          recordLoops() noexcept;   // this block's staged input, into the loopers
     std::atomic<MidiSourceHandle> currentLooper{kInvalidMidiSource};
     // A looper's command at `frame`; a press arming one while stopped starts the transport.

@@ -57,6 +57,10 @@ public:
         // Opens an editor window for a plugin. Null result: no editor (the
         // opener reports why).
         std::function<std::unique_ptr<EditorHandle>(HostedPlugin&, const std::string& title)> openEditor;
+        // Opens StageHand's generic editor (docs/generic-editor.md) for a
+        // plugin with no editor of its own; only when one is asked for (an
+        // Editor button), never by itself. Null: none (no rack window).
+        std::function<std::unique_ptr<EditorHandle>(HostedPlugin&, const std::string& title)> openGenericEditor;
         std::function<AudioStatus()> audioStatus;
         std::function<void()>        quit;   // e.g. MainLoop::requestQuit
 
@@ -162,8 +166,15 @@ public:
     void openMidiEffectEditor(const std::string& id, const std::string& effect);
     void closeMidiEffectEditor(const std::string& id, const std::string& effect);
 
+    // A row's editor: the plugin's own, or the generic one for a plugin
+    // without one (and parameters to show). openAllEditors() opens only the
+    // plugins' own.
     void openEditor(const std::string& id);
     void closeEditor(const std::string& id);
+    // A parameter set from StageHand's own controls (the generic editor): to
+    // the running plugin at its next block; the rack (or the rig, for a bus
+    // effect) is modified.
+    void setParameter(HostedPlugin& plugin, std::uint32_t id, double value);
     void openAllEditors();
     void closeAllEditors();
     std::size_t openEditorCount() const;
@@ -559,6 +570,10 @@ private:
     // By slot id, and "<slot id>/<effect id>" for a row's MIDI effect.
     std::map<std::string, std::unique_ptr<EditorHandle>> editors;
     std::map<std::string, RowCache>                      rows;      // by slot id
+    // An editor for `plugin`: its own, or the generic one if it has none (null
+    // if neither). editable(): would there be one?
+    std::unique_ptr<EditorHandle> openAnyEditor(HostedPlugin& plugin, const std::string& title);
+    bool                          editable(const HostedPlugin& plugin) const;
     std::map<std::pair<std::size_t, std::size_t>, std::unique_ptr<EditorHandle>> busEditors;   // by (bus, slot)
     std::vector<std::string>                              keeping;   // loopers whose copy is on its way
     void                                                  takeKeptLoops();

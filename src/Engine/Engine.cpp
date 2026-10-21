@@ -874,9 +874,20 @@ void Engine::routeMidi(const AudioCallbackContext& ctx) noexcept {
         silenceFrom(panicFrame);   // nothing to send, but the tables still clear
         return;
     }
-    for (EngineGraph::SlotState& state : currentGraph->states) state.eventCount = 0;
+    for (EngineGraph::SlotState& state : currentGraph->states) {
+        state.eventCount = 0;
+        for (EngineGraph::EffectState& effect : state.effects) effect.paramCount = 0;
+    }
     for (EngineGraph::BusState& bus : currentGraph->busStates)
         for (EngineGraph::BusState::Stage& stage : bus.stages) stage.eventCount = 0;
+    for (ParameterRequest request; parameterRequests.pop(request);) {   // the host's own controls, first
+        Event event;
+        event.type     = EventType::ParamValue;
+        event.param.id = request.param;
+        event.value    = request.value;
+        appendParameter(request.plugin, event);
+        parameterChanged(request.plugin, request.param, request.value);
+    }
     applyMutes();
     sendHeldPedals();
 
@@ -1049,18 +1060,27 @@ void Engine::setLinkTarget(const CompiledControlLink::Target& t, double value, s
     event.type         = EventType::ParamValue;
     event.param.id     = t.param;
     event.value        = value;
-    for (std::size_t i = 0; i < currentGraph->configs.size(); ++i) {   // a row's
-        if (currentGraph->configs[i].plugin.get() != t.plugin) continue;
-        EngineGraph::SlotState& state = currentGraph->states[i];
-        if (state.eventCount == state.events.size()) slotEventsFull.fetch_add(1, std::memory_order_relaxed);
-        else state.events[state.eventCount++] = event;
+    appendParameter(t.plugin, event);
+}
+
+void Engine::appendParameter(const HostedPlugin* plugin, const Event& event) noexcept {
+    if (currentGraph == nullptr || plugin == nullptr) return;
+    auto add = [&](std::vector<Event>& events, std::uint32_t& count) {
+        if (count == events.size()) slotEventsFull.fetch_add(1, std::memory_order_relaxed);
+        else events[count++] = event;
+    };
+    for (std::size_t i = 0; i < currentGraph->configs.size(); ++i) {   // a row's, or one of its MIDI effects
+        const SlotConfig&       config = currentGraph->configs[i];
+        EngineGraph::SlotState& state  = currentGraph->states[i];
+        if (config.plugin.get() == plugin) add(state.events, state.eventCount);
+        for (std::size_t e = 0; e < config.midiEffects.size(); ++e)
+            if (config.midiEffects[e].get() == plugin) add(state.effects[e].params, state.effects[e].paramCount);
     }
     for (std::size_t b = 0; b < currentGraph->busConfigs.size(); ++b)   // or a bus effect's
         for (std::size_t e = 0; e < BusConfig::kEffects; ++e) {
-            if (currentGraph->busConfigs[b].effects[e].get() != t.plugin) continue;
+            if (currentGraph->busConfigs[b].effects[e].get() != plugin) continue;
             EngineGraph::BusState::Stage& stage = currentGraph->busStates[b].stages[e];
-            if (stage.eventCount == stage.events.size()) slotEventsFull.fetch_add(1, std::memory_order_relaxed);
-            else stage.events[stage.eventCount++] = event;
+            add(stage.events, stage.eventCount);
         }
 }
 
@@ -1299,6 +1319,7 @@ void Engine::runSlots(const AudioCallbackContext& ctx) noexcept {
             EngineGraph::SlotState& state = currentGraph->states[i];
             state.cursor    = 0;
             state.processNs = 0;
+            for (EngineGraph::EffectState& effect : state.effects) effect.paramCursor = 0;
             if (state.eventCount != 0)
                 currentGraph->configs[i].runtime->midiEvents.fetch_add(state.eventCount, std::memory_order_relaxed);
         }
@@ -1337,7 +1358,7 @@ void Engine::runSlots(const AudioCallbackContext& ctx) noexcept {
                 pc.time                 = timeAt(ctx, chunkStart);
                 pc.audioOut             = AudioBuffer{state.channels.data(), state.audioChannels, chunk};
                 const Nanoseconds start = nowNanoseconds();
-                pc.eventsIn             = runMidiEffects(i, pc.time, chunk,
+                pc.eventsIn             = runMidiEffects(i, pc.time, chunkStart, chunk,
                                                          EventBlock{state.events.data() + first, state.cursor - first});
                 pc.eventsOut            = &feedback;
                 feedback.plugin         = config.plugin.get();
@@ -1444,30 +1465,76 @@ void Engine::runSlots(const AudioCallbackContext& ctx) noexcept {
     }
 }
 
-EventBlock Engine::runMidiEffects(std::size_t slot, const TimeInfo& time, std::uint32_t chunk,
-                                  EventBlock input) noexcept {
+EventBlock Engine::runMidiEffects(std::size_t slot, const TimeInfo& time, std::uint32_t chunkStart,
+                                  std::uint32_t chunk, EventBlock input) noexcept {
     const SlotConfig&       config = currentGraph->configs[slot];
     EngineGraph::SlotState& state  = currentGraph->states[slot];
     const std::size_t       count  = config.midiEffects.size();
+    if (count == 0) return input;
+
+    // Two time-sorted lists into state.merged: `a`'s events that `keepA` takes
+    // and `b`'s that `keepB` takes, `a`'s first at the same offset.
+    auto merge = [&](EventBlock a, auto keepA, EventBlock b, auto keepB) {
+        Event* const        out = state.merged.data();
+        const std::uint32_t cap = static_cast<std::uint32_t>(state.merged.size());
+        std::uint32_t       n = 0, i = 0, j = 0;
+        auto put = [&](const Event& e) {
+            if (n < cap) out[n++] = e;
+            else slotEventsFull.fetch_add(1, std::memory_order_relaxed);
+        };
+        while (i < a.count || j < b.count) {
+            if (i < a.count && !keepA(a.events[i])) { ++i; continue; }
+            if (j < b.count && !keepB(b.events[j])) { ++j; continue; }
+            if (j == b.count || (i < a.count && a.events[i].sampleOffset <= b.events[j].sampleOffset)) put(a.events[i++]);
+            else put(b.events[j++]);
+        }
+        return EventBlock{out, n};
+    };
+    auto midi    = [](const Event& e) { return e.type == EventType::Midi; };
+    auto notMidi = [](const Event& e) { return e.type != EventType::Midi; };
+    auto all     = [](const Event&) { return true; };
+
+    const EventBlock slotEvents   = input;   // its parameter changes are the plugin's
+    EventBlock       previous     = input;   // MIDI only is taken from it while it's the slot's
+    bool             previousSlot = true;
+    std::size_t      written      = 0;       // chain buffers used: the next one's input is the other
     for (std::size_t e = 0; e < count; ++e) {
         EngineGraph::EffectState& effect = state.effects[e];
-        std::vector<Event>&       out    = state.chain[e % 2];   // the input is the other one (or the slot's)
-        const bool                last   = e + 1 == count;
-        chainSink.plugin    = config.midiEffects[e].get();
-        chainSink.events    = out.data();
-        chainSink.capacity  = static_cast<std::uint32_t>(out.size());
-        chainSink.count     = 0;
-        chainSink.frames    = chunk;
-        chainSink.dialects  = last ? state.pluginDialects : state.effects[e + 1].dialects;
-        chainSink.port      = last ? config.notePort : 0;
-        chainSink.upconvert = &effect.upconvert;
+
+        // This chunk's parameter changes for this effect, rebased to the chunk start.
+        const std::uint32_t firstParam = effect.paramCursor;
+        while (effect.paramCursor < effect.paramCount &&
+               effect.params[effect.paramCursor].sampleOffset < chunkStart + chunk)
+            effect.params[effect.paramCursor++].sampleOffset -= chunkStart;
+        const EventBlock params{effect.params.data() + firstParam, effect.paramCursor - firstParam};
 
         ProcessContext pc;
         pc.frameCount = chunk;
         pc.time       = time;
         pc.audioOut   = AudioBuffer{effect.channels.data(), effect.audioChannels, chunk};
-        pc.eventsIn   = input;
-        pc.eventsOut  = &chainSink;
+        if (config.bypassed(e)) {   // its own parameter changes only; the MIDI goes around it
+            pc.eventsIn     = params;
+            pc.eventsOut    = &feedback;
+            feedback.plugin = config.midiEffects[e].get();
+            config.midiEffects[e]->process(pc);
+            continue;
+        }
+
+        std::size_t next = e + 1;   // where its output goes: the next effect not bypassed, or the plugin
+        while (next < count && config.bypassed(next)) ++next;
+        const bool          last = next == count;
+        std::vector<Event>& out  = state.chain[written++ % 2];
+        pc.eventsIn = previousSlot ? merge(previous, midi, params, all) : merge(previous, all, params, all);
+
+        chainSink.plugin    = config.midiEffects[e].get();
+        chainSink.events    = out.data();
+        chainSink.capacity  = static_cast<std::uint32_t>(out.size());
+        chainSink.count     = 0;
+        chainSink.frames    = chunk;
+        chainSink.dialects  = last ? state.pluginDialects : state.effects[next].dialects;
+        chainSink.port      = last ? config.notePort : 0;
+        chainSink.upconvert = &effect.upconvert;
+        pc.eventsOut        = &chainSink;
         config.midiEffects[e]->process(pc);
 
         // CLAP asks a plugin for its output in time order; keep it so if one
@@ -1476,10 +1543,12 @@ EventBlock Engine::runMidiEffects(std::size_t slot, const TimeInfo& time, std::u
         for (std::uint32_t k = 1; k < chainSink.count; ++k)
             for (std::uint32_t j = k; j > 0 && events[j].sampleOffset < events[j - 1].sampleOffset; --j)
                 std::swap(events[j], events[j - 1]);
-        input = EventBlock{events, chainSink.count};
+        previous     = EventBlock{events, chainSink.count};
+        previousSlot = false;
     }
     chainSink.plugin = nullptr;
-    return input;
+    if (previousSlot) return input;   // every effect bypassed: the row's own events, as they were
+    return merge(previous, all, slotEvents, notMidi);   // the plugin: the chain's MIDI, the row's parameter changes
 }
 
 void Engine::ChainSink::push(const Event& event) noexcept {

@@ -176,10 +176,13 @@ public:
 
     const PluginDescriptor&    descriptor() const override { return desc; }
     PortLayout                 portLayout() const override { return layout; }
-    std::vector<ParameterInfo> parameters() const override { return {}; }
+    std::vector<ParameterInfo> parameters() const override { return params; }
     bool                       activate(double, std::uint32_t) override { return true; }
     void                       deactivate() override {}
-    double                     paramValue(std::uint32_t) const override { return 0.0; }
+    double                     paramValue(std::uint32_t id) const override {
+        const auto it = values.find(id);
+        return it != values.end() ? it->second : 0.0;
+    }
     void                       flushParams(const EventBlock&, EventSink*) override {}
     bool saveState(std::vector<std::byte>& out) const override {
         out.insert(out.end(), state.begin(), state.end());
@@ -232,6 +235,8 @@ public:
     bool               processing        = false;
     std::uint32_t      lastAudioChannels = 99;
     std::vector<std::byte> state;
+    std::vector<ParameterInfo>      params;   // parameters()
+    std::map<std::uint32_t, double> values;   // paramValue(); 0 if not set
     int                idles             = 0;
     bool               editor            = false;   // hasEditor()
 

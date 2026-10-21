@@ -1160,8 +1160,10 @@ SlotConfig Session::configOf(const Slot& slot) const {
     config.notePort              = slot.saved.notePort;
     config.firstOutput           = slot.saved.firstOutput;
     for (std::size_t e = 0; e < slot.midiEffects.size() && e < slot.saved.midiEffects.size(); ++e)
-        if (slot.midiEffects[e].plugin && !slot.saved.midiEffects[e].bypassed)   // missing or bypassed: passed by
+        if (slot.midiEffects[e].plugin) {   // missing: passed by; bypassed: runs, and the MIDI goes around it
             config.midiEffects.push_back(slot.midiEffects[e].plugin);
+            config.midiEffectBypassed.push_back(slot.saved.midiEffects[e].bypassed);
+        }
     return config;
 }
 

@@ -138,6 +138,7 @@ target_link_libraries(stagehand-session
 add_library(stagehand-app STATIC
     src/App/BeatNow.cpp
     src/App/FileDialog.cpp
+    src/App/ParameterEditor.cpp
     src/App/RackController.cpp
     src/App/SequenceEditor.cpp)
 target_link_libraries(stagehand-app
@@ -157,6 +158,7 @@ if(STAGEHAND_APP)
         src/Ui/RackWidget.cpp
         src/Ui/UiWidget.cpp
         src/Ui/SequenceEditorWidget.cpp
+        src/Ui/ParameterEditorWidget.cpp
         "${CMAKE_BINARY_DIR}/BrandLogo.cpp"
         "${CMAKE_BINARY_DIR}/BrandFont.cpp")
     target_link_libraries(stagehand-ui

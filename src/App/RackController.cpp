@@ -8,6 +8,7 @@
 #include <filesystem>
 
 #include "uw/ump/Ump.h"
+#include "App/ParameterEditor.h"
 #include "Core/UwNames.h"
 #include "Session/RackFile.h"
 #include "Session/RigFile.h"
@@ -284,7 +285,7 @@ RowModel RackController::rowFor(const Session::Slot& slot, double now, double dt
             const PortLayout layout = slot.plugin->portLayout();
             if (saved.notePort < layout.noteInputs.size())
                 cache.dialects = layout.noteInputs[saved.notePort].supportedDialects;
-            cache.hasEditor = slot.plugin->hasEditor();
+            cache.hasEditor = editable(*slot.plugin);
         }
     }
 
@@ -320,7 +321,7 @@ RowModel RackController::rowFor(const Session::Slot& slot, double now, double dt
         model.name      = effect.name.empty() ? effect.id : effect.name;
         model.problem   = loaded.plugin || !slot.plugin ? std::string{} : loaded.loadProblem;
         model.bypassed  = effect.bypassed;
-        model.hasEditor = loaded.plugin && loaded.plugin->hasEditor();
+        model.hasEditor = loaded.plugin && editable(*loaded.plugin);
         const auto open = editors.find(saved.id + "/" + effect.id);
         model.editorOpen = open != editors.end() && open->second->isOpen();
         row.midiEffects.push_back(std::move(model));
@@ -1156,14 +1157,14 @@ void RackController::setBusEffect(std::size_t bus, std::size_t slot, const Plugi
 }
 
 void RackController::openBusEditor(std::size_t bus, std::size_t slot) {
-    if (!session.hasRig() || bus >= kRigBuses || slot >= RigBus::kEffects || !config.openEditor) return;
+    if (!session.hasRig() || bus >= kRigBuses || slot >= RigBus::kEffects) return;
     const std::shared_ptr<HostedPlugin>& plugin = session.rig().effects[bus][slot].plugin;
     if (!plugin) return;
     const auto key = std::make_pair(bus, slot);
     if (const auto it = busEditors.find(key); it != busEditors.end() && it->second->isOpen()) return;
     const std::string title = "Bus " + std::string(1, static_cast<char>('A' + bus)) + " " + std::to_string(slot + 1) +
                               " - " + plugin->descriptor().name + " (StageHand)";
-    if (std::unique_ptr<EditorHandle> editor = config.openEditor(*plugin, title)) busEditors[key] = std::move(editor);
+    if (std::unique_ptr<EditorHandle> editor = openAnyEditor(*plugin, title)) busEditors[key] = std::move(editor);
 }
 
 void RackController::closeBusEditor(std::size_t bus, std::size_t slot) {
@@ -1192,7 +1193,7 @@ void RackController::buildRig(double now, double dt) {
             if (loaded.plugin) {
                 effect.name      = loaded.plugin->descriptor().name.empty() ? loaded.plugin->descriptor().id
                                                                             : loaded.plugin->descriptor().name;
-                effect.hasEditor = loaded.plugin->hasEditor();
+                effect.hasEditor = editable(*loaded.plugin);
             } else if (saved.effects[e]) {
                 effect.name = saved.effects[e]->plugin.name.empty() ? saved.effects[e]->plugin.id
                                                                     : saved.effects[e]->plugin.name;
@@ -1260,14 +1261,14 @@ void RackController::setMidiEffectBypassed(const std::string& id, const std::str
 
 void RackController::openMidiEffectEditor(const std::string& id, const std::string& effect) {
     const Session::Slot* slot = session.slot(id);
-    if (slot == nullptr || !config.openEditor) return;
+    if (slot == nullptr) return;
     const std::string key = id + "/" + effect;
     if (const auto it = editors.find(key); it != editors.end() && it->second->isOpen()) return;
     for (std::size_t e = 0; e < slot->saved.midiEffects.size() && e < slot->midiEffects.size(); ++e) {
         const auto& plugin = slot->midiEffects[e].plugin;
         if (slot->saved.midiEffects[e].id != effect || !plugin) continue;
         const std::string title = slot->saved.name + " - " + plugin->descriptor().name + " (StageHand)";
-        if (std::unique_ptr<EditorHandle> editor = config.openEditor(*plugin, title)) editors[key] = std::move(editor);
+        if (std::unique_ptr<EditorHandle> editor = openAnyEditor(*plugin, title)) editors[key] = std::move(editor);
         return;
     }
 }
@@ -1278,11 +1279,31 @@ void RackController::closeMidiEffectEditor(const std::string& id, const std::str
 
 void RackController::openEditor(const std::string& id) {
     const Session::Slot* slot = session.slot(id);
-    if (slot == nullptr || !slot->plugin || !config.openEditor) return;
+    if (slot == nullptr || !slot->plugin) return;
     if (const auto it = editors.find(id); it != editors.end() && it->second->isOpen()) return;
     const std::string title = slot->saved.name + " - " + slot->plugin->descriptor().name + " (StageHand)";
-    if (std::unique_ptr<EditorHandle> editor = config.openEditor(*slot->plugin, title))
+    if (std::unique_ptr<EditorHandle> editor = openAnyEditor(*slot->plugin, title))
         editors[id] = std::move(editor);
+}
+
+std::unique_ptr<EditorHandle> RackController::openAnyEditor(HostedPlugin& plugin, const std::string& title) {
+    if (plugin.hasEditor()) return config.openEditor ? config.openEditor(plugin, title) : nullptr;
+    if (!config.openGenericEditor || !ParameterEditor::editable(plugin)) return nullptr;
+    return config.openGenericEditor(plugin, title);
+}
+
+bool RackController::editable(const HostedPlugin& plugin) const {
+    return plugin.hasEditor() || (config.openGenericEditor && ParameterEditor::editable(plugin));
+}
+
+void RackController::setParameter(HostedPlugin& plugin, std::uint32_t id, double value) {
+    engine.setParameter(&plugin, id, value);
+    bool rig = false;
+    if (session.hasRig())
+        for (const auto& bus : session.rig().effects)
+            for (const Session::LoadedRig::Effect& effect : bus) rig = rig || effect.plugin.get() == &plugin;
+    if (rig) session.markRigModified();
+    else session.markModified();
 }
 
 void RackController::closeEditor(const std::string& id) {
@@ -1293,8 +1314,9 @@ void RackController::closeAllEditors() {
     editors.clear();
 }
 
-void RackController::openAllEditors() {
-    for (const Session::Slot& slot : session.slots()) openEditor(slot.saved.id);
+void RackController::openAllEditors() {   // the plugins' own: a generic editor only when asked for
+    for (const Session::Slot& slot : session.slots())
+        if (slot.plugin && slot.plugin->hasEditor()) openEditor(slot.saved.id);
 }
 
 std::size_t RackController::openEditorCount() const {

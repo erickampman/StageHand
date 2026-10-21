@@ -75,14 +75,17 @@ EngineGraph::EngineGraph(std::vector<SlotConfig> slotConfigs, std::vector<BusCon
             if (!own.noteInputs.empty()) effect.dialects = own.noteInputs[0].supportedDialects;
             if (const int main = mainAudioOutput(own); main >= 0)
                 effect.audioChannels = own.audioOutputs[static_cast<std::size_t>(main)].channelCount;
+            effect.params.resize(kMaxBusEffectEvents);
             effect.audio.assign(std::size_t{effect.audioChannels} * kMaxPluginBlockFrames, 0.0f);
             effect.channels.resize(effect.audioChannels);
             for (std::uint32_t c = 0; c < effect.audioChannels; ++c)
                 effect.channels[c] = effect.audio.data() + std::size_t{c} * kMaxPluginBlockFrames;
         }
+        for (std::size_t e = effects.size(); e-- > 0;)   // the first effect not bypassed takes the row's MIDI
+            if (!configs[i].bypassed(e)) state.dialects = state.effects[e].dialects;
         if (!effects.empty()) {
-            state.dialects = state.effects[0].dialects;
             for (std::vector<Event>& buffer : state.chain) buffer.resize(maxEventsPerSlotBlock);
+            state.merged.resize(std::size_t{maxEventsPerSlotBlock} + kMaxBusEffectEvents);
         }
         if (const int main = mainAudioOutput(layout); main >= 0)
             state.audioChannels = layout.audioOutputs[static_cast<std::size_t>(main)].channelCount;

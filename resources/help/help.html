@@ -345,6 +345,7 @@ h1.card, h2.card, h3.card {
 <li><strong>Plugin</strong> (middle): the row's name, the plugin and its maker, its <strong>Control Links</strong> button (the MIDI plug), <strong>Editor</strong>, and its share of the DSP load.</li>
 <li><strong>Output</strong> (right): <strong>M</strong> (mute), the two sends (<strong>A</strong> and <strong>B</strong>), the fader over a stereo meter, the clip light, the level, and the output pair (<a href="#levels">Levels and Outputs</a>).</li>
 </ul>
+<p><strong>Editor</strong> opens the plugin's own window. For a plugin without one, it opens StageHand's <strong>generic editor</strong> instead: a slider, switch or menu for each of its parameters, and the value as the plugin writes it (click it to type a number). Double-click a control for its default; Shift-drag a slider for finer steps. It only opens when you click Editor.</p>
 <p>Each row has its own colour, as a stripe down its left edge and a tint across it. A sequence or looper that plays into a row takes the row's colour, so you can see what plays what.</p>
 <p><strong>Removing a row:</strong> the red X at its right end asks first. <strong>Shift-click</strong> the X to remove it at once.</p>
 <p>A row whose plugin can't be found is kept as a placeholder, with the reason, so the rack still opens. Install the plugin and open the rack again.</p>
@@ -385,7 +386,7 @@ h1.card, h2.card, h3.card {
 <ul>
 <li><strong>The MIDI FX menu</strong>, beside the input menu, shows the first effect's name (and &quot;+1&quot; for each more), or &quot;MIDI FX&quot; when there are none. Its <strong>Add a MIDI effect...</strong> lists the note effects; a new one goes after the others.</li>
 <li>For each effect the menu has <strong>Editor</strong>, <strong>Bypass</strong> (the row hears its input directly), <strong>Move up</strong>, <strong>Move down</strong> and <strong>Remove</strong>.</li>
-<li>With one effect that has a window of its own, <strong>E</strong> beside the menu opens it.</li>
+<li>With one effect, <strong>E</strong> beside the menu opens its editor.</li>
 <li>An effect that isn't installed shows in red. It's kept and saved with the rack, and the row's MIDI passes it by until it's back.</li>
 </ul>
 </div>

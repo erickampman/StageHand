@@ -3,9 +3,9 @@
 #include <memory>
 #include <string>
 
-namespace stagehand {
+#include "App/RackController.h"
 
-class RackController;
+namespace stagehand {
 
 // StageHand's main window: the rack view (docs/rack-view.md, section 6). One
 // row per plugin slot, input | plugin | output, plus a toolbar and a status
@@ -42,6 +42,11 @@ public:
     // Open a rack or setlist from outside (RackWidget::openDocument()), the
     // window brought forward.
     void openDocument(const std::string& path);
+    // The generic editor (docs/generic-editor.md): a window of `plugin`'s
+    // parameters, for a plugin with no editor of its own
+    // (RackController::Config::openGenericEditor). Closing the handle closes
+    // the window; it reports closed once the user closes it or this RackUi goes.
+    std::unique_ptr<EditorHandle> openParameterEditor(HostedPlugin& plugin, const std::string& title);
 
     struct Impl;
 

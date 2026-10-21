@@ -528,7 +528,7 @@ void testMidiEffects() {
 
     runBlock(*engine);
     CHECK(first != nullptr && first->processed == 1);   // in the graph, in front of the synth
-    CHECK(third != nullptr && third->processed == 0);   // bypassed: left out
+    CHECK(third != nullptr && third->processed == 1 && third->received.empty());   // bypassed: runs, no MIDI
 
     if (first != nullptr) first->state = bytes("arp-edited");
     Rack captured = session.capture();
@@ -553,7 +553,7 @@ void testMidiEffects() {
     session.flush();
     runBlock(*engine);
     auto* added = factory.createdEffects["arp"];   // the last arp made: arp-2
-    CHECK(added != nullptr && added->processed == 1 && third != nullptr && third->processed == 1);
+    CHECK(added != nullptr && added->processed == 1 && third != nullptr && third->processed == 2);
 
     std::weak_ptr<HostedPlugin> removed = session.slot("a")->midiEffects[0].plugin;
     CHECK(session.removeMidiEffect("a", "arp") && session.slot("a")->midiEffects.size() == 3);

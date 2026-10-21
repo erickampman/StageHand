@@ -93,14 +93,17 @@ A slot gains `midiEffects`, in order (docs/rack-format.md, "Slot"):
 - An effect that isn't installed, or whose row's plugin isn't, is kept with its
   descriptor and state, saved back unchanged, and passed by. The load reports
   it, and so does Check setlist (`runningProblems()`).
-- `bypassed`: left out of the graph; the row hears its input directly.
+- `bypassed`: the row's MIDI goes around it, so the row hears its input
+  directly. It stays in the graph without MIDI (`SlotConfig::midiEffectBypassed`)
+  so it still takes its own parameter changes (the generic editor's), which
+  CLAP's flush can't deliver to an active plugin.
 
 ### Session and controller
 
 `Session::Slot::midiEffects` holds each effect's plugin (or why it didn't
 load), parallel to `saved.midiEffects`. They're created, restored and activated
 with their row (`prepareStep()`), saved by `capture()`, idled with the rest, and
-put into `SlotConfig::midiEffects` unless bypassed. Edits, all structural:
+put into `SlotConfig::midiEffects` (with `midiEffectBypassed`). Edits, all structural:
 `addMidiEffect` (refused for a placeholder row, or a plugin without a note input
 and output), `removeMidiEffect`, `moveMidiEffect`, `setMidiEffectBypassed`.
 `RackController` adds the same intents, and an effect's editor window, kept in

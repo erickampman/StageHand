@@ -31,6 +31,7 @@ public:
                     auto effect    = std::make_unique<FakeNoteEffect>(1);
                     effect->desc   = d;
                     effect->editor = withEditor.count(d.id) != 0;
+                    if (const auto p = params.find(d.id); p != params.end()) effect->params = p->second;
                     createdEffects[d.id] = effect.get();
                     return effect;
                 }
@@ -39,6 +40,7 @@ public:
                     2, it != dialects.end() ? it->second : NoteDialect::Midi | NoteDialect::Midi2, 1.0f, d.id);
                 plugin->desc   = d;
                 plugin->editor = withEditor.count(d.id) != 0;
+                if (const auto p = params.find(d.id); p != params.end()) plugin->params = p->second;
                 created[d.id]  = plugin.get();
                 return plugin;
             }
@@ -50,6 +52,7 @@ public:
     std::map<std::string, NoteDialectMask> dialects;   // by plugin id; default MIDI | MIDI 2.0
     std::set<std::string>               withEditor;   // plugin ids whose instances have an editor
     std::set<std::string>               noteEffects;  // plugin ids that are note effects (FakeNoteEffect)
+    std::map<std::string, std::vector<ParameterInfo>> params;   // by plugin id: its instances' parameters()
     std::map<std::string, FakeNoteEffect*> createdEffects;   // the last of each
     int                                 scans = 0;
 };

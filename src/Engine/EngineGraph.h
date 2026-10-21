@@ -44,6 +44,13 @@ struct SlotConfig {
     // one's to `plugin`, all in the same block. Their audio isn't heard.
     // Activated with kMaxPluginBlockFrames like `plugin`; none may be null.
     std::vector<std::shared_ptr<HostedPlugin>> midiEffects;
+    // Parallel to midiEffects (missing = no): a bypassed one still runs, for
+    // its own parameter changes, but gets no MIDI and its output is dropped,
+    // so the row's MIDI goes around it.
+    std::vector<bool> midiEffectBypassed;
+    bool bypassed(std::size_t effect) const noexcept {
+        return effect < midiEffectBypassed.size() && midiEffectBypassed[effect];
+    }
     std::uint32_t firstOutput = 0;      // backend output for the plugin's first channel
     // A slot of the rack switched away from, ringing out (docs/setlists.md,
     // section 3): no new note-ons reach it, the rest of its MIDI does (a
@@ -104,6 +111,9 @@ private:
         std::vector<float*> channels;
         // Its output stream, upconverted for a next stage that takes only MIDI 2.0.
         ump::UpconvertState upconvert;
+        std::vector<Event>  params;              // one block's parameter changes for it; fixed capacity
+        std::uint32_t       paramCount  = 0;
+        std::uint32_t       paramCursor = 0;     // next to hand out (block splitting)
     };
 
     // Audio-thread working state for one slot; sized at construction.
@@ -114,6 +124,7 @@ private:
         NoteDialectMask     pluginDialects = 0;  // of the plugin's own note port
         std::vector<EffectState> effects;        // one per SlotConfig::midiEffects
         std::vector<Event>  chain[2];            // a chunk's effect outputs, in turn; fixed capacity
+        std::vector<Event>  merged;              // a stage's input: MIDI and its own parameter changes
         std::uint32_t       audioChannels = 0;   // of the plugin's main output port
         std::vector<Event>  events;              // one block's events; fixed capacity
         std::uint32_t       eventCount    = 0;

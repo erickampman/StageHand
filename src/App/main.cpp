@@ -723,7 +723,11 @@ int runPlay(const Options& options) {
 
     // Editors, saving, and the rack view's model (docs/rack-view.md, section 5).
     RackController* controllerRef = nullptr;   // for the editors' save key
+    RackUi*         uiPtr         = nullptr;   // the rack window, once it's open (the generic editor's)
     RackController::Config config;
+    config.openGenericEditor = [&uiPtr](HostedPlugin& plugin, const std::string& title) -> std::unique_ptr<EditorHandle> {
+        return uiPtr != nullptr ? uiPtr->openParameterEditor(plugin, title) : nullptr;
+    };
     config.openEditor = [&loop, &controllerRef](HostedPlugin& plugin,
                                                 const std::string& title) -> std::unique_ptr<EditorHandle> {
         struct Handle final : EditorHandle {
@@ -783,6 +787,7 @@ int runPlay(const Options& options) {
     // The rack window, unless --no-ui (or there's no display).
     std::unique_ptr<RackUi> ui = options.ui ? RackUi::open(controller, defaultWindowStatePath()) : nullptr;
     uiRef                      = &ui;
+    uiPtr                      = ui.get();
 
     // Editors open after audio starts, so they show the running plugins. With
     // the rack window they open on request; without it, at start.
@@ -878,6 +883,7 @@ int runPlay(const Options& options) {
     // stop MIDI; run nothing so the audio thread stops the plugins; stop audio.
     // The plugins are deactivated and destroyed on this thread when the session
     // goes.
+    uiPtr = nullptr;
     ui.reset();
     controller.closeAllEditors();
     const bool unsaved  = controller.unsavedUntitled();

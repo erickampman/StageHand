@@ -93,6 +93,8 @@ Each row is one plugin, in three parts:
 - **Plugin** (middle): the row's name, the plugin and its maker, its **Control Links** button (the MIDI plug), **Editor**, and its share of the DSP load.
 - **Output** (right): **M** (mute), the two sends (**A** and **B**), the fader over a stereo meter, the clip light, the level, and the output pair ([Levels and Outputs](#levels)).
 
+**Editor** opens the plugin's own window. For a plugin without one, it opens StageHand's **generic editor** instead: a slider, switch or menu for each of its parameters, and the value as the plugin writes it (click it to type a number). Double-click a control for its default; Shift-drag a slider for finer steps. It only opens when you click Editor.
+
 Each row has its own colour, as a stripe down its left edge and a tint across it. A sequence or looper that plays into a row takes the row's colour, so you can see what plays what.
 
 **Removing a row:** the red X at its right end asks first. **Shift-click** the X to remove it at once.
@@ -134,7 +136,7 @@ A row can run note effects (CLAP plugins that change MIDI, such as Retune) in fr
 
 - **The MIDI FX menu**, beside the input menu, shows the first effect's name (and "+1" for each more), or "MIDI FX" when there are none. Its **Add a MIDI effect...** lists the note effects; a new one goes after the others.
 - For each effect the menu has **Editor**, **Bypass** (the row hears its input directly), **Move up**, **Move down** and **Remove**.
-- With one effect that has a window of its own, **E** beside the menu opens it.
+- With one effect, **E** beside the menu opens its editor.
 - An effect that isn't installed shows in red. It's kept and saved with the rack, and the row's MIDI passes it by until it's back.
 ~~~
 ~~~note [card]

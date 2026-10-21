@@ -1178,6 +1178,64 @@ void testMidiEffects() {
             }
         }
     }
+    {   // Parameter changes go to their own plugin: the row's past its effects
+        // (a control link's, the generic editor's), an effect's to it alone.
+        auto engine = std::make_unique<Engine>();
+        auto first  = std::make_shared<FakeNoteEffect>(0);
+        auto second = std::make_shared<FakeNoteEffect>(0);
+        auto synth  = std::make_shared<FakePlugin>();
+        SlotConfig slot = slotFor(synth);
+        slot.midiEffects = {first, second};
+        engine->commit(graphOf({slot}));
+        engine->onMidi(1, note(T - 5 * ms, 60));             // offset 240
+        CHECK(engine->setParameter(synth.get(), 7, 0.25));
+        CHECK(engine->setParameter(second.get(), 3, 12.0));
+        CHECK(engine->setParameter(nullptr, 1, 1.0));       // nowhere: dropped
+        Block block(480, 48000.0, T);
+        engine->process(block.ctx);
+        auto params = [](const std::vector<Event>& events) {
+            return std::count_if(events.begin(), events.end(), [](const Event& e) { return e.type == EventType::ParamValue; });
+        };
+        CHECK(params(first->received) == 0 && first->received.size() == 1);
+        CHECK(params(second->received) == 1 && second->received.size() == 2);
+        if (second->received.size() == 2)   // its own, at the start, before the note
+            CHECK(second->received[0].param.id == 3 && second->received[0].value == 12.0 &&
+                  second->received[0].sampleOffset == 0 && second->received[1].type == EventType::Midi);
+        CHECK(synth->calls.size() == 1 && synth->calls[0].events.size() == 2);
+        if (synth->calls.size() == 1 && synth->calls[0].events.size() == 2) {
+            CHECK(synth->calls[0].events[0].type == EventType::ParamValue && synth->calls[0].events[0].param.id == 7);
+            CHECK(synth->calls[0].events[1].type == EventType::Midi && synth->calls[0].events[1].sampleOffset == 240);
+        }
+    }
+    {   // A bypassed effect runs for its own parameter changes; the MIDI goes
+        // around it, translated for the stage after it.
+        auto engine = std::make_unique<Engine>();
+        auto first  = std::make_shared<FakeNoteEffect>(12);
+        auto off    = std::make_shared<FakeNoteEffect>(5, NoteDialect::Midi2);   // MIDI 2.0 only, bypassed
+        auto midi1  = std::make_shared<FakePlugin>(2, NoteDialect::Midi);
+        SlotConfig slot = slotFor(midi1);
+        slot.midiEffects        = {first, off};
+        slot.midiEffectBypassed = {false, true};
+        engine->commit(graphOf({slot}));
+        engine->onMidi(1, note(T - 5 * ms, 60));
+        CHECK(engine->setParameter(off.get(), 2, 1.0));
+        Block block(480, 48000.0, T);
+        engine->process(block.ctx);
+        CHECK(off->processed == 1 && off->received.size() == 1 && off->received[0].type == EventType::ParamValue);
+        CHECK(midi1->calls.size() == 1 && midi1->calls[0].events.size() == 1);
+        if (midi1->calls.size() == 1 && midi1->calls[0].events.size() == 1)
+            CHECK(midi1->calls[0].events[0].midi.words[0] == 0x20904864);   // 60 + 12, MIDI 1.0 kept
+
+        slot.midiEffectBypassed = {true, true};   // all bypassed: the row's MIDI as it came
+        engine->commit(graphOf({slot}));
+        engine->onMidi(1, note(T + 5 * ms, 62));
+        Block next(480, 48000.0, T + 10 * ms);
+        engine->process(next.ctx);
+        CHECK(midi1->calls.size() == 2 && midi1->calls[1].events.size() == 1);
+        if (midi1->calls.size() == 2 && midi1->calls[1].events.size() == 1)
+            CHECK(midi1->calls[1].events[0].midi.words[0] == 0x20903E64);
+        engine->collect();
+    }
     {   // A Panic's note-offs go through the effects; a second resets them too.
         // An effect that leaves the graph stops processing.
         auto engine = std::make_unique<Engine>();

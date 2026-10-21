@@ -1,8 +1,8 @@
-# StageHand — The generic editor (plan)
+# StageHand — The generic editor
 
-Proposed 2026-10-06. A window StageHand draws itself, listing a plugin's
-parameters as sliders, switches and menus, **for a plugin with no editor of
-its own**. Not built yet. Builds on:
+Proposed 2026-10-06; the first version built 2026-10-21 (see "Built"). A
+window StageHand draws itself, listing a plugin's parameters as sliders,
+switches and menus, **for a plugin with no editor of its own**. Builds on:
 - `HostedPlugin::parameters()` and `paramValue()` (Plugin/HostedPlugin.h):
   each parameter's id, name, range, default, and whether it's stepped or
   automatable, from CLAP's params extension; `flushParams()` for changes
@@ -74,6 +74,41 @@ only for rows on screen whose value changed.
    lines; enough for a small plugin.
 2. **Full:** value text and typed values, enum names in the menus, groups,
    search, read-only and hidden, `rescan()`.
+
+## Built (2026-10-21)
+
+Asked for so Retune (a note effect with no window) can be set from StageHand.
+The author added: **it opens only when chosen** (an Editor or Edit button, or
+a MIDI effect's E or Editor), never by itself, so `openAllEditors()` and
+`--editors` open the plugins' own editors only. That narrows decision 5.
+
+Milestone 1 and part of 2:
+- `App/ParameterEditor`: the rows (every parameter but hidden ones), each a
+  switch (stepped, two values), a menu (stepped, up to 24 values, each named
+  by the plugin's value text) or a slider (snapping when stepped); values read
+  back from the plugin each tick, except a row being dragged or set in the
+  last three ticks; set() clamps and snaps; reset() to the default.
+- `Ui/ParameterEditorWidget` and `RackUi::openParameterEditor()`: a DGL
+  window per plugin, 560 wide. A row is the name, its control and the value
+  as the plugin writes it (CLAP `value_to_text`), which can be clicked to type
+  a number. Sliders move with the drag (Shift: finer); the wheel moves a step
+  or a hundredth; double-click resets. Read-only rows are dimmed. It scrolls.
+- `RackController::openAnyEditor()`: the plugin's own editor, else (through
+  `Config::openGenericEditor`, set by the app once the rack window exists) the
+  generic one, for rows, MIDI effects and bus effects. `editable()` drives each
+  button. `setParameter()` sends a change through `Engine::setParameter()`
+  (a main-to-audio queue, delivered as a ParamValue at the start of the next
+  block to whichever plugin it is, control links' pick-up told) and marks the
+  rack modified, or the rig for a bus effect.
+- uw-core: `ParameterInfo::isHidden`, `isReadOnly`, `module`;
+  `HostedPlugin::paramValueText()`.
+- A bypassed MIDI effect now stays in the graph without MIDI, so it still
+  takes its parameter changes (CLAP's flush isn't allowed while it's active).
+
+Not yet: groups by `module`, search, typing text the plugin parses
+(`text_to_value`), `rescan()`, gestures. Tests: `test-rackcontroller`
+(`testGenericEditor`), `test-engine` (parameter changes in a row with MIDI
+effects, a bypassed effect).
 
 ## Open questions
 

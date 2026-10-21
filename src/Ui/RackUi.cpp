@@ -8,15 +8,18 @@
 #include <functional>
 #include <map>
 #include <string>
+#include <vector>
 
 #include "Application.hpp"
 #include "Window.hpp"
 
 #include "App/FileDialog.h"
+#include "App/ParameterEditor.h"
 #include "App/RackController.h"
 #include "App/SequenceEditor.h"
 #include "Session/WindowState.h"
 #include "Ui/Monitor.h"
+#include "Ui/ParameterEditorWidget.h"
 #ifdef __APPLE__
 #include "Ui/FileChooser.h"
 #endif
@@ -93,6 +96,24 @@ struct RackUi::Impl {
         std::string                           name;   // in its title
     };
 
+    // Generic editors (docs/generic-editor.md), by a number their handles keep.
+    struct Generic {
+        std::unique_ptr<TrackedWindow>         window;
+        std::unique_ptr<ParameterEditor>       editor;
+        std::unique_ptr<ParameterEditorWidget> widget;
+        std::uint64_t                          drawn = ~std::uint64_t{0};   // the editor's version last drawn
+    };
+    // A handle closed: hidden now, torn down in idle(), outside DGL's event
+    // handling (a click in the rack window can close one).
+    void closeGeneric(int key) {
+        const auto it = generic.find(key);
+        if (it == generic.end()) return;
+        it->second.window->hide();
+        closingGeneric.push_back(std::move(it->second));
+        generic.erase(it);
+    }
+    void destroyGeneric(Generic& g) { destroyWith(*g.window, g.widget); }
+
     void openEditor(const std::string& id);
     void closeEditor(Editor& e) {
         destroyWith(*e.window, e.widget);
@@ -124,6 +145,10 @@ struct RackUi::Impl {
     TrackedWindow                 window;   // the rack window
     std::unique_ptr<RackWidget>   widget;
     std::map<std::string, Editor> editors;  // by sequence id
+    std::map<int, Generic>        generic;
+    std::vector<Generic>          closingGeneric;
+    int                           nextGeneric = 0;
+    std::shared_ptr<int>          alive = std::make_shared<int>(0);   // the handles' sign that this is still here
     std::uint64_t                 generation = 0;   // the controller's rackGeneration() they belong to
     std::string                   shownName;        // in the title
     // What the rack window last drew, so refresh() repaints only on a change.
@@ -248,6 +273,11 @@ RackUi::~RackUi() {
     // quitting state (DGL's teardown order).
     for (auto& [id, e] : impl->editors) impl->closeEditor(e);
     impl->editors.clear();
+    impl->alive.reset();   // the generic editors' handles report closed from here on
+    for (auto& [key, g] : impl->generic) impl->destroyGeneric(g);
+    for (Impl::Generic& g : impl->closingGeneric) impl->destroyGeneric(g);
+    impl->generic.clear();
+    impl->closingGeneric.clear();
     destroyWith(impl->window, impl->widget);
     impl->app.quit();
 }
@@ -267,6 +297,9 @@ void RackUi::idle() {
     }
 
     impl->followRack();
+
+    for (Impl::Generic& g : impl->closingGeneric) impl->destroyGeneric(g);
+    impl->closingGeneric.clear();
 
     // Editors the user closed, or whose sequence is gone, are torn down here,
     // outside DGL's event handling.
@@ -303,6 +336,52 @@ void RackUi::refresh() {
         e.editor->sync();
         if (e.window->isVisible()) e.widget->repaint();
     }
+    for (auto& [key, g] : impl->generic) {   // the plugins' own changes, a control link's
+        g.editor->sync();
+        if (g.window->isVisible() && g.editor->version() != g.drawn) {
+            g.drawn = g.editor->version();
+            g.widget->repaint();
+        }
+    }
+}
+
+std::unique_ptr<EditorHandle> RackUi::openParameterEditor(HostedPlugin& plugin, const std::string& title) {
+    struct Handle final : EditorHandle {
+        std::weak_ptr<int> alive;
+        Impl*              impl = nullptr;
+        int                key  = 0;
+        bool isOpen() const override {
+            if (alive.expired()) return false;
+            const auto it = impl->generic.find(key);
+            return it != impl->generic.end() && !it->second.window->closedByUser;
+        }
+        ~Handle() override {
+            if (!alive.expired()) impl->closeGeneric(key);
+        }
+    };
+    Impl::Generic g;
+    g.window = std::make_unique<TrackedWindow>(impl->app);
+    g.editor = std::make_unique<ParameterEditor>(impl->controller, plugin);
+    {
+        const dgl::Window::ScopedGraphicsContext context(*g.window);
+        g.widget = std::make_unique<ParameterEditorWidget>(*g.window, *g.editor, plugin.descriptor().name);
+    }
+    const double sf = g.window->getScaleFactor();
+    const auto   px = [sf](double logical) { return static_cast<unsigned>(std::lround(logical * sf)); };
+    g.window->setTitle(title.c_str());
+    g.window->setResizable(true);
+    // Every row if it can, and room for a menu of values (up to kMenuSteps) below a short list.
+    g.window->setGeometryConstraints(px(420.0), px(160.0));
+    g.window->setSize(px(560.0), px(std::clamp(static_cast<double>(g.widget->wantedHeight()), 340.0, 720.0)));
+    setIcon(*g.window);
+    g.window->show();
+
+    auto handle   = std::make_unique<Handle>();
+    handle->alive = impl->alive;
+    handle->impl  = impl.get();
+    handle->key   = impl->nextGeneric++;
+    impl->generic.emplace(handle->key, std::move(g));
+    return handle;
 }
 
 void RackUi::showNotice(const std::string& text) {

@@ -38,7 +38,8 @@
 ## M4: Editor and later
 - [x] House look and feel in the rack view: brand, house slider, dropdowns, sections (docs/look.md)
 - [ ] House look in the Perform view and panels; knobs in the generic editor
-- [ ] Generic editor: sliders and menus for plugins with no editor of their own
+- [x] Generic editor, first version: sliders, switches and menus for plugins with no editor of their own, opened only when chosen (docs/generic-editor.md)
+- [ ] Generic editor: groups, search, typed text the plugin parses, rescan
 - [ ] Backing tracks: an audio file per song, in time with the transport
 - [ ] Song notes in the Perform view
 - [ ] Undo for rack edits
