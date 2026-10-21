@@ -27,6 +27,13 @@ public:
     std::unique_ptr<HostedPlugin> create(const PluginDescriptor& desc, HostServices&) override {
         for (const PluginDescriptor& d : installed)
             if (d.id == desc.id && d.path == desc.path) {
+                if (noteEffects.count(d.id) != 0) {   // a note effect: +1 semitone
+                    auto effect    = std::make_unique<FakeNoteEffect>(1);
+                    effect->desc   = d;
+                    effect->editor = withEditor.count(d.id) != 0;
+                    createdEffects[d.id] = effect.get();
+                    return effect;
+                }
                 const auto it = dialects.find(d.id);
                 auto plugin   = std::make_unique<FakePlugin>(
                     2, it != dialects.end() ? it->second : NoteDialect::Midi | NoteDialect::Midi2, 1.0f, d.id);
@@ -42,6 +49,8 @@ public:
     std::map<std::string, FakePlugin*>  created;
     std::map<std::string, NoteDialectMask> dialects;   // by plugin id; default MIDI | MIDI 2.0
     std::set<std::string>               withEditor;   // plugin ids whose instances have an editor
+    std::set<std::string>               noteEffects;  // plugin ids that are note effects (FakeNoteEffect)
+    std::map<std::string, FakeNoteEffect*> createdEffects;   // the last of each
     int                                 scans = 0;
 };
 

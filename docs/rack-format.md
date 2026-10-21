@@ -49,6 +49,7 @@ Split Bass Pad.rack/
   state/
     bass.bin         one opaque plugin-state blob per slot (plugin-defined bytes)
     pad.bin
+    pad.retune.bin   and one per MIDI effect: <slot>.<effect>.bin
 ```
 
 Plugin state stays out of the JSON because it's opaque, often binary, and can be
@@ -142,6 +143,7 @@ get a **layer**.
 | `midi.velocity` | `[0, 127]` | Inclusive note-on velocity range, on the familiar 0–127 scale (compared at MIDI 2.0 resolution) |
 | `midi.transpose` | `0` | Semitones. MIDI 2.0 pitch 7.9 attributes move with the note |
 | `midi.notePort` | `0` | Which of the plugin's note inputs receives it |
+| `midiEffects` | none | The row's MIDI effects, in order, in front of its plugin (docs/midi-effects.md). Added 2026-10-21; additive, so the format version is unchanged. Each: `id` (unique in the row, the slot id's rule), `name` (default `id`), `plugin` (as a slot's), `state` (`"state/<slot>.<effect>.bin"`; absent: its defaults) and `bypassed` (default `false`: left out, so the row hears its input directly). One that isn't installed is kept, saved back unchanged, and passed by |
 
 Unknown fields are ignored when loading and dropped when saving (v1 doesn't
 round-trip them).

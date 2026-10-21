@@ -259,7 +259,7 @@ h1.card, h2.card, h3.card {
 <div class="callout-content">
 <h2>On This Page</h2>
 <p><a href="#overview">Overview</a> · <a href="#getting-started">Getting Started</a> · <a href="#nomenclature">Nomenclature</a> · <a href="#window">The Window</a> · <a href="#files">Files and Saving</a></p>
-<p><strong>The rack —</strong> <a href="#rows">Rack Rows</a> · <a href="#adding">Adding Plugins</a> · <a href="#inputs">Inputs and Filters</a> · <a href="#levels">Levels and Outputs</a> · <a href="#buses">The Rig's Buses</a></p>
+<p><strong>The rack —</strong> <a href="#rows">Rack Rows</a> · <a href="#adding">Adding Plugins</a> · <a href="#inputs">Inputs and Filters</a> · <a href="#midifx">MIDI Effects</a> · <a href="#levels">Levels and Outputs</a> · <a href="#buses">The Rig's Buses</a></p>
 <p><strong>Time and sources —</strong> <a href="#transport">Transport and Click</a> · <a href="#count-in">Count-in</a> · <a href="#dock">The Sources Dock</a> · <a href="#sequences">Sequences</a> · <a href="#loopers">Loopers</a></p>
 <p><strong>On stage —</strong> <a href="#setlists">Setlists</a> · <a href="#perform">The Perform View</a> · <a href="#control-links">Control Links</a> · <a href="#panic">Panic</a> · <a href="#dsp">DSP and Xruns</a> · <a href="#shortcuts">Shortcuts</a> · <a href="#troubleshooting">Troubleshooting</a></p>
 </div>
@@ -341,7 +341,7 @@ h1.card, h2.card, h3.card {
 <h2 id="rows">Rack Rows</h2>
 <p>Each row is one plugin, in three parts:</p>
 <ul>
-<li><strong>Input</strong> (left): the input menu, a MIDI 1.0 / 2.0 badge, the key range bar, and the filter chip (<a href="#inputs">Inputs and Filters</a>).</li>
+<li><strong>Input</strong> (left): the input menu, the <strong>MIDI FX</strong> menu, a MIDI 1.0 / 2.0 badge, the key range bar, and the filter chip (<a href="#inputs">Inputs and Filters</a>, <a href="#midifx">MIDI Effects</a>).</li>
 <li><strong>Plugin</strong> (middle): the row's name, the plugin and its maker, its <strong>Control Links</strong> button (the MIDI plug), <strong>Editor</strong>, and its share of the DSP load.</li>
 <li><strong>Output</strong> (right): <strong>M</strong> (mute), the two sends (<strong>A</strong> and <strong>B</strong>), the fader over a stereo meter, the clip light, the level, and the output pair (<a href="#levels">Levels and Outputs</a>).</li>
 </ul>
@@ -355,7 +355,7 @@ h1.card, h2.card, h3.card {
 <h2 id="adding">Adding Plugins</h2>
 <p>StageHand finds CLAP plugins in the usual places: <code>~/Library/Audio/Plug-Ins/CLAP</code> and <code>/Library/Audio/Plug-Ins/CLAP</code> on the Mac, <code>~/.clap</code> and <code>/usr/lib/clap</code> on Linux, and anywhere <code>CLAP_PATH</code> names.</p>
 <ul>
-<li><strong>+ Add plugin</strong> lists the instruments, then other plugins (note effects), then the audio effects, greyed: those go on the rig's buses, not in rows.</li>
+<li><strong>+ Add plugin</strong> lists the instruments, then the note effects and the audio effects, greyed: note effects go in a row's MIDI FX menu, audio effects on the rig's buses.</li>
 <li><strong>Right-click below the rows</strong>, or click the <strong>+</strong> there, for the instruments alone.</li>
 </ul>
 <p>The new row goes at the bottom. The first scan can take a moment; after that the list opens at once.</p>
@@ -376,6 +376,18 @@ h1.card, h2.card, h3.card {
 <p><strong>The key range bar</strong> under the menu is the row's range of notes. Drag an end to move it, drag the middle to move the whole range, or click outside it to stretch the nearer end. Two rows with ranges side by side make a split; overlapping ranges make a layer.</p>
 <p><strong>The filter chip</strong> opens the filter panel: channels, groups (MIDI 2.0), the key and velocity ranges, and transpose, with Reset. Steppers take Shift for an octave or 10, and the wheel works too.</p>
 <p><strong>An amber "!"</strong> beside the badge means a MIDI 2.0 input feeds a MIDI 1.0 plugin, so per-note data is lost on the way.</p>
+</div>
+</div>
+<div class="callout callout-note card">
+<div class="callout-content">
+<h2 id="midifx">MIDI Effects</h2>
+<p>A row can run note effects (CLAP plugins that change MIDI, such as Retune) in front of its plugin. Everything the row hears goes through them, in order, then to the plugin. Their own audio isn't heard.</p>
+<ul>
+<li><strong>The MIDI FX menu</strong>, beside the input menu, shows the first effect's name (and &quot;+1&quot; for each more), or &quot;MIDI FX&quot; when there are none. Its <strong>Add a MIDI effect...</strong> lists the note effects; a new one goes after the others.</li>
+<li>For each effect the menu has <strong>Editor</strong>, <strong>Bypass</strong> (the row hears its input directly), <strong>Move up</strong>, <strong>Move down</strong> and <strong>Remove</strong>.</li>
+<li>With one effect that has a window of its own, <strong>E</strong> beside the menu opens it.</li>
+<li>An effect that isn't installed shows in red. It's kept and saved with the rack, and the row's MIDI passes it by until it's back.</li>
+</ul>
 </div>
 </div>
 <div class="callout callout-note card">

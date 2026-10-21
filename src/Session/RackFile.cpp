@@ -406,7 +406,40 @@ RackSlot parseSlot(const Json& s, const fs::path& bundle, std::vector<std::strin
         if (notePort < 0) fail("midi.notePort must be 0 or more");
         slot.notePort = static_cast<std::uint16_t>(notePort);
     }
+    if (s.contains("midiEffects")) {
+        const Json& list = s.at("midiEffects");
+        if (!list.is_array()) fail("slot '" + slot.id + "': midiEffects must be a list");
+        std::set<std::string> ids;
+        for (const Json& e : list) {
+            RackMidiEffect effect;
+            effect.id = e.at("id").get<std::string>();
+            if (!validSlotId(effect.id) || !ids.insert(effect.id).second)
+                fail("slot '" + slot.id + "': invalid or duplicate MIDI effect id '" + effect.id + "'");
+            effect.name           = e.value("name", effect.id);
+            const Json& plugin    = e.at("plugin");
+            effect.plugin.format  = parseFormat(plugin.at("format").get<std::string>());
+            effect.plugin.id      = plugin.at("id").get<std::string>();
+            effect.plugin.path    = expandHome(plugin.value("path", std::string{}));
+            effect.plugin.kind    = PluginKind::Other;
+            if (e.contains("state")) {
+                const fs::path statePath = bundle / e.at("state").get<std::string>();
+                if (!readBytes(statePath, effect.state)) {
+                    effect.state.clear();
+                    warnings.push_back("slot '" + slot.id + "', MIDI effect '" + effect.id + "': state file " +
+                                       statePath.string() + " is missing; the plugin will start from its defaults");
+                }
+            }
+            effect.bypassed = e.value("bypassed", false);
+            slot.midiEffects.push_back(std::move(effect));
+        }
+    }
     return slot;
+}
+
+// A MIDI effect's state file: "<slot>.<effect>.bin" (ids have no '.', so it
+// can't be a slot's).
+std::string effectStateName(const RackSlot& slot, const RackMidiEffect& effect) {
+    return slot.id + "." + effect.id + ".bin";
 }
 
 Json slotJson(const RackSlot& slot, bool hasState) {
@@ -438,6 +471,23 @@ Json slotJson(const RackSlot& slot, bool hasState) {
     midi["transpose"] = static_cast<int>(slot.filter.transpose);
     midi["notePort"]  = slot.notePort;
     s["midi"]         = midi;
+    if (!slot.midiEffects.empty()) {
+        Json list = Json::array();
+        for (const RackMidiEffect& effect : slot.midiEffects) {
+            Json e;
+            e["id"] = effect.id;
+            if (!effect.name.empty() && effect.name != effect.id) e["name"] = effect.name;
+            Json plugin;
+            plugin["format"] = formatName(effect.plugin.format);
+            plugin["id"]     = effect.plugin.id;
+            if (!effect.plugin.path.empty()) plugin["path"] = abbreviateHome(effect.plugin.path);
+            e["plugin"] = plugin;
+            if (!effect.state.empty()) e["state"] = "state/" + effectStateName(slot, effect);
+            e["bypassed"] = effect.bypassed;
+            list.push_back(e);
+        }
+        s["midiEffects"] = list;
+    }
     return s;
 }
 
@@ -595,6 +645,13 @@ RackFileResult saveRack(const std::string& bundlePath, const Rack& rack) {
                 fail("invalid or duplicate slot id '" + slot.id + "'");
             if (!slot.state.empty() && !writeBytes(temp / "state" / (slot.id + ".bin"), slot.state))
                 fail("cannot write the state of slot '" + slot.id + "'");
+            std::set<std::string> effectIds;
+            for (const RackMidiEffect& effect : slot.midiEffects) {
+                if (!validSlotId(effect.id) || !effectIds.insert(effect.id).second)
+                    fail("slot '" + slot.id + "': invalid or duplicate MIDI effect id '" + effect.id + "'");
+                if (!effect.state.empty() && !writeBytes(temp / "state" / effectStateName(slot, effect), effect.state))
+                    fail("cannot write the state of slot '" + slot.id + "', MIDI effect '" + effect.id + "'");
+            }
             slots.push_back(slotJson(slot, !slot.state.empty()));
         }
         doc["slots"] = slots;

@@ -7,9 +7,8 @@ Asked for 2026-10-21 for Retune → StruckSynth: Bitwig sends plugins no MIDI
 2.0, so StageHand, which offers plugins MIDI | MIDI2, is the host where
 Retune's microtonal (Pitch 7.9) path works.
 
-Sections 1 and 2 are built. Section 3 (the rack file and the window) is a
-**proposal for review**: nothing in the file format, the Session or the UI has
-changed yet.
+All three sections are built: the engine first, then (once the author chose
+among the options) the rack file, Session and window.
 
 ## 1. Plugin output events (uw-core, built)
 
@@ -65,63 +64,68 @@ Retune (31-EDO, one step up) into StruckSynth through the engine, into memory,
 and checks StruckSynth gets note 60 with Pitch 7.9 = 60 + 198/512 and sounds.
 It skips unless both are installed.
 
-## 3. Proposal: the rack file and the window (for review)
+## 3. The rack file and the window (built; decided 2026-10-21)
+
+The author chose the proposal's recommendations: a MIDI FX dropdown on the
+input side, note effects greyed in "+ Add plugin", and a missing or bypassed
+effect passed by.
 
 ### Rack file (additive; version stays 2)
 
-A slot gains `midiEffects`, in order:
+A slot gains `midiEffects`, in order (docs/rack-format.md, "Slot"):
 
 ```json
 "midiEffects": [
   {
     "id": "retune",
     "name": "Retune",
-    "plugin": { "format": "clap", "id": "com.unlikelyware.retune", "path": "..." },
+    "plugin": { "format": "clap", "id": "com.unlikelyware.retune", "path": "~/Library/Audio/Plug-Ins/CLAP/Retune.clap" },
     "state": "state/pad.retune.bin",
     "bypassed": false
   }
 ]
 ```
 
-- `id` is unique within the slot; the state file is `state/<slot>.<effect>.bin`,
-  so it can't collide with a slot's `state/<slot>.bin` (slot ids have no `.`).
-- `plugin` and `state` mean what they do for a slot. An effect that isn't
-  installed is kept as a placeholder holding its descriptor and blob, and
-  saved back unchanged, like a missing slot plugin.
-- `bypassed`: the effect is left out of the graph, so the row hears its input
-  directly. (Open question 3.)
+- `id` is unique within the slot, by the slot id's rule; the state file is
+  `state/<slot>.<effect>.bin`, which can't collide with a slot's
+  `state/<slot>.bin` (ids have no `.`). `name` is written only when it differs
+  from `id`.
+- An effect that isn't installed, or whose row's plugin isn't, is kept with its
+  descriptor and state, saved back unchanged, and passed by. The load reports
+  it, and so does Check setlist (`runningProblems()`).
+- `bypassed`: left out of the graph; the row hears its input directly.
 
-Session: `Session::Slot` gets the effects' plugins (created, state loaded and
-activated like the slot's plugin), `configOf()` fills
-`SlotConfig::midiEffects`, `capture()` saves their state, the idle loop idles
-them, and the edit API gains `addMidiEffect(slot, PluginDescriptor, index)`,
-`removeMidiEffect`, `moveMidiEffect` and `setMidiEffectBypassed`, all
-structural (a graph commit).
+### Session and controller
 
-### Window (needs your decision)
+`Session::Slot::midiEffects` holds each effect's plugin (or why it didn't
+load), parallel to `saved.midiEffects`. They're created, restored and activated
+with their row (`prepareStep()`), saved by `capture()`, idled with the rest, and
+put into `SlotConfig::midiEffects` unless bypassed. Edits, all structural:
+`addMidiEffect` (refused for a placeholder row, or a plugin without a note input
+and output), `removeMidiEffect`, `moveMidiEffect`, `setMidiEffectBypassed`.
+`RackController` adds the same intents, and an effect's editor window, kept in
+the editors map as `"<slot>/<effect>"` (closed with the effect or its row).
+`RowModel::midiEffects` carries each one's name, problem, bypass and editor
+state. `stagehand`'s rack listing prints them.
 
-Proposal:
+### Window
 
-- **The row's input side gets a "MIDI FX" control** after the filter: a small
-  dropdown in the house style showing the first effect's name ("Retune", or
-  "Retune +1" for two), or "MIDI FX" dimmed when there are none. A click opens
-  a menu: each effect with *Editor*, *Bypass*, *Move up/down* and *Remove*,
-  then *Add a MIDI effect*, which lists the "Other (note effects)" plugins.
-- **Editor:** from that menu, per effect. With exactly one effect, the
-  control also has a small editor button of its own, like the row's plugin.
-- **"+ Add plugin" stops offering note effects as rows.** Placing one today
-  makes a row that makes no sound. They'd be listed greyed under "Other (note
-  effects): add one from a row's MIDI FX", as audio effects are listed for the
-  rig's buses.
-- The row's MIDI activity light stays on the input (what the row hears).
+- **The MIDI FX dropdown** sits on the row's first line, after the input menu
+  (which gives up the room): the first effect's name, "+N" for more, or
+  "MIDI FX" dimmed when there are none; red if one isn't loaded, dim if all are
+  bypassed. Its menu lists each effect (numbered, in order) with *Editor*,
+  *Bypass*, *Move up*, *Move down* and *Remove*, then *Add a MIDI effect...*,
+  the note effects (CLAP "note-effect"), added after the others.
+- **E**, beside the dropdown, opens the editor when the row has exactly one
+  effect and it has one.
+- **"+ Add plugin"** and the other row-making plugin lists show note effects
+  greyed, under "Other (note effects): add one from a row's MIDI FX".
+- The row's MIDI light stays on the input: what the row hears.
+- The help page has a "MIDI Effects" section.
 
-### Open questions
-
-1. Is the "MIDI FX" dropdown on the input side where you want it, or would you
-   rather have one chip per effect in the row (wider rows), or effects only in
-   the row's "..." menu?
-2. Should "+ Add plugin" drop note effects (greyed, as proposed), or offer
-   "New row: note effect + instrument" (it asks for the instrument next)?
-3. A missing or bypassed effect: pass the MIDI through (proposed; a missing
-   Retune then plays untransposed, with the row's missing-plugin warning), or
-   silence the row until it's found?
+Tests: `test-rackfile` (`testMidiEffects`: round trip, state files, bypass, a
+missing state file, duplicate ids), `test-session` (`testMidiEffects`: load with
+state, a missing effect and a placeholder row kept, bypass left out of the
+graph, capture, add/move/bypass/remove live, a removed effect stopped and
+destroyed), `test-rackcontroller` (`testMidiEffects`: the view model, refusals
+with notices, editors, idle).

@@ -169,6 +169,22 @@ bool Session::prepareStep(PreparedRack& prepared) {
         applySends(slot);
         slot.saved.plugin.path = plugin->descriptor().path;   // where it was actually found
     }
+    for (std::size_t e = 0; e < saved.midiEffects.size(); ++e) {
+        RackMidiEffect&  effect = slot.saved.midiEffects[e];
+        Slot::MidiEffect loaded;
+        if (slot.plugin) {
+            bool rejected = false;
+            loaded = createMidiEffect(effect, prepared.rate, prepared.scanned, prepared.haveScan, rejected);
+            if (rejected)
+                prepared.warnings.push_back(where + "MIDI effect '" + effect.id +
+                                            "': the plugin rejected its saved state; it starts from its defaults");
+            if (loaded.plugin) effect.plugin.path = loaded.plugin->descriptor().path;
+            else
+                prepared.warnings.push_back(where + "MIDI effect '" + effect.id + "': " + loaded.loadProblem +
+                                            "; kept, and the row's MIDI passes it by");
+        }
+        slot.midiEffects.push_back(std::move(loaded));
+    }
     prepared.slots.push_back(std::move(slot));
     return prepared.ready();
 }
@@ -257,8 +273,11 @@ bool Session::activate(std::unique_ptr<PreparedRack> prepared, LoadReport& repor
 }
 
 void PreparedRack::idle() {
-    for (const Session::Slot& slot : slots)
+    for (const Session::Slot& slot : slots) {
         if (slot.plugin) slot.plugin->idle();
+        for (const Session::Slot::MidiEffect& effect : slot.midiEffects)
+            if (effect.plugin) effect.plugin->idle();
+    }
 }
 
 Rack Session::capture() const {
@@ -278,6 +297,11 @@ Rack Session::capture() const {
             std::vector<std::byte> state;
             if (slot.plugin->saveState(state)) saved.state = std::move(state);
         }
+        for (std::size_t e = 0; e < slot.midiEffects.size() && e < saved.midiEffects.size(); ++e)
+            if (const auto& plugin = slot.midiEffects[e].plugin) {
+                std::vector<std::byte> state;
+                if (plugin->saveState(state)) saved.midiEffects[e].state = std::move(state);
+            }
         rack.slots.push_back(std::move(saved));
     }
     return rack;
@@ -521,6 +545,114 @@ std::string Session::addSlot(const PluginDescriptor& plugin, std::size_t index, 
     loaded.insert(loaded.begin() + static_cast<std::ptrdiff_t>(std::min(index, loaded.size())), std::move(slot));
     graphDirty = dirty = true;
     return id;
+}
+
+std::string Session::addMidiEffect(const std::string& id, const PluginDescriptor& plugin, std::size_t index,
+                                   std::string& problem) {
+    Slot* slot = find(id);
+    if (slot == nullptr) {
+        problem = "no row '" + id + "'";
+        return {};
+    }
+    if (!slot->plugin) {
+        problem = "the row's plugin isn't loaded";
+        return {};
+    }
+    std::unique_ptr<HostedPlugin> created = factory.create(plugin, host);
+    if (!created) {
+        problem = "plugin '" + plugin.id + "' failed to load";
+        return {};
+    }
+    const PortLayout layout = created->portLayout();
+    if (layout.noteInputs.empty() || layout.noteOutputs.empty()) {
+        problem = "'" + (plugin.name.empty() ? plugin.id : plugin.name) + "' has no note input and output";
+        return {};
+    }
+    if (!created->activate(sampleRate, kMaxPluginBlockFrames)) {
+        problem = "plugin '" + plugin.id + "' failed to activate";
+        return {};
+    }
+
+    RackMidiEffect saved;
+    saved.name   = plugin.name.empty() ? plugin.id : plugin.name;
+    saved.plugin = plugin;
+    const std::string base = slotIdFrom(saved.name);
+    auto taken = [&](const std::string& candidate) {
+        return std::any_of(slot->saved.midiEffects.begin(), slot->saved.midiEffects.end(),
+                           [&](const RackMidiEffect& e) { return e.id == candidate; });
+    };
+    saved.id = base;
+    for (int n = 2; taken(saved.id); ++n) saved.id = base + "-" + std::to_string(n);
+    const std::string effectId = saved.id;
+
+    const std::size_t at = std::min(index, slot->midiEffects.size());
+    slot->saved.midiEffects.insert(slot->saved.midiEffects.begin() + static_cast<std::ptrdiff_t>(at), std::move(saved));
+    slot->midiEffects.insert(slot->midiEffects.begin() + static_cast<std::ptrdiff_t>(at),
+                             Slot::MidiEffect{std::move(created), {}});
+    graphDirty = dirty = true;
+    return effectId;
+}
+
+namespace {
+
+// The index of `effect` among `slot`'s MIDI effects, or -1.
+int midiEffectIndex(const Session::Slot& slot, const std::string& effect) {
+    for (std::size_t e = 0; e < slot.saved.midiEffects.size(); ++e)
+        if (slot.saved.midiEffects[e].id == effect) return static_cast<int>(e);
+    return -1;
+}
+
+} // namespace
+
+bool Session::removeMidiEffect(const std::string& id, const std::string& effect) {
+    Slot* slot = find(id);
+    const int e = slot != nullptr ? midiEffectIndex(*slot, effect) : -1;
+    if (e < 0) return false;
+    slot->saved.midiEffects.erase(slot->saved.midiEffects.begin() + e);
+    slot->midiEffects.erase(slot->midiEffects.begin() + e);   // the running graph holds it until flush()
+    graphDirty = dirty = true;
+    return true;
+}
+
+bool Session::moveMidiEffect(const std::string& id, const std::string& effect, int by) {
+    Slot* slot = find(id);
+    const int from = slot != nullptr ? midiEffectIndex(*slot, effect) : -1;
+    if (from < 0) return false;
+    const int to = std::clamp(from + by, 0, static_cast<int>(slot->midiEffects.size()) - 1);
+    if (to == from) return true;
+    auto move = [&](auto& list) {
+        auto item = std::move(list[static_cast<std::size_t>(from)]);
+        list.erase(list.begin() + from);
+        list.insert(list.begin() + to, std::move(item));
+    };
+    move(slot->saved.midiEffects);
+    move(slot->midiEffects);
+    graphDirty = dirty = true;
+    return true;
+}
+
+bool Session::setMidiEffectBypassed(const std::string& id, const std::string& effect, bool bypassed) {
+    Slot* slot = find(id);
+    const int e = slot != nullptr ? midiEffectIndex(*slot, effect) : -1;
+    if (e < 0) return false;
+    slot->saved.midiEffects[static_cast<std::size_t>(e)].bypassed = bypassed;
+    graphDirty = dirty = true;
+    return true;
+}
+
+Session::Slot::MidiEffect Session::createMidiEffect(const RackMidiEffect& saved, double rate,
+                                                    std::vector<PluginDescriptor>& scanned, bool& haveScan,
+                                                    bool& rejectedState) {
+    Slot::MidiEffect effect;
+    std::shared_ptr<HostedPlugin> plugin = createPlugin(saved.plugin, effect.loadProblem, scanned, haveScan);
+    if (plugin && !saved.state.empty() && !plugin->loadState(saved.state.data(), saved.state.size()))
+        rejectedState = true;   // it starts from its defaults
+    if (plugin && !plugin->activate(rate, kMaxPluginBlockFrames)) {
+        effect.loadProblem = "the plugin failed to activate";
+        plugin.reset();
+    }
+    effect.plugin = std::move(plugin);
+    return effect;
 }
 
 bool Session::removeSlot(const std::string& id) {
@@ -1027,6 +1159,9 @@ SlotConfig Session::configOf(const Slot& slot) const {
             config.sequenceSources.push_back(entry.source);
     config.notePort              = slot.saved.notePort;
     config.firstOutput           = slot.saved.firstOutput;
+    for (std::size_t e = 0; e < slot.midiEffects.size() && e < slot.saved.midiEffects.size(); ++e)
+        if (slot.midiEffects[e].plugin && !slot.saved.midiEffects[e].bypassed)   // missing or bypassed: passed by
+            config.midiEffects.push_back(slot.midiEffects[e].plugin);
     return config;
 }
 
@@ -1145,6 +1280,10 @@ std::vector<std::string> Session::runningProblems() {
             problems.push_back("slot '" + slot.saved.id + "': " + slot.loadProblem + "; kept as a placeholder (not running)");
         else
             shape.slots.push_back(slot.saved);
+        for (std::size_t e = 0; e < slot.midiEffects.size() && e < slot.saved.midiEffects.size(); ++e)
+            if (!slot.midiEffects[e].loadProblem.empty())
+                problems.push_back("slot '" + slot.saved.id + "', MIDI effect '" + slot.saved.midiEffects[e].id +
+                                   "': " + slot.midiEffects[e].loadProblem + "; kept, and the row's MIDI passes it by");
     }
     for (const SequenceEntry& entry : sequenceList) shape.sequences.push_back(entry.sequence);
     for (const LooperEntry& entry : looperList) shape.loopers.push_back(entry.setup);

@@ -31,6 +31,18 @@ enum class RowState {
 // Which protocol a source delivers, for the row's badge and warning.
 enum class SourceProtocol { Mixed, Midi1, Midi2 };
 
+// One of a row's MIDI effects (docs/midi-effects.md), in order.
+struct MidiEffectModel {
+    std::string id;
+    std::string name;
+    std::string problem;            // why it didn't load: the row's MIDI passes it by
+    bool        bypassed   = false;
+    bool        hasEditor  = false;
+    bool        editorOpen = false;
+
+    bool operator==(const MidiEffectModel&) const = default;
+};
+
 struct RowModel {
     std::string id;
     std::string name;          // the slot's display name
@@ -53,6 +65,7 @@ struct RowModel {
     bool            protocolWarning = false;
     MidiFilter      filter;                  // channels, groups, ranges, transpose
     bool            midiActive      = false; // MIDI reached the plugin in the last moment
+    std::vector<MidiEffectModel> midiEffects;   // in front of the plugin, in order
 
     // Output side.
     float         gainDb      = 0.0f;

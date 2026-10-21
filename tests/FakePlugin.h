@@ -181,9 +181,16 @@ public:
     void                       deactivate() override {}
     double                     paramValue(std::uint32_t) const override { return 0.0; }
     void                       flushParams(const EventBlock&, EventSink*) override {}
-    bool                       saveState(std::vector<std::byte>&) const override { return true; }
-    bool                       loadState(const std::byte*, std::size_t) override { return true; }
-    void                       idle() override {}
+    bool saveState(std::vector<std::byte>& out) const override {
+        out.insert(out.end(), state.begin(), state.end());
+        return true;
+    }
+    bool loadState(const std::byte* data, std::size_t size) override {
+        state.assign(data, data + size);
+        return true;
+    }
+    void idle() override { ++idles; }
+    bool hasEditor() const override { return editor; }
 
     void process(const ProcessContext& ctx) noexcept override {
         ++processed;
@@ -224,6 +231,9 @@ public:
     int                resets            = 0;
     bool               processing        = false;
     std::uint32_t      lastAudioChannels = 99;
+    std::vector<std::byte> state;
+    int                idles             = 0;
+    bool               editor            = false;   // hasEditor()
 
 private:
     PortLayout layout;

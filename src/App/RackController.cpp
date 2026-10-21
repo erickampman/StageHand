@@ -101,9 +101,15 @@ RackController::~RackController() {
 
 void RackController::service() {
     engine.collect();
-    for (const Session::Slot& slot : session.slots())
+    for (const Session::Slot& slot : session.slots()) {
         if (slot.plugin) slot.plugin->idle();
-    for (const SlotConfig& slot : session.drainingSlots()) slot.plugin->idle();
+        for (const Session::Slot::MidiEffect& effect : slot.midiEffects)
+            if (effect.plugin) effect.plugin->idle();
+    }
+    for (const SlotConfig& slot : session.drainingSlots()) {
+        slot.plugin->idle();
+        for (const auto& effect : slot.midiEffects) effect->idle();
+    }
     if (session.hasRig())   // the rig's effects too
         for (const auto& bus : session.rig().effects)
             for (const Session::LoadedRig::Effect& effect : bus)
@@ -306,6 +312,19 @@ RowModel RackController::rowFor(const Session::Slot& slot, double now, double dt
     row.protocolWarning = row.sourceProtocol == SourceProtocol::Midi2 && cache.dialects != 0 &&
                           (cache.dialects & NoteDialect::Midi2) == 0;
     row.filter          = saved.filter;
+    for (std::size_t e = 0; e < saved.midiEffects.size(); ++e) {
+        const RackMidiEffect& effect = saved.midiEffects[e];
+        const auto&           loaded = e < slot.midiEffects.size() ? slot.midiEffects[e] : Session::Slot::MidiEffect{};
+        MidiEffectModel       model;
+        model.id        = effect.id;
+        model.name      = effect.name.empty() ? effect.id : effect.name;
+        model.problem   = loaded.plugin || !slot.plugin ? std::string{} : loaded.loadProblem;
+        model.bypassed  = effect.bypassed;
+        model.hasEditor = loaded.plugin && loaded.plugin->hasEditor();
+        const auto open = editors.find(saved.id + "/" + effect.id);
+        model.editorOpen = open != editors.end() && open->second->isOpen();
+        row.midiEffects.push_back(std::move(model));
+    }
 
     row.gainDb      = saved.gainDb;
     row.muted       = saved.muted;
@@ -1212,8 +1231,49 @@ std::string RackController::addPlugin(const PluginDescriptor& plugin, std::size_
 }
 
 void RackController::removeSlot(const std::string& id) {
-    closeEditor(id);   // while the plugin is certainly alive
+    closeEditor(id);   // while the plugins are certainly alive
+    for (auto it = editors.begin(); it != editors.end();)   // its MIDI effects'
+        it = it->first.rfind(id + "/", 0) == 0 ? editors.erase(it) : std::next(it);
     session.removeSlot(id);
+}
+
+void RackController::addMidiEffect(const std::string& id, const PluginDescriptor& plugin) {
+    const Session::Slot* slot = session.slot(id);
+    if (slot == nullptr) return;
+    std::string problem;
+    if (session.addMidiEffect(id, plugin, slot->midiEffects.size(), problem).empty())
+        notice("Can't add " + (plugin.name.empty() ? plugin.id : plugin.name) + " to " + slot->saved.name + ": " + problem);
+}
+
+void RackController::removeMidiEffect(const std::string& id, const std::string& effect) {
+    closeMidiEffectEditor(id, effect);
+    session.removeMidiEffect(id, effect);
+}
+
+void RackController::moveMidiEffect(const std::string& id, const std::string& effect, int by) {
+    session.moveMidiEffect(id, effect, by);
+}
+
+void RackController::setMidiEffectBypassed(const std::string& id, const std::string& effect, bool bypassed) {
+    session.setMidiEffectBypassed(id, effect, bypassed);
+}
+
+void RackController::openMidiEffectEditor(const std::string& id, const std::string& effect) {
+    const Session::Slot* slot = session.slot(id);
+    if (slot == nullptr || !config.openEditor) return;
+    const std::string key = id + "/" + effect;
+    if (const auto it = editors.find(key); it != editors.end() && it->second->isOpen()) return;
+    for (std::size_t e = 0; e < slot->saved.midiEffects.size() && e < slot->midiEffects.size(); ++e) {
+        const auto& plugin = slot->midiEffects[e].plugin;
+        if (slot->saved.midiEffects[e].id != effect || !plugin) continue;
+        const std::string title = slot->saved.name + " - " + plugin->descriptor().name + " (StageHand)";
+        if (std::unique_ptr<EditorHandle> editor = config.openEditor(*plugin, title)) editors[key] = std::move(editor);
+        return;
+    }
+}
+
+void RackController::closeMidiEffectEditor(const std::string& id, const std::string& effect) {
+    editors.erase(id + "/" + effect);
 }
 
 void RackController::openEditor(const std::string& id) {

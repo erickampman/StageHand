@@ -186,6 +186,54 @@ void testRoundTrip(const fs::path& dir) {
     CHECK(loadRack(path, reloaded).ok && reloaded.name == "Split v2" && reloaded.slots.size() == 1);
 }
 
+// A row's MIDI effects (docs/midi-effects.md): in order, with their state in
+// "<slot>.<effect>.bin" and bypass; a missing state file warns.
+void testMidiEffects(const fs::path& dir) {
+    const std::string path = (dir / "Effects.rack").string();
+    Rack     rack;
+    RackSlot pad;
+    pad.id            = "pad";
+    pad.plugin.format = PluginFormat::Clap;
+    pad.plugin.id     = "com.example.pad";
+    RackMidiEffect retune;
+    retune.id          = "retune";
+    retune.name        = "Retune";
+    retune.plugin.id   = "com.unlikelyware.retune";
+    retune.plugin.path = "/opt/clap/Retune.clap";
+    retune.state       = bytes("Retune 1\ndivisions 31\n");
+    RackMidiEffect arp;
+    arp.id        = "arp";
+    arp.plugin.id = "com.example.arp";
+    arp.bypassed  = true;
+    pad.midiEffects = {retune, arp};
+    rack.slots      = {pad};
+
+    CHECK(saveRack(path, rack).ok);
+    CHECK(fs::exists(dir / "Effects.rack/state/pad.retune.bin"));
+    CHECK(!fs::exists(dir / "Effects.rack/state/pad.arp.bin"));   // no state, no file
+    Rack loaded;
+    RackFileResult result = loadRack(path, loaded);
+    CHECK(result.ok && result.warnings.empty() && loaded.slots.size() == 1);
+    if (loaded.slots.size() != 1) return;
+    const auto& effects = loaded.slots[0].midiEffects;
+    CHECK(effects.size() == 2);
+    if (effects.size() == 2) {
+        CHECK(effects[0].id == "retune" && effects[0].name == "Retune" && !effects[0].bypassed);
+        CHECK(effects[0].plugin.id == "com.unlikelyware.retune" && effects[0].plugin.path == "/opt/clap/Retune.clap");
+        CHECK(effects[0].state == retune.state);
+        CHECK(effects[1].id == "arp" && effects[1].name == "arp" && effects[1].bypassed && effects[1].state.empty());
+    }
+
+    fs::remove(dir / "Effects.rack/state/pad.retune.bin");
+    result = loadRack(path, loaded);
+    CHECK(result.ok && result.warnings.size() == 1 && loaded.slots[0].midiEffects[0].state.empty());
+
+    RackSlot twice = pad;   // ids are unique within a row
+    twice.midiEffects[1].id = "retune";
+    rack.slots = {twice};
+    CHECK(!saveRack((dir / "Twice.rack").string(), rack).ok);
+}
+
 // "enabled": false, from before mute replaced it, loads as muted.
 void testEnabledBecomesMuted(const fs::path& dir) {
     writeText(dir / "Old.rack/rack.json", R"({
@@ -453,6 +501,7 @@ int main() {
     testSequenceTargets(dir);
     testLoopers(dir);
     testControlLinks(dir);
+    testMidiEffects(dir);
     fs::remove_all(dir);
     return test::finish("RackFile");
 }

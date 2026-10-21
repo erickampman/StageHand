@@ -21,6 +21,16 @@ namespace stagehand {
 // The rig's effect buses (docs/rig.md); equal to the engine's kBusCount.
 inline constexpr std::size_t kRigBuses = 2;
 
+// One of a slot's MIDI effects (a CLAP note effect in front of its plugin;
+// docs/midi-effects.md), as saved. Found or not, it round-trips unchanged.
+struct RackMidiEffect {
+    std::string            id;                 // unique in its slot; names its state file
+    std::string            name;               // display name
+    PluginDescriptor       plugin;             // format + id identify it; path is a hint
+    std::vector<std::byte> state;              // opaque plugin state; empty = plugin defaults
+    bool                   bypassed = false;   // left out: the row hears its input directly
+};
+
 // One plugin slot as saved: the plugin's identity, its opaque state, and the
 // host-owned settings (docs/domain-model.md, Save / restore). Found or not, it
 // round-trips unchanged through load and save.
@@ -42,6 +52,8 @@ struct RackSlot {
     // Groups, channels, note and velocity ranges, transpose. Its source fields
     // (allSources, source) are ignored here; Session sets them from `source`.
     MidiFilter             filter;
+    // Its MIDI effects, in order: what it hears goes through them to its plugin.
+    std::vector<RackMidiEffect> midiEffects;
 };
 
 // The transport's MIDI control (docs/sequences.md, section 7).

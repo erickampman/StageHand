@@ -173,6 +173,10 @@ private:
     void startRename(const std::string& id, const std::string& name);
     void openTriggerMenu(const SequenceRowModel& seq, float x, float y);
     void openSourceMenu(const RowModel& row, float x, float y);
+    // A row's MIDI effects (docs/midi-effects.md): each one's Editor, Bypass,
+    // Move and Remove, then Add a MIDI effect (the note effects).
+    void openMidiFxMenu(const RowModel& row, float x, float y);
+    void openNoteEffectMenu(const std::string& rowId, float x, float y);
     void removeRow(const std::string& id);   // at once (Shift-click on its X), or once confirmed
     void confirmRemoveRow(const std::string& id, const std::string& name, float right, float y);
     void openOutputMenu(const RowModel& row, float x, float y);

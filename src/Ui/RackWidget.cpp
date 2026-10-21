@@ -979,11 +979,42 @@ void RackWidget::drawRowInput(const RowModel& row, float y) {
     fill(row.midiActive ? kGreen : kTrack);
     NanoVG::fill();
 
-    const float sourceW = kInputW - kPad * 2 - 16.0f - 62.0f;
-    dropdown(kKeyBarX - 4.0f, y + 10.0f, sourceW + 4.0f, 24.0f, row.sourceLabel, row.sourceConnected ? kText : kRed,
-             14.0f);
-    region(kKeyBarX - 4.0f, y + 8.0f, sourceW + 4.0f, 28.0f,
+    // The source, then the MIDI effects (docs/midi-effects.md), sharing the line.
+    const float lineW   = kInputW - kPad * 2 - 16.0f - 62.0f + 4.0f;
+    const float fxW     = 108.0f;
+    const float sourceW = lineW - fxW - 6.0f;
+    dropdown(kKeyBarX - 4.0f, y + 10.0f, sourceW, 24.0f, row.sourceLabel, row.sourceConnected ? kText : kRed, 14.0f);
+    region(kKeyBarX - 4.0f, y + 8.0f, sourceW, 28.0f,
            [this, row, y](const Press&) { openSourceMenu(row, kKeyBarX, y + 36.0f); });
+
+    const float fxX     = kKeyBarX - 4.0f + sourceW + 6.0f;
+    const auto  missing = std::any_of(row.midiEffects.begin(), row.midiEffects.end(),
+                                      [](const MidiEffectModel& e) { return !e.problem.empty(); });
+    std::string fxText  = "MIDI FX";
+    UiColor     fxInk   = kDim;
+    if (!row.midiEffects.empty()) {
+        fxText = row.midiEffects[0].name;
+        if (row.midiEffects.size() > 1) fxText += " +" + std::to_string(row.midiEffects.size() - 1);
+        const bool allBypassed = std::all_of(row.midiEffects.begin(), row.midiEffects.end(),
+                                             [](const MidiEffectModel& e) { return e.bypassed; });
+        fxInk = missing ? kRed : allBypassed ? kDim : kText;
+    }
+    // One effect with an editor: its own editor button, as the row's plugin has.
+    const bool  oneEditor = row.midiEffects.size() == 1 && row.midiEffects[0].hasEditor;
+    const float editW     = 24.0f;
+    const float fxBoxW    = oneEditor ? fxW - editW - 4.0f : fxW;
+    dropdown(fxX, y + 10.0f, fxBoxW, 24.0f, fxText, fxInk, 13.0f);
+    region(fxX, y + 8.0f, fxBoxW, 28.0f, [this, row, fxX, y](const Press&) { openMidiFxMenu(row, fxX, y + 36.0f); });
+    if (oneEditor) {
+        const MidiEffectModel& effect = row.midiEffects[0];
+        button(fxX + fxBoxW + 4.0f, y + 10.0f, editW, 24.0f, "E", effect.editorOpen, true, kAccent);
+        region(fxX + fxBoxW + 4.0f, y + 8.0f, editW, 28.0f, [this, id = row.id, effect = effect.id](const Press&) {
+            const RowModel* now = rowById(id);
+            if (now == nullptr || now->midiEffects.empty() || now->midiEffects[0].id != effect) return;
+            now->midiEffects[0].editorOpen ? controller.closeMidiEffectEditor(id, effect)
+                                           : controller.openMidiEffectEditor(id, effect);
+        });
+    }
 
     button(kInputW - kPad - 36.0f, y + 13.0f, 36.0f, 18.0f, protocolText(row.sourceProtocol),
            row.sourceProtocol == SourceProtocol::Midi2, true, kAccent);
@@ -2253,10 +2284,67 @@ void RackWidget::openPluginMenu(float x, float y, const std::string& title,
     };
     section(PluginKind::Instrument, "Instruments", true);
     if (!instrumentsOnly) {
-        section(PluginKind::Other, "Other (note effects)", true);
+        section(PluginKind::Other, "Other (note effects): add one from a row's MIDI FX", false);
         section(PluginKind::Effect, "Effects (for the rig's buses, below the rows)", false);
     }
     if (m.items.empty()) m.items.push_back(MenuItem{instrumentsOnly ? "No CLAP instruments found" : "No CLAP plugins found", {}, false, false});
+    openMenu(std::move(m));
+}
+
+void RackWidget::openMidiFxMenu(const RowModel& row, float x, float y) {
+    Menu m;
+    m.w     = 260.0f;
+    m.x     = std::min(x, width() - m.w - 8.0f);
+    m.y     = y;
+    m.title = row.name + ": MIDI effects, in order";
+    const std::string id = row.id;
+    for (std::size_t e = 0; e < row.midiEffects.size(); ++e) {
+        const MidiEffectModel& effect = row.midiEffects[e];
+        const std::string      fx     = effect.id;
+        m.items.push_back(MenuItem{std::to_string(e + 1) + ". " + effect.name +
+                                       (effect.problem.empty() ? "" : " (not loaded: passed by)"),
+                                   {}, false, false, !effect.problem.empty()});
+        m.items.push_back(MenuItem{"     Editor",
+                                   effect.hasEditor ? std::function<void()>{[this, id, fx, open = effect.editorOpen] {
+                                       open ? controller.closeMidiEffectEditor(id, fx) : controller.openMidiEffectEditor(id, fx);
+                                   }}
+                                                    : std::function<void()>{},
+                                   effect.editorOpen, false});
+        if (effect.problem.empty())
+            m.items.push_back(MenuItem{"     Bypass", [this, id, fx, on = effect.bypassed] {
+                                           controller.setMidiEffectBypassed(id, fx, !on);
+                                       },
+                                       effect.bypassed, false});
+        if (e > 0)
+            m.items.push_back(MenuItem{"     Move up", [this, id, fx] { controller.moveMidiEffect(id, fx, -1); }, false, false});
+        if (e + 1 < row.midiEffects.size())
+            m.items.push_back(MenuItem{"     Move down", [this, id, fx] { controller.moveMidiEffect(id, fx, 1); }, false, false});
+        m.items.push_back(MenuItem{"     Remove", [this, id, fx] { controller.removeMidiEffect(id, fx); }, false, true});
+    }
+    if (row.state == RowState::Placeholder)
+        m.items.push_back(MenuItem{"Add a MIDI effect (the row's plugin isn't loaded)", {}, false, false});
+    else
+        m.items.push_back(MenuItem{"Add a MIDI effect...", [this, id, x, y] { openNoteEffectMenu(id, x, y); }, false, false});
+    openMenu(std::move(m));
+}
+
+void RackWidget::openNoteEffectMenu(const std::string& rowId, float x, float y) {
+    Menu m;
+    m.w     = 360.0f;
+    m.x     = std::min(x, width() - m.w - 8.0f);
+    m.y     = y;
+    const RowModel* row = rowById(rowId);
+    m.title = "Add a MIDI effect" + (row != nullptr ? " to " + row->name : std::string{}) + " (after the others)";
+    std::vector<PluginDescriptor> plugins = controller.availablePlugins();   // scans once; may take a moment
+    std::stable_sort(plugins.begin(), plugins.end(), [](const PluginDescriptor& a, const PluginDescriptor& b) {
+        return a.name < b.name;
+    });
+    for (const PluginDescriptor& plugin : plugins) {
+        if (plugin.kind != PluginKind::Other) continue;
+        m.items.push_back(MenuItem{plugin.name + (plugin.vendor.empty() ? "" : "  -  " + plugin.vendor),
+                                   [this, rowId, plugin] { controller.addMidiEffect(rowId, plugin); }, false, false});
+    }
+    if (m.items.empty()) m.items.push_back(MenuItem{"No CLAP note effects found", {}, false, false});
     openMenu(std::move(m));
 }
 

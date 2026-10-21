@@ -153,6 +153,15 @@ public:
     std::string addPlugin(const PluginDescriptor& plugin, std::size_t position);
     void        removeSlot(const std::string& id);   // closes its editor first
 
+    // A row's MIDI effects (docs/midi-effects.md). Added at the end (a notice
+    // if it can't be); removing one closes its editor first.
+    void addMidiEffect(const std::string& id, const PluginDescriptor& plugin);
+    void removeMidiEffect(const std::string& id, const std::string& effect);
+    void moveMidiEffect(const std::string& id, const std::string& effect, int by);
+    void setMidiEffectBypassed(const std::string& id, const std::string& effect, bool bypassed);
+    void openMidiEffectEditor(const std::string& id, const std::string& effect);
+    void closeMidiEffectEditor(const std::string& id, const std::string& effect);
+
     void openEditor(const std::string& id);
     void closeEditor(const std::string& id);
     void openAllEditors();
@@ -547,7 +556,8 @@ private:
     Config         config;
 
     RackViewModel                                        model;
-    std::map<std::string, std::unique_ptr<EditorHandle>> editors;   // by slot id
+    // By slot id, and "<slot id>/<effect id>" for a row's MIDI effect.
+    std::map<std::string, std::unique_ptr<EditorHandle>> editors;
     std::map<std::string, RowCache>                      rows;      // by slot id
     std::map<std::pair<std::size_t, std::size_t>, std::unique_ptr<EditorHandle>> busEditors;   // by (bus, slot)
     std::vector<std::string>                              keeping;   // loopers whose copy is on its way

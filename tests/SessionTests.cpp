@@ -479,6 +479,96 @@ void testAddRemove() {
     engine->collect();
 }
 
+// A row's MIDI effects (docs/midi-effects.md): loaded with their state in
+// front of the row's plugin, a missing one kept and passed by, a bypassed one
+// left out of the graph; added, moved, bypassed and removed live.
+void testMidiEffects() {
+    FakeFactory factory;
+    factory.installed   = {installedPlugin("synth", "/clap/Synth.clap"), installedPlugin("arp", "/clap/Arp.clap"),
+                           installedPlugin("shift", "/clap/Shift.clap")};
+    factory.noteEffects = {"arp", "shift"};
+    FakeMidiInput midi;
+    NullHost      host;
+    auto          engine = std::make_unique<Engine>();
+    Session       session(factory, host, midi, *engine);
+
+    RackSlot a = slot("a", "synth", "/clap/Synth.clap");
+    RackMidiEffect arp;
+    arp.id        = "arp";
+    arp.plugin    = factory.installed[1];
+    arp.state     = bytes("arp-state");
+    RackMidiEffect gone;
+    gone.id           = "gone";
+    gone.plugin.id    = "not.installed";
+    gone.state        = bytes("keep-me");
+    RackMidiEffect off = arp;
+    off.id        = "off";
+    off.state     = {};
+    off.bypassed  = true;
+    a.midiEffects = {arp, gone, off};
+    RackSlot b = slot("b", "not.installed");   // a placeholder row keeps its effects as they were
+    b.midiEffects = {arp};
+    Rack rack;
+    rack.slots = {a, b};
+
+    Session::LoadReport report;
+    CHECK(session.load(rack, 48000.0, report));
+    CHECK(report.warnings.size() == 2);   // the missing effect, the missing row plugin
+    const Session::Slot* row = session.slot("a");
+    CHECK(row != nullptr && row->midiEffects.size() == 3);
+    if (row == nullptr || row->midiEffects.size() != 3) return;
+    auto* first = dynamic_cast<FakeNoteEffect*>(row->midiEffects[0].plugin.get());
+    auto* third = dynamic_cast<FakeNoteEffect*>(row->midiEffects[2].plugin.get());
+    CHECK(first != nullptr && first->state == bytes("arp-state"));
+    CHECK(!row->midiEffects[1].plugin && !row->midiEffects[1].loadProblem.empty());
+    CHECK(third != nullptr && session.slot("b")->midiEffects.size() == 1 && !session.slot("b")->midiEffects[0].plugin);
+    const auto problems = session.runningProblems();
+    CHECK(std::count_if(problems.begin(), problems.end(),
+                        [](const std::string& p) { return p.find("MIDI effect 'gone'") != std::string::npos; }) == 1);
+
+    runBlock(*engine);
+    CHECK(first != nullptr && first->processed == 1);   // in the graph, in front of the synth
+    CHECK(third != nullptr && third->processed == 0);   // bypassed: left out
+
+    if (first != nullptr) first->state = bytes("arp-edited");
+    Rack captured = session.capture();
+    CHECK(captured.slots.size() == 2 && captured.slots[0].midiEffects.size() == 3);
+    if (captured.slots.size() == 2 && captured.slots[0].midiEffects.size() == 3) {
+        const auto& e = captured.slots[0].midiEffects;
+        CHECK(e[0].state == bytes("arp-edited") && e[1].state == bytes("keep-me") && e[1].plugin.id == "not.installed");
+        CHECK(e[2].bypassed && captured.slots[1].midiEffects[0].state == bytes("arp-state"));
+    }
+
+    // Live edits.
+    std::string problem;
+    CHECK(session.addMidiEffect("b", factory.installed[2], 0, problem).empty() && !problem.empty());   // placeholder row
+    problem.clear();
+    CHECK(session.addMidiEffect("a", factory.installed[0], 0, problem).empty() && !problem.empty());   // not a note effect
+    CHECK(session.addMidiEffect("a", factory.installed[1], 0, problem) == "arp-2");   // unique; first
+    CHECK(session.slot("a")->saved.midiEffects[0].id == "arp-2");
+    CHECK(session.moveMidiEffect("a", "arp-2", 9) && session.slot("a")->saved.midiEffects.back().id == "arp-2");
+    CHECK(session.moveMidiEffect("a", "arp-2", -1) && session.slot("a")->saved.midiEffects[2].id == "arp-2");
+    CHECK(session.setMidiEffectBypassed("a", "off", false));
+    CHECK(!session.moveMidiEffect("a", "nope", 1) && !session.removeMidiEffect("x", "arp"));
+    session.flush();
+    runBlock(*engine);
+    auto* added = factory.createdEffects["arp"];   // the last arp made: arp-2
+    CHECK(added != nullptr && added->processed == 1 && third != nullptr && third->processed == 1);
+
+    std::weak_ptr<HostedPlugin> removed = session.slot("a")->midiEffects[0].plugin;
+    CHECK(session.removeMidiEffect("a", "arp") && session.slot("a")->midiEffects.size() == 3);
+    session.flush();
+    runBlock(*engine);
+    CHECK(first != nullptr && first->stops == 1);   // stopped as it left the graph
+    engine->collect();
+    CHECK(removed.expired());
+    CHECK(session.modified());
+
+    session.unload();
+    runBlock(*engine);
+    engine->collect();
+}
+
 } // namespace
 
 // The rig (docs/rig.md): its effects outlive rack loads (same instances, never
@@ -822,6 +912,7 @@ void testControlLinks() {
 }
 
 int main() {
+    testMidiEffects();
     testLoad();
     testNoFallbackToAll();
     testDevicesByName();

@@ -13,7 +13,7 @@
 ## On This Page
 [Overview](#overview) · [Getting Started](#getting-started) · [Nomenclature](#nomenclature) · [The Window](#window) · [Files and Saving](#files)
 
-**The rack —** [Rack Rows](#rows) · [Adding Plugins](#adding) · [Inputs and Filters](#inputs) · [Levels and Outputs](#levels) · [The Rig's Buses](#buses)
+**The rack —** [Rack Rows](#rows) · [Adding Plugins](#adding) · [Inputs and Filters](#inputs) · [MIDI Effects](#midifx) · [Levels and Outputs](#levels) · [The Rig's Buses](#buses)
 
 **Time and sources —** [Transport and Click](#transport) · [Count-in](#count-in) · [The Sources Dock](#dock) · [Sequences](#sequences) · [Loopers](#loopers)
 
@@ -89,7 +89,7 @@ Started with `--no-save-rack`, StageHand never saves: Save is disabled and switc
 (#rows)
 ## Rack Rows
 Each row is one plugin, in three parts:
-- **Input** (left): the input menu, a MIDI 1.0 / 2.0 badge, the key range bar, and the filter chip ([Inputs and Filters](#inputs)).
+- **Input** (left): the input menu, the **MIDI FX** menu, a MIDI 1.0 / 2.0 badge, the key range bar, and the filter chip ([Inputs and Filters](#inputs), [MIDI Effects](#midifx)).
 - **Plugin** (middle): the row's name, the plugin and its maker, its **Control Links** button (the MIDI plug), **Editor**, and its share of the DSP load.
 - **Output** (right): **M** (mute), the two sends (**A** and **B**), the fader over a stereo meter, the clip light, the level, and the output pair ([Levels and Outputs](#levels)).
 
@@ -103,7 +103,7 @@ A row whose plugin can't be found is kept as a placeholder, with the reason, so 
 (#adding)
 ## Adding Plugins
 StageHand finds CLAP plugins in the usual places: `~/Library/Audio/Plug-Ins/CLAP` and `/Library/Audio/Plug-Ins/CLAP` on the Mac, `~/.clap` and `/usr/lib/clap` on Linux, and anywhere `CLAP_PATH` names.
-- **+ Add plugin** lists the instruments, then other plugins (note effects), then the audio effects, greyed: those go on the rig's buses, not in rows.
+- **+ Add plugin** lists the instruments, then the note effects and the audio effects, greyed: note effects go in a row's MIDI FX menu, audio effects on the rig's buses.
 - **Right-click below the rows**, or click the **+** there, for the instruments alone.
 
 The new row goes at the bottom. The first scan can take a moment; after that the list opens at once.
@@ -126,6 +126,16 @@ A device that's unplugged shows in red, and the row hears it again when it's bac
 **The filter chip** opens the filter panel: channels, groups (MIDI 2.0), the key and velocity ranges, and transpose, with Reset. Steppers take Shift for an octave or 10, and the wheel works too.
 
 **An amber "!"** beside the badge means a MIDI 2.0 input feeds a MIDI 1.0 plugin, so per-note data is lost on the way.
+~~~
+~~~note [card]
+(#midifx)
+## MIDI Effects
+A row can run note effects (CLAP plugins that change MIDI, such as Retune) in front of its plugin. Everything the row hears goes through them, in order, then to the plugin. Their own audio isn't heard.
+
+- **The MIDI FX menu**, beside the input menu, shows the first effect's name (and "+1" for each more), or "MIDI FX" when there are none. Its **Add a MIDI effect...** lists the note effects; a new one goes after the others.
+- For each effect the menu has **Editor**, **Bypass** (the row hears its input directly), **Move up**, **Move down** and **Remove**.
+- With one effect that has a window of its own, **E** beside the menu opens it.
+- An effect that isn't installed shows in red. It's kept and saved with the rack, and the row's MIDI passes it by until it's back.
 ~~~
 ~~~note [card]
 (#levels)

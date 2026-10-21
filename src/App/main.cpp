@@ -566,6 +566,11 @@ void printRack(const Session& session) {
                             dialectNames(layout.noteInputs[0].supportedDialects).c_str(),
                             dialectNames(layout.noteInputs[0].preferredDialect).c_str());
         }
+        for (std::size_t e = 0; e < s.midiEffects.size(); ++e) {   // in front of it, in order
+            const bool loaded = e < slot.midiEffects.size() && slot.midiEffects[e].plugin;
+            std::printf("      MIDI effect %zu: %s%s\n", e + 1, s.midiEffects[e].name.c_str(),
+                        !loaded ? " (not loaded: passed by)" : s.midiEffects[e].bypassed ? " (bypassed)" : "");
+        }
     }
 }
 

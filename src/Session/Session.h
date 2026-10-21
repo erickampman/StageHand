@@ -140,6 +140,14 @@ public:
         MidiSourceHandle              source = kInvalidMidiSource;   // resolved saved.source
         std::string                   sourceProblem;                 // why it didn't resolve, if it didn't
         std::string                   loadProblem;                   // placeholder: why the plugin didn't load
+        // One per saved.midiEffects, in order (docs/midi-effects.md). One
+        // whose plugin is null didn't load (or its row's plugin didn't): it's
+        // kept and saved back unchanged, and the MIDI passes it by.
+        struct MidiEffect {
+            std::shared_ptr<HostedPlugin> plugin;
+            std::string                   loadProblem;
+        };
+        std::vector<MidiEffect>       midiEffects;
     };
     const std::vector<Slot>& slots() const noexcept { return loaded; }
     const Slot*              slot(const std::string& id) const noexcept;
@@ -213,6 +221,18 @@ public:
     // end), at the sample rate of the last load(). Returns its id, unique in the
     // rack and derived from the plugin's name, or "" with `problem` set.
     std::string addSlot(const PluginDescriptor& plugin, std::size_t index, std::string& problem);
+    // A row's MIDI effects (docs/midi-effects.md): structural, like addSlot.
+    // Add creates and activates `plugin` at `index` (clamped to the end) and
+    // returns its id, unique in the row and derived from its name, or "" with
+    // `problem` set (also for a placeholder row). Remove: close its editor first.
+    // Move: `by` places earlier (< 0) or later (> 0), clamped. Each returns
+    // false for an unknown row or effect.
+    std::string addMidiEffect(const std::string& id, const PluginDescriptor& plugin, std::size_t index,
+                              std::string& problem);
+    bool removeMidiEffect(const std::string& id, const std::string& effect);
+    bool moveMidiEffect(const std::string& id, const std::string& effect, int by);
+    bool setMidiEffectBypassed(const std::string& id, const std::string& effect, bool bypassed);
+
     // Close the slot's editor first. Its plugin is deactivated and destroyed
     // once no graph holds it (Engine::collect()). It leaves every sequence's targets.
     bool removeSlot(const std::string& id);
@@ -358,6 +378,12 @@ private:
     // The saved path first (a hint), then a scan (done at most once per load).
     std::shared_ptr<HostedPlugin> createPlugin(const PluginDescriptor& wanted, std::string& problem,
                                                std::vector<PluginDescriptor>& scanned, bool& haveScan);
+    // A slot's MIDI effect: created, restored and activated at `rate`; no
+    // plugin, with its loadProblem, if not. `rejectedState`: it refused its
+    // saved state and starts from its defaults.
+    Slot::MidiEffect createMidiEffect(const RackMidiEffect& saved, double rate,
+                                      std::vector<PluginDescriptor>& scanned, bool& haveScan,
+                                      bool& rejectedState);
     // Created, restored and activated at `rate`; null, with `problem`, if not.
     std::shared_ptr<HostedPlugin> createEffect(const RigEffect& effect, double rate, std::string& problem);
     void             applySends(const Slot& slot);

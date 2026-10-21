@@ -230,6 +230,55 @@ void testEditorsAndRemove() {
     CHECK(*rig.editorsOpen == 0);   // the controller closes the rest
 }
 
+// A row's MIDI effects (docs/midi-effects.md): in the view model, added (or
+// refused, with a notice), bypassed, moved, their editors (closed with the
+// effect or its row), and idled with the rest.
+void testMidiEffects() {
+    Rig rig;
+    rig.factory.installed.push_back(installedPlugin("retune", "/clap/Retune.clap"));
+    rig.factory.noteEffects = {"retune"};
+    rig.factory.withEditor  = {"retune"};
+    Session::LoadReport report;
+    rig.session->load(testRack(), 48000.0, report);
+    RackController controller(*rig.session, *rig.engine, rig.midi, rig.factory, rig.config());
+
+    const PluginDescriptor retune = rig.factory.installed.back();
+    controller.addMidiEffect("a", retune);
+    controller.addMidiEffect("a", retune);
+    controller.addMidiEffect("b", retune);            // a placeholder row: refused
+    controller.addMidiEffect("a", rig.factory.installed[0]);   // an instrument: refused
+    CHECK(controller.takeNotices().size() == 2);
+    controller.tick(1.0);
+    const RowModel& a = controller.view().rows[0];
+    CHECK(a.midiEffects.size() == 2);
+    if (a.midiEffects.size() != 2) return;
+    CHECK(a.midiEffects[0].id == "retune" && a.midiEffects[1].id == "retune-2" && a.midiEffects[0].name == "retune");
+    CHECK(a.midiEffects[0].hasEditor && !a.midiEffects[0].editorOpen && !a.midiEffects[0].bypassed);
+    CHECK(controller.view().modified);
+
+    controller.setMidiEffectBypassed("a", "retune", true);
+    controller.moveMidiEffect("a", "retune-2", -1);
+    controller.openMidiEffectEditor("a", "retune");
+    controller.openMidiEffectEditor("a", "retune");   // already open: no second window
+    CHECK(*rig.editorsOpen == 1);
+    controller.tick(1.1);
+    const RowModel& moved = controller.view().rows[0];
+    CHECK(moved.midiEffects.size() == 2 && moved.midiEffects[0].id == "retune-2" && moved.midiEffects[1].bypassed &&
+          moved.midiEffects[1].editorOpen);
+
+    FakeNoteEffect* effect = rig.factory.createdEffects["retune"];   // the last made: retune-2
+    const int idles = effect != nullptr ? effect->idles : 0;
+    controller.service();
+    CHECK(effect != nullptr && effect->idles == idles + 1);
+
+    controller.removeMidiEffect("a", "retune");   // closes its editor first
+    CHECK(*rig.editorsOpen == 0);
+    controller.openMidiEffectEditor("a", "retune-2");
+    CHECK(*rig.editorsOpen == 1);
+    controller.removeSlot("a");                   // its effects' editors close with it
+    CHECK(*rig.editorsOpen == 0);
+}
+
 void testAddPlugin() {
     Rig                 rig;
     Session::LoadReport report;
@@ -2071,6 +2120,7 @@ int main() {
     testViewModel();
     testMetersAndActivity();
     testEditorsAndRemove();
+    testMidiEffects();
     testAddPlugin();
     testSave();
     testFiles();

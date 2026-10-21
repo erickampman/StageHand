@@ -31,7 +31,7 @@
 - [ ] MIDI controllers to plugin parameters (knobs, faders, expression pedal), learned per rack or global
 - [ ] Velocity curves per row, or fixed velocity
 - [x] MIDI effects per row: plugin note/MIDI output (uw-core), the chain in the engine, Retune → StruckSynth test (docs/midi-effects.md)
-- [ ] MIDI effects in the rack file and the row's input side (docs/midi-effects.md, section 3: for review)
+- [x] MIDI effects in the rack file and the row's input side: MIDI FX menu, editors, bypass (docs/midi-effects.md, section 3)
 - [ ] MIDI out: program changes at song switch, MIDI clock, click as MIDI notes
 - [ ] Looper: controllers (sustain pedal) and pitch bend in loops
 
