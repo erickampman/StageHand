@@ -40,6 +40,7 @@
 - [ ] House look in the Perform view and panels; knobs in the generic editor
 - [x] Generic editor, first version: sliders, switches and menus for plugins with no editor of their own, opened only when chosen (docs/generic-editor.md)
 - [ ] Generic editor: groups, search, typed text the plugin parses, rescan
+- [ ] Reorganize the MIDI plugins UI: how a row shows and edits its MIDI effects (the MIDI FX menu, E, the generic editor)
 - [ ] Backing tracks: an audio file per song, in time with the transport
 - [ ] Song notes in the Perform view
 - [ ] Undo for rack edits
