@@ -12,10 +12,10 @@
     <key>CFBundlePackageType</key>           <string>APPL</string>
     <key>CFBundleShortVersionString</key>    <string>${MACOSX_BUNDLE_SHORT_VERSION_STRING}</string>
     <key>CFBundleVersion</key>               <string>${MACOSX_BUNDLE_BUNDLE_VERSION}</string>
-    <!-- The icon (resources/StageHand.icon, compiled by actool): Assets.car's by name, the .icns before macOS 26. -->
+    <!-- The icon (resources/StageHand.icon, compiled by actool): Assets.car's by name, and the .icns. -->
     <key>CFBundleIconFile</key>              <string>StageHand</string>
     <key>CFBundleIconName</key>              <string>StageHand</string>
-    <key>LSMinimumSystemVersion</key>        <string>15.0</string>
+    <key>LSMinimumSystemVersion</key>        <string>26.0</string>
     <key>LSApplicationCategoryType</key>     <string>public.app-category.music</string>
     <key>NSHighResolutionCapable</key>       <true/>
     <key>NSSupportsAutomaticGraphicsSwitching</key> <true/>

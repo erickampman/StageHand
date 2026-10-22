@@ -154,9 +154,10 @@ group, and log in again.
 
 ## macOS
 
-Apple Silicon, macOS 15 or later (the build sets `CMAKE_OSX_ARCHITECTURES`
-to `arm64` and the deployment target to 15.0; [macos.md](macos.md),
-decisions 9 and 13). The libraries, the test suites and the app build; the
+Apple Silicon, macOS 26 or later (the build sets `CMAKE_OSX_ARCHITECTURES`
+to `arm64` and the deployment target to 26.0; [macos.md](macos.md),
+decisions 9 and 13). The app icon needs Xcode 26; with an older one, or only
+the Command Line Tools, the app builds without it and CMake says so. The libraries, the test suites and the app build; the
 app plays racks and plugins with their editors (no rack window yet).
 
 ### Dependencies

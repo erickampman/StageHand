@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 # macOS (docs/macos.md): set before project(), and ignored elsewhere.
-set(CMAKE_OSX_DEPLOYMENT_TARGET 15.0 CACHE STRING "macOS 15 or later (docs/macos.md, decision 9)")
+set(CMAKE_OSX_DEPLOYMENT_TARGET 26.0 CACHE STRING "macOS 26 or later (docs/macos.md, decision 9)")
 set(CMAKE_OSX_ARCHITECTURES arm64 CACHE STRING "arm64 only (docs/macos.md, decision 13)")
 project(StageHand VERSION 0.0.1 LANGUAGES C CXX)   # C: DGL's pugl and NanoVG
 
@@ -234,10 +234,11 @@ if(STAGEHAND_APP AND APPLE)
         MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
         MACOSX_BUNDLE_BUNDLE_VERSION       "${PROJECT_VERSION}")
     # The icon, compiled from resources/StageHand.icon (an Icon Composer document)
-    # by Xcode's actool: Assets.car for macOS 26 (its dark and tinted versions too)
-    # and StageHand.icns for macOS 15. Without Xcode (only the Command Line Tools)
-    # the bundle has no icon. Nor with an Xcode before 26: Icon Composer documents
-    # are new in 26, and an older actool reports success and writes neither file.
+    # by Xcode's actool: Assets.car, which macOS 26 draws (its dark and tinted
+    # versions too), and StageHand.icns, which actool still writes. Without Xcode
+    # (only the Command Line Tools) the bundle has no icon. Nor with an Xcode
+    # before 26: Icon Composer documents are new in 26, and an older actool
+    # reports success and writes neither file.
     execute_process(COMMAND xcrun --find actool OUTPUT_VARIABLE STAGEHAND_ACTOOL
                     OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET RESULT_VARIABLE actool_missing)
     set(actool_version 0)

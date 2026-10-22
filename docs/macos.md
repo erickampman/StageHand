@@ -1,7 +1,7 @@
 # StageHand — macOS (plan)
 
 Proposed 2026-10-03, reviewed the same day (notes under "Review");
-milestones 1 to 5 built, 6 under way (notes under "Milestones"). StageHand on macOS 15 (Sequoia) and later, keeping DGL for the UI
+milestones 1 to 5 built, 6 under way (notes under "Milestones"). StageHand on macOS 26 (Tahoe) and later, keeping DGL for the UI
 (no native Cocoa interface). Builds on:
 - architecture.md, sections 1 to 3: MIDI, audio and plugins sit behind seams
   (`MidiInput`, `AudioBackend`, `PluginFactory`) so CoreMIDI and CoreAudio
@@ -87,8 +87,12 @@ lock-free on arm64.
    window (a pugl app has no menu bar).
 8. **OpenGL** (DPF's NanoVG backend) is deprecated on macOS but works,
    Apple Silicon included. Kept until it doesn't.
-9. **macOS 15 or later** (decided 2026-10-03). CoreMIDI's UMP API, audio
-   workgroups and everything else here are there; one version to test.
+9. **macOS 26 or later** (decided 2026-10-03 as macOS 15; raised to 26 on
+   2026-10-22). CoreMIDI's UMP API, audio workgroups and everything else here
+   are there; one version to test. Raised because the app icon, an Icon
+   Composer document, compiles only with Xcode 26 running on macOS 26 (on
+   macOS 15, Xcode 16's actool writes nothing and Xcode 26's crashes), so
+   CI's macOS job runs on macOS 26 and 15 would go untested.
 10. **DPF's file browser on Linux too** (decided 2026-10-03), so both
     platforms share one file-dialog path and `FileDialog`'s zenity and
     kdialog processes go. On Linux DPF uses the desktop's portal
@@ -598,9 +602,9 @@ console only and says so. The click isn't routed on macOS yet
 green and orange tuned to one lightness, so it stands apart from
 KeyboardEDO's Ember (pink, orange, yellow) and KeyEDO's blues; the bars
 read as the rack's rows. Its source is `resources/StageHand.icon`, an Icon
-Composer document, compiled at build time by Xcode's `actool` (as
+Composer document, compiled at build time by Xcode 26's `actool`, on macOS 26 (as
 KeyboardEDO's is) into `Assets.car`, which macOS 26 draws with its glass and
-its dark and tinted versions, and `StageHand.icns` for macOS 15
+its dark and tinted versions, and `StageHand.icns`
 (`CFBundleIconName` and `CFBundleIconFile`). Not a pre-rendered
 `.appiconset`: macOS 26 would set that on a plate, and it couldn't change
 with the appearance. Without Xcode (only the Command Line Tools) the build
