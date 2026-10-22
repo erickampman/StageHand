@@ -61,8 +61,9 @@ add_subdirectory(external/uw-core)
 add_library(nlohmann-json INTERFACE)
 target_include_directories(nlohmann-json SYSTEM INTERFACE external)
 
-# --- DPF's DGL (pugl + NanoVG over OpenGL): StageHand's own UI. Vendored from PMU
-# (external/dpf/README.StageHand.md); only the DGL library, no plugin wrappers.
+# --- DPF's DGL (pugl + NanoVG over OpenGL): StageHand's own UI. The private DPF fork, a submodule
+# (external/dpf/README.fork.md; Umpire's docs/decisions.md, "DPF fork"); only the DGL library,
+# no plugin wrappers.
 if(STAGEHAND_APP)
     if(APPLE)
         enable_language(OBJCXX)   # pugl's Cocoa backend (pugl.mm), and our own .mm files
@@ -92,8 +93,8 @@ if(STAGEHAND_APP)
         endif()
     endforeach()
     # pugl.hpp includes <cstdbool>, which GCC 15 flags with a #warning in C++17
-    # and later. Vendored code (copied from PMU, so not patched here): quiet it.
-    # On macOS, pugl uses AppKit's pre-10.12 names (vendored: quieted, not patched).
+    # and later. Third-party code (the fork keeps only needed patches): quiet it.
+    # On macOS, pugl uses AppKit's pre-10.12 names (quieted, not patched).
     if(stagehand_linux)
         target_compile_options(dgl-opengl PRIVATE -Wno-cpp)
     else()

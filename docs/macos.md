@@ -95,8 +95,8 @@ lock-free on arm64.
     (xdg-desktop-portal, over D-Bus: `libdbus-1-dev` at build, else DPF's
     own plainer browser). To check when it's built: choosing a folder (a
     rack bundle on Linux), the setlist filter (`*.setlist`), and a suggested
-    name when saving. DPF is vendored (`external/dpf`), not a submodule, so
-    what's missing is patched there.
+    name when saving. DPF is the private fork (`external/dpf`, a submodule
+    since 2026-10-22), so what's missing is patched in the fork.
 11. **Plugin editors in a plain window.** The plugin draws into an `NSView`
     the host gives it; the host's window only holds it. First try a DGL
     (pugl) window and hand the plugin its view; if DGL's OpenGL view gets in
@@ -539,13 +539,13 @@ console only and says so. The click isn't routed on macOS yet
   inside the window's content view, follows it only if the window was
   resizable when the view was made, and DGL's `setResizable()` comes after
   the widget (and so the view) exists; DPF's `puglSetResizable()` changed
-  the window's style but not the view's mask (its own FIXME). Patched in the
-  vendored DPF (README.StageHand.md); the sequence editors' windows had the
-  same order. Checked by growing and shrinking the window.
+  the window's style but not the view's mask (its own FIXME). Patched in
+  StageHand's DPF (now the fork's: its README.fork.md); the sequence
+  editors' windows had the same order. Checked by growing and shrinking the window.
 - **File dialogs on macOS** (decision 10): `Ui/FileChooser`, DPF's file
   browser (the system's open and save panels, as a sheet on the rack window)
-  with `FileDialog`'s start-then-poll shape and modes. The vendored DPF is
-  patched for what it lacked on macOS (README.StageHand.md): choosing a
+  with `FileDialog`'s start-then-poll shape and modes. StageHand's DPF (now
+  the fork) is patched for what it lacked on macOS (README.fork.md): choosing a
   folder (a rack), an extension filter (`*.setlist`, through UTType), the
   suggested name when saving, the sheet begun at once, and closing a sheet
   still open. Built with the file browser on macOS only; Linux keeps

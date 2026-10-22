@@ -3,9 +3,10 @@
 # libraries, the tests and the app's MIDI modes (milestone 3). The suites use
 # fakes: no audio, MIDI or display needed.
 #
-# external/uw-core is a private repo, which the workflow's own token can't
-# read: the SUBMODULES_TOKEN secret (a token with read access to uw-core) is
-# used when set.
+# external/uw-core and external/dpf (the DPF fork, with the pugl fork inside
+# it) are private repos, which the workflow's own token can't read: the
+# SUBMODULES_TOKEN secret (a token with read access to uw-core, DPF and pugl)
+# is used when set.
 name: CI
 
 on:

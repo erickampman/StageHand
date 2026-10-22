@@ -1,3 +1,6 @@
 [submodule "external/uw-core"]
 	path = external/uw-core
 	url = https://github.com/erickampman/uw-core.git
+[submodule "external/dpf"]
+	path = external/dpf
+	url = https://github.com/erickampman/DPF.git

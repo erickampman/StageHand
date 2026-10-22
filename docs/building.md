@@ -8,9 +8,13 @@ StageHand is C++20, built with CMake (3.21+) and Ninja. The code it shares
 with Umpire (UMP, the clock and queues, the plugin seam and CLAP host, the
 JACK/ALSA and CoreAudio/CoreMIDI backends) is **uw-core**, a private git
 submodule (`external/uw-core`, namespace `uw`), which brings the CLAP SDK
-(1.2.10) as its own submodule. Its tests run in uw-core. Third-party code is
-vendored: DPF's DGL for the UI (`external/dpf`) and nlohmann/json
-(`external/nlohmann`). Everything else is a system library.
+(1.2.10) as its own submodule. Its tests run in uw-core. DPF's DGL, for the
+UI, is the private DPF fork (`erickampman/DPF`, a submodule at `external/dpf`),
+which pins the private pugl fork (`erickampman/pugl`) as its own submodule:
+one copy, with every local patch, shared by StageHand, Umpire and the plugins
+(`external/dpf/README.fork.md`; Umpire's `docs/decisions.md`, "DPF fork").
+nlohmann/json is vendored (`external/nlohmann`). Everything else is a system
+library.
 
 | Platform | What builds today |
 |---|---|
@@ -19,8 +23,9 @@ vendored: DPF's DGL for the UI (`external/dpf`) and nlohmann/json
 
 ## Getting the source
 
-The submodules (uw-core, and the CLAP SDK inside it) have to be initialized
-in every checkout. uw-core is private, so the clone needs access to it:
+The submodules (uw-core with the CLAP SDK inside it, and DPF with pugl
+inside it) have to be initialized in every checkout. uw-core, DPF and pugl
+are private, so the clone needs access to all three:
 
 ```bash
 git clone --recurse-submodules https://github.com/erickampman/StageHand.git
@@ -32,8 +37,20 @@ or, in an existing clone:
 git submodule update --init --recursive
 ```
 
-When StageHand's change needs a uw-core change, commit and push uw-core
-first, then commit StageHand's new pin. Otherwise the other machine can't
+After a pull that adds a submodule or changes a submodule's URL (as when
+`external/dpf` went from a vendored copy to the fork, 2026-10-22), sync first:
+
+```bash
+git submodule sync --recursive
+git submodule update --init --recursive
+```
+
+If the update then refuses because `external/dpf` isn't empty (files left
+from the old copy, such as build output), remove the directory
+(`rm -rf external/dpf`) and run the two commands again.
+
+When StageHand's change needs a uw-core change (or a DPF one), commit and
+push uw-core (or pugl, then DPF) first, then commit StageHand's new pin. Otherwise the other machine can't
 fetch the pin. To have git refuse such a push:
 
 ```bash
@@ -44,7 +61,7 @@ git config push.recurseSubmodules check         # the default for this clone
 The `git config` line is per clone: run it in every clone that has
 submodules (StageHand, Umpire, each plugin), on the Linux PC and on the Mac.
 
-Build from `rack-view`: it's where current work is, and `main` is far behind.
+Build from `main`.
 
 ## Linux
 
@@ -158,7 +175,7 @@ brew install cmake ninja
 
 No JACK, ALSA, X11 or OpenGL packages. The macOS backends use only system
 frameworks (CoreAudio, CoreMIDI, CoreFoundation, CoreGraphics, AppKit and
-OpenGL; DGL is vendored).
+OpenGL; DGL comes from the DPF submodule).
 
 ### Build and test
 
