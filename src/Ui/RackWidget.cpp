@@ -39,6 +39,8 @@ constexpr float kRemoveSize = 26.0f;   // the red X at each row's right end
 constexpr float kMidiW      = 34.0f;
 constexpr float kPanicW     = 58.0f;
 constexpr float kStripeW    = 5.0f;    // a row's colour, at its left edge
+// renamingId while a row's name is being typed: no sequence id can look like it.
+const std::string kRowRename = "\x01row:";
 // The beat display (docs/perform.md): a pulse is lit (and the edge flashes)
 // for this long, fading; and drawn this far ahead, for the time a frame takes
 // to reach the screen.
@@ -1059,16 +1061,33 @@ void RackWidget::drawRowPlugin(const RowModel& row, float y) {
     const float px      = kInputW + kPad;
     const float editorX = kInputW + kPluginW - kPad - 62.0f;
     const float linkX   = editorX - 4.0f - 30.0f;   // its Control Links, beside the editor
+    const float nameW   = linkX - px - 8.0f;
+    // The name: click it to type another (empty: its plugin's name again).
+    if (renamingId == kRowRename + row.id) moveTextField(px - 6.0f, y + 11.0f, nameW + 6.0f, 24.0f);   // it follows the row
+    region(px - 2.0f, y + 8.0f, nameW, 26.0f,
+           [this, id = row.id, name = row.name](const Press&) { startRowRename(id, name); });
     save();
-    scissor(px, y, linkX - px - 8.0f, kRowH);
+    scissor(px, y, nameW, kRowH);
     label(px, y + 23.0f, row.name, 16.0f, kText);
-    if (row.state == RowState::Placeholder) {
-        label(px, y + 44.0f, "not loaded: " + row.problem, 12.0f, kRed);
-    } else {
-        std::string detail = row.pluginName + (row.vendor.empty() ? "" : " - " + row.vendor);
-        label(px, y + 44.0f, detail, 12.0f, kDim);
-    }
+    // The plugin, with a menu's arrow: click it to replace the plugin.
+    const bool        missing = row.state == RowState::Placeholder;
+    const std::string detail  = missing ? "not loaded: " + row.problem
+                                        : row.pluginName + (row.vendor.empty() ? "" : " - " + row.vendor);
+    const float cx = std::min(px + labelWidth(detail, 12.0f) + 9.0f, px + nameW - 6.0f), cy = y + 44.0f;
+    save();
+    scissor(px, y, cx - 7.0f - px, kRowH);   // a long one is cut short of its arrow
+    label(px, y + 44.0f, detail, 12.0f, missing ? kRed : kDim);
     restore();
+    beginPath();
+    moveTo(cx - 4.0f, cy - 2.0f);
+    lineTo(cx + 4.0f, cy - 2.0f);
+    lineTo(cx, cy + 3.0f);
+    closePath();
+    fill(kDim);
+    NanoVG::fill();
+    restore();
+    region(px - 2.0f, y + 34.0f, cx + 6.0f - px, 20.0f,
+           [this, row, px, y](const Press&) { openReplaceMenu(row, px, y + 56.0f); });
 
 
     LinkPlace place;
@@ -1841,6 +1860,15 @@ void RackWidget::newLooper(float x, float y) {
     openMenu(std::move(m));
 }
 
+void RackWidget::startRowRename(const std::string& id, const std::string& name) {
+    renamingId = kRowRename + id;
+    editText(kInputW + kPad - 6.0f, 0.0f, 200.0f, 24.0f, name, RackController::kMaxNameBytes,   // placed when the row draws
+             [this, id](const std::string& text) {
+                 renamingId.clear();
+                 controller.renameSlot(id, text);
+             });
+}
+
 void RackWidget::startLooperRename(const std::string& id, const std::string& name) {
     renamingId = "\x01loop:" + id;
     editText(kPad + 38.0f, 0.0f, 230.0f, 24.0f, name, RackController::kMaxNameBytes,   // placed when the row draws
@@ -2252,9 +2280,18 @@ void RackWidget::openAddMenu(float x, float y, bool instrumentsOnly) {
         {}, instrumentsOnly);
 }
 
+// The row keeps everything but its plugin, which starts from its defaults
+// (Session::replacePlugin). Its own plugin is ticked, and not chosen again.
+void RackWidget::openReplaceMenu(const RowModel& row, float x, float y) {
+    openPluginMenu(
+        x, y, "Replace " + row.name + "'s plugin",
+        [this, id = row.id](const PluginDescriptor& plugin) { controller.replacePlugin(id, plugin); }, {}, true,
+        row.pluginId);
+}
+
 void RackWidget::openPluginMenu(float x, float y, const std::string& title,
                                 std::function<void(const PluginDescriptor&)> chosen, const std::string& none,
-                                bool instrumentsOnly) {
+                                bool instrumentsOnly, const std::string& current) {
     Menu m;
     m.x     = x;
     m.y     = y;
@@ -2276,10 +2313,11 @@ void RackWidget::openPluginMenu(float x, float y, const std::string& title,
             if (plugin.kind != kind) continue;
             if (!headed) m.items.push_back(MenuItem{heading, {}, false, false});
             headed = true;
+            const bool ticked = !current.empty() && plugin.id == current;
             m.items.push_back(MenuItem{"   " + text(plugin),
-                                       usable ? std::function<void()>{[chosen, plugin] { chosen(plugin); }}
-                                              : std::function<void()>{},
-                                       false, false});
+                                       usable && !ticked ? std::function<void()>{[chosen, plugin] { chosen(plugin); }}
+                                                         : std::function<void()>{},
+                                       ticked, false});
         }
     };
     section(PluginKind::Instrument, "Instruments", true);

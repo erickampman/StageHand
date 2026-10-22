@@ -332,6 +332,15 @@ bool Session::setGainDb(const std::string& id, float db) {
     return true;
 }
 
+bool Session::setSlotName(const std::string& id, std::string name) {
+    Slot* s = find(id);
+    if (s == nullptr) return false;
+    if (s->saved.name == name) return true;   // nothing to save
+    s->saved.name = std::move(name);
+    dirty         = true;
+    return true;
+}
+
 bool Session::setMuted(const std::string& id, bool muted) {
     Slot* s = find(id);
     if (s == nullptr) return false;
@@ -545,6 +554,76 @@ std::string Session::addSlot(const PluginDescriptor& plugin, std::size_t index, 
     loaded.insert(loaded.begin() + static_cast<std::ptrdiff_t>(std::min(index, loaded.size())), std::move(slot));
     graphDirty = dirty = true;
     return id;
+}
+
+bool Session::replacePlugin(const std::string& id, const PluginDescriptor& plugin, std::string& problem) {
+    Slot* slot = find(id);
+    if (slot == nullptr) {
+        problem = "no row '" + id + "'";
+        return false;
+    }
+    if (sampleRate <= 0.0) {
+        problem = "no rack is loaded";
+        return false;
+    }
+    std::shared_ptr<HostedPlugin> created = factory.create(plugin, host);
+    if (!created) {
+        problem = "plugin '" + plugin.id + "' failed to load";
+        return false;
+    }
+    if (!created->activate(sampleRate, kMaxPluginBlockFrames)) {
+        problem = "plugin '" + plugin.id + "' failed to activate";
+        return false;
+    }
+
+    // The old plugin fades out and goes once quiet, as a muted one does,
+    // without the row's MIDI effects (they stay with the row).
+    if (slot->plugin) {
+        SlotConfig old = configOf(*slot);
+        old.sequenceSources.clear();
+        old.midiEffects.clear();
+        old.midiEffectBypassed.clear();
+        old.draining = true;
+        old.runtime->targetGain.store(0.0f, std::memory_order_relaxed);
+        old.runtime->muted.store(true, std::memory_order_relaxed);
+        draining.push_back(std::move(old));
+    }
+
+    // Still named for its plugin: named for the new one. (A file names a row
+    // but not its plugin, so the loaded plugin's own name is the one to match.)
+    const PluginDescriptor& was     = slot->plugin ? slot->plugin->descriptor() : slot->saved.plugin;
+    const std::string       oldName = was.name.empty() ? was.id : was.name;
+    if (slot->saved.name == oldName || slot->saved.name.empty())
+        slot->saved.name = plugin.name.empty() ? plugin.id : plugin.name;
+    slot->saved.plugin = plugin;
+    slot->saved.state.clear();   // its defaults
+    if (slot->saved.notePort >= created->portLayout().noteInputs.size()) slot->saved.notePort = 0;
+    slot->plugin = std::move(created);
+    slot->loadProblem.clear();
+    slot->runtime = std::make_shared<SlotRuntime>(targetGainOf(slot->saved), slot->saved.muted);
+    applySends(*slot);
+    resolveSource(*slot);
+
+    // A placeholder's MIDI effects weren't loaded with it: they can be now.
+    std::vector<PluginDescriptor> scanned;
+    bool                          haveScan = false;
+    for (std::size_t e = 0; e < slot->midiEffects.size() && e < slot->saved.midiEffects.size(); ++e) {
+        if (slot->midiEffects[e].plugin) continue;
+        bool rejected = false;   // it starts from its defaults: nothing more to say
+        slot->midiEffects[e] = createMidiEffect(slot->saved.midiEffects[e], sampleRate, scanned, haveScan, rejected);
+        if (slot->midiEffects[e].plugin)
+            slot->saved.midiEffects[e].plugin.path = slot->midiEffects[e].plugin->descriptor().path;
+    }
+
+    std::vector<ControlLinkSetup> links = songLinks;   // the old plugin's parameters are gone
+    for (ControlLinkSetup& link : links)
+        std::erase_if(link.targets, [&](const ControlLinkTarget& t) {
+            return t.kind == ControlLinkTarget::Kind::Parameter && t.row == id;
+        });
+    std::erase_if(links, [](const ControlLinkSetup& link) { return link.targets.empty(); });
+    if (links != songLinks) setControlLinks(ControlScope::Song, std::move(links));
+    graphDirty = dirty = true;
+    return true;
 }
 
 std::string Session::addMidiEffect(const std::string& id, const PluginDescriptor& plugin, std::size_t index,

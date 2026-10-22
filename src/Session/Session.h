@@ -168,6 +168,8 @@ public:
     bool setMuted(const std::string& id, bool muted);
     // A row's send to rig bus `bus` (docs/rig.md), after its fader; none = off.
     bool setSendDb(const std::string& id, std::size_t bus, std::optional<float> db);
+    // The row's display name; the id stays, so what names the row still finds it.
+    bool setSlotName(const std::string& id, std::string name);
 
     // --- the rig (docs/rig.md): what every song shares. It outlives load():
     // a rack load keeps the rig's effects running, so their tails ring on.
@@ -221,6 +223,13 @@ public:
     // end), at the sample rate of the last load(). Returns its id, unique in the
     // rack and derived from the plugin's name, or "" with `problem` set.
     std::string addSlot(const PluginDescriptor& plugin, std::size_t index, std::string& problem);
+    // Swap the row's plugin for `plugin`, at its defaults, keeping the row: its
+    // id, settings, MIDI effects, and what plays into it. A name that was the
+    // old plugin's becomes the new one's. This song's links to the old plugin's
+    // parameters go (and a link left with none). The old plugin fades out as a
+    // mute does, its notes ended, and goes once quiet. Close its editor first.
+    // False, with `problem` set, if `plugin` can't be created; the row is unchanged.
+    bool replacePlugin(const std::string& id, const PluginDescriptor& plugin, std::string& problem);
     // A row's MIDI effects (docs/midi-effects.md): structural, like addSlot.
     // Add creates and activates `plugin` at `index` (clamped to the end) and
     // returns its id, unique in the row and derived from its name, or "" with

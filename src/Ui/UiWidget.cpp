@@ -85,7 +85,9 @@ void UiWidget::outline(float x, float y, float w, float h, UiColor c, float radi
     stroke();
 }
 
+// Empty text draws and measures nothing: DPF's NanoVG asserts on "" (an emptied text field).
 void UiWidget::label(float x, float y, const std::string& text, float size, UiColor c, int align) {
+    if (text.empty()) return;
     fontSize(size);
     fill(c);
     textAlign(align);
@@ -93,6 +95,7 @@ void UiWidget::label(float x, float y, const std::string& text, float size, UiCo
 }
 
 float UiWidget::labelWidth(const std::string& text, float size) {
+    if (text.empty()) return 0.0f;
     fontSize(size);
     dgl::Rectangle<float> bounds;
     return textBounds(0, 0, text.c_str(), nullptr, bounds);

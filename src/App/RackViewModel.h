@@ -47,6 +47,7 @@ struct RowModel {
     std::string id;
     std::string name;          // the slot's display name
     std::string pluginName;    // from the plugin, or the saved id for a placeholder
+    std::string pluginId;      // the saved one
     std::string vendor;
     RowState    state = RowState::Running;
     std::string problem;       // placeholder: why it didn't load

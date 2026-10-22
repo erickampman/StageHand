@@ -171,6 +171,7 @@ private:
     // The red X: Remove / Cancel, right-aligned to `right` (the X's right edge).
     void confirmRemoveSequence(const std::string& id, const std::string& name, float right, float y);
     void startRename(const std::string& id, const std::string& name);
+    void startRowRename(const std::string& id, const std::string& name);   // over the row's name
     void openTriggerMenu(const SequenceRowModel& seq, float x, float y);
     void openSourceMenu(const RowModel& row, float x, float y);
     // A row's MIDI effects (docs/midi-effects.md): each one's Editor, Bypass,
@@ -186,7 +187,8 @@ private:
     // calls `chosen` with an empty descriptor (e.g. "No instrument for now").
     void openPluginMenu(float x, float y, const std::string& title,
                         std::function<void(const PluginDescriptor&)> chosen, const std::string& none = {},
-                        bool instrumentsOnly = false);
+                        bool instrumentsOnly = false, const std::string& current = {});   // `current`: ticked
+    void openReplaceMenu(const RowModel& row, float x, float y);   // the row's plugin swapped for another
     // Where a sequence plays: its rows (ticked = playing into), and New row....
     void openTargetsMenu(const std::string& seqId, float x, float y);
     // "+ Sequence": after the protocol, choose where it plays (a row, a new row,

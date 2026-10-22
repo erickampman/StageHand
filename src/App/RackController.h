@@ -156,6 +156,11 @@ public:
     // Returns the new slot's id, or "" (with a notice) on failure.
     std::string addPlugin(const PluginDescriptor& plugin, std::size_t position);
     void        removeSlot(const std::string& id);   // closes its editor first
+    // Swap the row's plugin, keeping the row (Session::replacePlugin); closes
+    // its editor first. A notice if it can't be.
+    void        replacePlugin(const std::string& id, const PluginDescriptor& plugin);
+    // Trimmed, at most kMaxNameBytes; an empty one names the row for its plugin.
+    void        renameSlot(const std::string& id, const std::string& name);
 
     // A row's MIDI effects (docs/midi-effects.md). Added at the end (a notice
     // if it can't be); removing one closes its editor first.

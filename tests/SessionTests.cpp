@@ -911,6 +911,109 @@ void testControlLinks() {
     session.unload();
 }
 
+// Replace a row's plugin: the row stays (id, settings, MIDI effects, its
+// links but the old plugin's parameters), the name follows the plugin unless
+// it was renamed, the new one starts from its defaults, and the old one fades
+// out and goes once quiet. A plugin that won't load changes nothing; a
+// placeholder replaced gets its MIDI effects loaded.
+void testReplacePlugin() {
+    using Kind = ControlLinkTarget::Kind;
+    FakeFactory factory;
+    factory.installed   = {installedPlugin("synth", "/clap/Synth.clap"), installedPlugin("organ", "/clap/Organ.clap"),
+                           installedPlugin("arp", "/clap/Arp.clap")};
+    factory.noteEffects = {"arp"};
+    FakeMidiInput midi;
+    NullHost      host;
+    auto          engine = std::make_unique<Engine>();
+    Session       session(factory, host, midi, *engine);
+
+    RackMidiEffect arp;
+    arp.id     = "arp";
+    arp.plugin = factory.installed[2];
+    RackSlot a = slot("a", "synth", "/clap/Synth.clap");
+    a.name               = "synth";   // still its plugin's name
+    a.state              = bytes("synth-state");
+    a.gainDb             = -6.0f;
+    a.filter.transpose   = 5;
+    a.midiEffects        = {arp};
+    RackSlot b           = slot("b", "not.installed");   // named "b": kept
+    b.midiEffects        = {arp};
+    Rack rack;
+    rack.slots = {a, b};
+    Session::LoadReport report;
+    CHECK(session.load(rack, 48000.0, report));
+
+    auto target = [](Kind kind, std::uint32_t param) {
+        ControlLinkTarget t;
+        t.kind  = kind;
+        t.row   = "a";
+        t.param = param;
+        return t;
+    };
+    auto link = [](std::uint8_t cc, std::vector<ControlLinkTarget> targets) {
+        ControlLinkSetup l;
+        l.number  = cc;
+        l.targets = std::move(targets);
+        return l;
+    };
+    session.setControlLinks(ControlScope::Song, {link(74, {target(Kind::Parameter, 7)}),
+                                                 link(75, {target(Kind::Parameter, 7), target(Kind::Gain, 0)})});
+    session.flush();
+    runBlock(*engine);
+
+    const std::shared_ptr<SlotRuntime> oldRuntime = session.slot("a")->runtime;
+    const std::weak_ptr<HostedPlugin>  oldPlugin  = session.slot("a")->plugin;
+    const HostedPlugin* const          effect     = session.slot("a")->midiEffects[0].plugin.get();
+
+    std::string problem;
+    CHECK(!session.replacePlugin("a", installedPlugin("missing", "/nowhere"), problem) && !problem.empty());
+    CHECK(session.slot("a")->plugin == oldPlugin.lock() && session.drainingSlots().empty());
+    CHECK(!session.replacePlugin("zz", factory.installed[1], problem));
+
+    CHECK(session.replacePlugin("a", factory.installed[1], problem));
+    const Session::Slot* row = session.slot("a");
+    CHECK(row != nullptr && session.slots()[0].saved.id == "a");
+    if (row == nullptr) return;
+    CHECK(row->saved.name == "organ" && row->saved.plugin.id == "organ" && row->saved.state.empty());
+    CHECK(row->saved.gainDb == -6.0f && row->saved.filter.transpose == 5);
+    CHECK(row->midiEffects.size() == 1 && row->midiEffects[0].plugin.get() == effect);
+    auto* organ = dynamic_cast<FakePlugin*>(row->plugin.get());
+    CHECK(organ != nullptr && organ->active && organ->state.empty());
+    CHECK(row->runtime != oldRuntime);
+    // The old one: muted (its notes end, it fades), draining, without the row's effects.
+    CHECK(session.drainingSlots().size() == 1);
+    if (session.drainingSlots().size() != 1) return;
+    CHECK(session.drainingSlots()[0].runtime == oldRuntime && session.drainingSlots()[0].midiEffects.empty());
+    CHECK(oldRuntime->muted.load() && oldRuntime->targetGain.load() == 0.0f);
+    // Only the links to the old plugin's parameters went.
+    const std::vector<ControlLinkSetup>& links = session.controlLinks(ControlScope::Song);
+    CHECK(links.size() == 1 && links[0].number == 75 && links[0].targets.size() == 1 &&
+          links[0].targets[0].kind == Kind::Gain);
+    CHECK(session.modified());
+
+    session.flush();
+    runBlock(*engine);
+    CHECK(!oldPlugin.expired());   // ringing off
+    oldRuntime->drained.store(true);
+    session.flush();
+    runBlock(*engine);
+    engine->collect();
+    CHECK(oldPlugin.expired() && session.drainingSlots().empty());
+
+    // A placeholder replaced: it runs, with its MIDI effects now loaded.
+    CHECK(session.replacePlugin("b", factory.installed[0], problem));
+    row = session.slot("b");
+    CHECK(row->plugin && row->loadProblem.empty() && row->saved.name == "b");
+    CHECK(row->midiEffects.size() == 1 && row->midiEffects[0].plugin);
+    CHECK(session.drainingSlots().empty());   // nothing was running there
+
+    const Rack captured = session.capture();
+    CHECK(captured.slots.size() == 2 && captured.slots[0].plugin.id == "organ" && captured.slots[1].plugin.id == "synth");
+    session.unload();
+    runBlock(*engine);
+    engine->collect();
+}
+
 int main() {
     testMidiEffects();
     testLoad();
@@ -926,5 +1029,6 @@ int main() {
     testPrepare();
     testDraining();
     testControlLinks();
+    testReplacePlugin();
     return test::finish("Session");
 }

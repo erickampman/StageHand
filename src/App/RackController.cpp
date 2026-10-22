@@ -25,6 +25,19 @@ constexpr const char* kSaveKey = "Cmd-S";
 constexpr const char* kSaveKey = "Ctrl-S";
 #endif
 
+// A name as typed: trimmed, and cut to kMaxNameBytes on a character boundary.
+std::string nameFrom(const std::string& typed) {
+    const std::size_t first = typed.find_first_not_of(" \t");
+    if (first == std::string::npos) return {};
+    std::string name = typed.substr(first, typed.find_last_not_of(" \t") - first + 1);
+    if (name.size() > RackController::kMaxNameBytes) {
+        std::size_t end = RackController::kMaxNameBytes;
+        while (end > 0 && (static_cast<unsigned char>(name[end]) & 0xC0) == 0x80) --end;
+        name.resize(end);
+    }
+    return name;
+}
+
 // learningId while learning the transport's or the setlist's trigger: no sequence id can look like these.
 const std::string kTransportLearn = "\x01transport";
 const std::string kSetlistLearn   = "\x01setlist";
@@ -291,7 +304,8 @@ RowModel RackController::rowFor(const Session::Slot& slot, double now, double dt
 
     RowModel row;
     row.id   = saved.id;
-    row.name = saved.name;
+    row.name     = saved.name;
+    row.pluginId = saved.plugin.id;
     if (slot.plugin) {
         row.pluginName = slot.plugin->descriptor().name;
         row.vendor     = slot.plugin->descriptor().vendor;
@@ -499,13 +513,11 @@ void RackController::selectLooper(const std::string& id) {
 }
 
 void RackController::renameLooper(const std::string& id, const std::string& name) {
-    const std::size_t first = name.find_first_not_of(" \t");
-    if (first == std::string::npos) {
+    const std::string text = nameFrom(name);
+    if (text.empty()) {
         notice("A looper needs a name");
         return;
     }
-    std::string text = name.substr(first, name.find_last_not_of(" \t") - first + 1);
-    if (text.size() > kMaxNameBytes) text.resize(kMaxNameBytes);
     editLooper(id, [&text](LooperSetup& s) { s.name = text; });
 }
 
@@ -1238,6 +1250,21 @@ void RackController::removeSlot(const std::string& id) {
     session.removeSlot(id);
 }
 
+void RackController::replacePlugin(const std::string& id, const PluginDescriptor& plugin) {
+    closeEditor(id);   // the old plugin's
+    std::string problem;
+    if (!session.replacePlugin(id, plugin, problem))
+        notice("Couldn't replace with " + (plugin.name.empty() ? plugin.id : plugin.name) + ": " + problem);
+}
+
+void RackController::renameSlot(const std::string& id, const std::string& name) {
+    RowModel* row = modelRow(id);
+    if (row == nullptr) return;
+    std::string text = nameFrom(name);
+    if (text.empty()) text = nameFrom(row->pluginName);
+    if (session.setSlotName(id, text)) row->name = text;
+}
+
 void RackController::addMidiEffect(const std::string& id, const PluginDescriptor& plugin) {
     const Session::Slot* slot = session.slot(id);
     if (slot == nullptr) return;
@@ -1443,16 +1470,10 @@ void RackController::setSequenceNoteOffOffset(const std::string& id, double ms) 
 }
 
 void RackController::renameSequence(const std::string& id, const std::string& name) {
-    const std::size_t first = name.find_first_not_of(" \t");
-    if (first == std::string::npos) {
+    const std::string trimmed = nameFrom(name);
+    if (trimmed.empty()) {
         notice("A sequence needs a name; it keeps its old one");
         return;
-    }
-    std::string trimmed = name.substr(first, name.find_last_not_of(" \t") - first + 1);
-    if (trimmed.size() > kMaxNameBytes) {   // cut on a character boundary
-        std::size_t end = kMaxNameBytes;
-        while (end > 0 && (static_cast<unsigned char>(trimmed[end]) & 0xC0) == 0x80) --end;
-        trimmed.resize(end);
     }
     editSequence(id, [&trimmed](Sequence& seq) { seq.name = trimmed; });
 }

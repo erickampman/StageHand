@@ -102,6 +102,22 @@ second, and only while it moves.
 - `removeSlot(id)`: the controller closes the slot's editor first. The plugin
   lives on in the old graph until the audio thread stops it and `collect()`
   destroys it on the main thread (the existing contract).
+- `replacePlugin(id, PluginDescriptor)` (2026-10-22): swaps the row's plugin
+  for another and keeps the row. The id stays, so sequences, loopers and links
+  that name the row still find it. Its settings, MIDI effects and colour
+  stay too. The new plugin starts from its defaults. A row still named after
+  its old plugin takes the new one's name; one named otherwise keeps its
+  name. This song's Control Link targets on the old plugin's parameters are
+  dropped, and a link left with no targets goes with them. Its level and send
+  targets stay. The rig's links follow the plugin id, so they stop or start
+  applying on their own. The note port goes back to 0 if the new plugin
+  doesn't have it. The old plugin fades out as a mute does (its notes end at
+  once, a 10 ms fade): it's added to the draining slots, muted and without
+  the row's MIDI effects, and goes once quiet. If the new plugin can't be
+  created, nothing changes. A placeholder can be replaced too, and then its
+  MIDI effects load. There's no confirmation: the saved rack keeps the old
+  plugin and its state until the next save. The controller closes the row's
+  editor first.
 
 **Other queries and hooks**
 - `bool modified()`, `markSaved()`: drive the toolbar's unsaved indicator.
@@ -241,6 +257,17 @@ Implemented in step 5:
   `--save-rack PATH` alone starts a new,
   empty rack. With the window, a rack with nothing runnable no longer exits.
 - Placeholder rows show no output controls.
+- The plugin line under a row's name (its plugin and vendor, or "not loaded:
+  ..." on a placeholder) ends with a menu arrow. Clicking it lists the
+  instruments with the current one ticked, and choosing another replaces the
+  row's plugin (`replacePlugin`, section 1; 2026-10-22).
+- A click on a row's name types a new one in its place, as a sequence's does
+  (Enter keeps it, Escape doesn't; 2026-10-22). The plugin line below still
+  says what plays. Names are trimmed and at most 64 bytes, and an empty one
+  gives the row its plugin's name again. The id doesn't change, so sequences,
+  loopers and links still find the row (`Session::setSlotName`). A row whose
+  name is still its plugin's counts as not renamed, so Replace names it after
+  the new plugin.
 - Menus and the panel are overlays inside the window (DGL has no native
   menus). A click outside or Escape closes them. Input goes to regions recorded
   during the last draw, topmost first.
@@ -251,7 +278,7 @@ Constraints carried from the spike and the DGL notes in architecture.md:
 - Construct and destroy NanoVG widgets inside a
   `Window::ScopedGraphicsContext`. Close the window and quit the Application
   before it's destroyed.
-- No text entry in v1. Values are edited by drag, scroll and
+- No text entry in v1 (since then, the names of sequences, loopers and rows are typed in place). Values are edited by drag, scroll and
   double-click-to-reset. The source is a popup list.
 - Stage-first drawing: large type, high contrast, and a UI scale factor
   (HiDPI and a "big" mode).

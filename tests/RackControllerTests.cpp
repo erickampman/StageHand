@@ -812,6 +812,33 @@ void testRenameSequence() {
     CHECK(rig.session->modified());
 }
 
+// A row renamed in place: the id stays; an empty name is its plugin's again,
+// and a name still its plugin's follows the plugin when it's replaced.
+void testRenameRow() {
+    Rig  rig;
+    Rack rack;
+    rack.slots = {slot("lead", "synth", "/clap/Synth.clap")};   // named "lead": renamed
+    Session::LoadReport report;
+    rig.session->load(rack, 48000.0, report);
+    RackController       controller(*rig.session, *rig.engine, rig.midi, rig.factory, rig.config());
+    const RackViewModel& view = controller.view();
+
+    controller.renameSlot("lead", "  Pad ");
+    CHECK(view.rows[0].name == "Pad" && view.rows[0].id == "lead");   // at once, before a tick
+    controller.tick(1.0);
+    CHECK(view.rows[0].name == "Pad" && rig.session->slot("lead")->saved.name == "Pad" && rig.session->modified());
+
+    controller.replacePlugin("lead", installedPlugin("bass", "/clap/Bass.clap"));   // renamed: kept
+    controller.tick(1.1);
+    CHECK(view.rows[0].name == "Pad" && view.rows[0].pluginName == "bass");
+
+    controller.renameSlot("lead", "   ");   // empty: its plugin's name
+    CHECK(view.rows[0].name == "bass");
+    controller.replacePlugin("lead", installedPlugin("synth", "/clap/Synth.clap"));   // not renamed: follows
+    controller.tick(1.2);
+    CHECK(view.rows[0].name == "synth" && rig.session->capture().slots[0].name == "synth");
+}
+
 void testSave() {
     const std::filesystem::path dir = scratchDir("stagehand-controller-test");
     std::filesystem::remove_all(dir);
@@ -2223,6 +2250,7 @@ int main() {
     testFindPlaybackDevice();
     testClickRouting();
     testRenameSequence();
+    testRenameRow();
     testSetlist();
     testRigs();
     testPreparedRacks();
