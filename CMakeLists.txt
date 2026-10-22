@@ -236,12 +236,23 @@ if(STAGEHAND_APP AND APPLE)
     # The icon, compiled from resources/StageHand.icon (an Icon Composer document)
     # by Xcode's actool: Assets.car for macOS 26 (its dark and tinted versions too)
     # and StageHand.icns for macOS 15. Without Xcode (only the Command Line Tools)
-    # the bundle has no icon.
+    # the bundle has no icon. Nor with an Xcode before 26: Icon Composer documents
+    # are new in 26, and an older actool reports success and writes neither file.
     execute_process(COMMAND xcrun --find actool OUTPUT_VARIABLE STAGEHAND_ACTOOL
                     OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET RESULT_VARIABLE actool_missing)
+    set(actool_version 0)
+    if(NOT actool_missing)
+        execute_process(COMMAND "${STAGEHAND_ACTOOL}" --version OUTPUT_VARIABLE actool_info ERROR_QUIET)
+        if(actool_info MATCHES "<key>short-bundle-version</key>[ \t\r\n]*<string>([0-9.]+)</string>")
+            set(actool_version "${CMAKE_MATCH_1}")
+        endif()
+    endif()
     if(actool_missing)
         message(WARNING "Xcode's actool not found: StageHand.app will have no icon "
                         "(install Xcode, not just the Command Line Tools)")
+    elseif(actool_version VERSION_LESS 26)
+        message(WARNING "Xcode ${actool_version}'s actool can't compile Icon Composer documents: "
+                        "StageHand.app will have no icon (Xcode 26 or later makes it)")
     else()
         set(icon "${CMAKE_SOURCE_DIR}/resources/StageHand.icon")
         set(icon_out "${CMAKE_BINARY_DIR}/icon")

@@ -35,7 +35,11 @@ jobs:
         run: ctest --test-dir build --output-on-failure
 
   macos:
-    runs-on: macos-15   # Apple Silicon, macOS 15
+    runs-on: macos-15   # Apple Silicon, macOS 15 (the oldest StageHand supports)
+    env:
+      # The image's default Xcode is 16.4, which can't compile the app icon (an Icon
+      # Composer document, new in Xcode 26): use the image's 26.3, as on the Mac.
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
     steps:
       - uses: actions/checkout@v4
         with:
