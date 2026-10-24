@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.21)
 # macOS (docs/macos.md): set before project(), and ignored elsewhere.
 set(CMAKE_OSX_DEPLOYMENT_TARGET 26.0 CACHE STRING "macOS 26 or later (docs/macos.md, decision 9)")
 set(CMAKE_OSX_ARCHITECTURES arm64 CACHE STRING "arm64 only (docs/macos.md, decision 13)")
-project(StageHand VERSION 0.0.1 LANGUAGES C CXX)   # C: DGL's pugl and NanoVG
+project(StageHand VERSION 0.9.0 LANGUAGES C CXX)   # C: DGL's pugl and NanoVG
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -110,6 +110,7 @@ target_compile_options(stagehand-warnings INTERFACE -Wall -Wextra -Wpedantic)
 add_library(stagehand-core INTERFACE)
 target_include_directories(stagehand-core INTERFACE src)
 target_link_libraries(stagehand-core INTERFACE uw::base uw::plugin)
+target_compile_definitions(stagehand-core INTERFACE STAGEHAND_VERSION="${PROJECT_VERSION}")
 
 # --- stagehand-engine: the graph runner (no platform or format dependencies) ---
 add_library(stagehand-engine STATIC

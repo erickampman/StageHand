@@ -26,7 +26,7 @@ public:
     void requestParamFlush() override {}
     void log(LogLevel level, const char* message) override;
     // What a plugin is told about its host (uw-core's default is "uw-core host").
-    HostInfo hostInfo() const override { return {"StageHand", "Unlikelyware", "", "0.0.1"}; }
+    HostInfo hostInfo() const override { return {"StageHand", "Unlikelyware", "", STAGEHAND_VERSION}; }
     void stateChanged() override {
         if (onStateChanged) onStateChanged();
     }

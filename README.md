@@ -12,6 +12,5 @@ rack window); a macOS port is under way.
   [setlists](docs/setlists.md), [rig](docs/rig.md),
   [MIDI effects](docs/midi-effects.md),
   [macOS port](docs/macos.md)
-- [Working with cloud sessions](docs/cloud-sessions.md)
 
 MIT licensed; see [LICENSE](LICENSE).

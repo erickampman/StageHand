@@ -27,7 +27,7 @@ input:
 A CLAP note becomes MIDI 2.0 rather than 1.0 so its velocity keeps its
 resolution; an instrument that takes only MIDI 1.0 gets it downconverted like
 any other MIDI 2.0 message. Note expressions (Retune's planned CLAP-dialect
-path, its PLAN.md) would map to MIDI 2.0 per-note messages; not needed while
+path, its docs/design.md) would map to MIDI 2.0 per-note messages; not needed while
 Retune sends MIDI 2.0 to a host that takes it.
 
 ## 2. The chain in the engine (built)
