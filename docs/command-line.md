@@ -6,9 +6,11 @@ the same options in short form.
 ## Building
 
 ```bash
-cmake -S . -B build -G Ninja
-cmake --build build -j16
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build
 ```
+
+[BUILDING.md](../BUILDING.md) has the details.
 
 The binary is `build/stagehand`. The tests run with `ctest` from `build/`.
 `-DSTAGEHAND_APP=OFF` builds only the libraries and the tests (no JACK, ALSA,
