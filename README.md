@@ -13,6 +13,27 @@ rack window); a macOS port is under way.
   [MIDI effects](docs/midi-effects.md),
   [macOS port](docs/macos.md)
 
+## Installing
+
+**macOS:** drag `StageHand.app` into Applications. The 0.9 previews aren't notarized, so the first
+time macOS refuses to open it: open System Settings ▸ Privacy & Security and click Open Anyway. Or
+clear the quarantine flag yourself:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/StageHand.app
+```
+
+**Linux:** unpack the download anywhere you'll keep it, such as `~/.local/lib/stagehand`, and keep
+`stagehand` and its `help` folder together (Help looks for `help/` beside the executable). To run
+it as plain `stagehand`, link it into a directory on your `PATH`:
+
+```bash
+ln -sf ~/.local/lib/stagehand/stagehand ~/.local/bin/stagehand
+```
+
+Plugins go in the CLAP folder, where StageHand looks for them: `~/.clap` on Linux,
+`~/Library/Audio/Plug-Ins/CLAP` on macOS.
+
 ## Building from source
 
 ```bash

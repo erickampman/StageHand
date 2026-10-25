@@ -111,6 +111,18 @@ and the icons for your user (in `~/.local/share`; it runs this checkout's `build
 tools/install-desktop-entry.sh
 ```
 
+**Keeping it without the clone.** The link and the launcher run this clone's `build/stagehand`. To
+keep StageHand after deleting the clone, copy it with its help page (Help looks for `help/` beside
+the executable) and point both at the copy:
+
+```bash
+mkdir -p ~/.local/lib/stagehand ~/.local/bin
+rm -rf ~/.local/lib/stagehand/stagehand ~/.local/lib/stagehand/help
+cp -R build/stagehand build/help ~/.local/lib/stagehand/
+ln -sf ~/.local/lib/stagehand/stagehand ~/.local/bin/stagehand
+tools/install-desktop-entry.sh ~/.local/lib/stagehand/stagehand
+```
+
 **Audio.** You don't need to type `pw-jack`: started without it and with no JACK server to reach,
 StageHand restarts itself under `pw-jack` ([docs/command-line.md](docs/command-line.md), "Audio:
 pw-jack"). A real jackd, if one is running, is used instead.
@@ -143,6 +155,14 @@ open build/StageHand.app
 
 Launched that way, its output goes nowhere; Cmd-Q, or Quit in the Dock, quits and saves as Ctrl-C
 does.
+
+To keep it in Applications (and after deleting the clone), copy the app there. An app you built
+yourself has no quarantine flag, so it opens without the steps a downloaded one needs:
+
+```bash
+rm -rf /Applications/StageHand.app
+cp -R build/StageHand.app /Applications/
+```
 
 ## Other platforms
 
