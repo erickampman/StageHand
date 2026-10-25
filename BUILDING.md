@@ -111,16 +111,13 @@ and the icons for your user (in `~/.local/share`; it runs this checkout's `build
 tools/install-desktop-entry.sh
 ```
 
-**Keeping it without the clone.** The link and the launcher run this clone's `build/stagehand`. To
-keep StageHand after deleting the clone, copy it with its help page (Help looks for `help/` beside
-the executable) and point both at the copy:
+**Keeping it without the clone.** The link and the launcher above run this clone's
+`build/stagehand`. To keep StageHand after deleting the clone, install it, as KeyboardEDO does:
+`cmake --install build` (to `/usr/local`; `--prefix ~/.local` for yourself) installs `stagehand`,
+its help page, a launcher and the icons, so it appears in the desktop's app list with its icon.
 
 ```bash
-mkdir -p ~/.local/lib/stagehand ~/.local/bin
-rm -rf ~/.local/lib/stagehand/stagehand ~/.local/lib/stagehand/help
-cp -R build/stagehand build/help ~/.local/lib/stagehand/
-ln -sf ~/.local/lib/stagehand/stagehand ~/.local/bin/stagehand
-tools/install-desktop-entry.sh ~/.local/lib/stagehand/stagehand
+cmake --install build --prefix ~/.local
 ```
 
 **Audio.** You don't need to type `pw-jack`: started without it and with no JACK server to reach,
@@ -164,7 +161,41 @@ rm -rf /Applications/StageHand.app
 cp -R build/StageHand.app /Applications/
 ```
 
+## Options
+
+Pass these to the first command (`cmake -B build ... -DNAME=VALUE`).
+
+| Option | Default | Effect |
+|---|---|---|
+| `STAGEHAND_APP` | `ON` on Linux and macOS | `OFF` builds only the libraries and the tests, with none of the platform libraries. |
+| `STAGEHAND_UW_CORE_DIR` | `external/uw-core` | Build against another uw-core clone (below). |
+
+## Building against a local uw-core
+
+To try a uw-core change that isn't pushed and pinned yet, point the build at another clone:
+
+```bash
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DSTAGEHAND_UW_CORE_DIR=$HOME/Dev-Common/uw-core
+```
+
+When the change is ready, push uw-core first, then move StageHand's submodule pin
+(uw-core's README, "Pushing: uw-core first").
+
 ## Other platforms
 
 Not supported. Anything other than Linux and macOS builds only with `-DSTAGEHAND_APP=OFF`, and
 isn't tested.
+
+## How this differs from the other projects
+
+Every Unlikelyware project builds the same way: `git clone`, `tools/fetch_deps.sh`, the three
+commands under "Build and test", and for a plugin `cmake --build build --target install-clap`. The
+same package list, the same `build/` folder, the same option names (`<PROJECT>_BUILD_VST3`,
+`<PROJECT>_UW_CORE_DIR` and so on). What's different here, and why:
+
+- An app, not a plugin: no `install-clap`. On Linux it runs from `build/` or installs with `cmake --install`, as KeyboardEDO does; on macOS it's `build/StageHand.app`, copied to Applications to keep.
+- `build/stagehand` on macOS is a small script, where KeyboardEDO's `build/keyboardedo` is a link: run through a link, StageHand isn't seen as the app (no bundle id, menu-bar name or Info.plist), so the script runs the bundle's binary by its real path.
+- `tools/install-desktop-entry.sh` adds a launcher for a checkout's `build/stagehand`, for running a development build from the dock. KeyboardEDO has no such script: its launcher comes only from `cmake --install`.
+- The app icon on macOS needs full Xcode 26 (as KeyboardEDO's); without it the app builds with no icon.
+- Linux CI runs on `ubuntu-24.04`, not `ubuntu-latest`: the ALSA sequencer code needs alsa-lib 1.2.10 or later.
+- No `_WERROR` option: the five synths have one and their CI turns it on; this project's build still has a few warnings in its own sources, so it comes once they're fixed.

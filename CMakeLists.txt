@@ -55,7 +55,10 @@ endif()
 # backends (JACK and ALSA on Linux) only when building the app.
 set(UW_CORE_BACKENDS ${STAGEHAND_APP} CACHE BOOL "" FORCE)
 set(UW_CORE_TESTS OFF CACHE BOOL "" FORCE)
-add_subdirectory(external/uw-core)
+# STAGEHAND_UW_CORE_DIR points at another uw-core clone (e.g. ../uw-core) to build
+# against a change that isn't pushed and pinned yet.
+set(STAGEHAND_UW_CORE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/uw-core" CACHE PATH "uw-core source")
+add_subdirectory(${STAGEHAND_UW_CORE_DIR} uw-core)
 
 # --- nlohmann/json 3.11.3: single header, vendored (same copy as PMU) ----------
 add_library(nlohmann-json INTERFACE)
@@ -302,6 +305,25 @@ if(TARGET stagehand)
     if(APPLE)
         target_sources(stagehand PRIVATE ${help_files})
         set_source_files_properties(${help_files} PROPERTIES MACOSX_PACKAGE_LOCATION Resources/help)
+    endif()
+
+    # Linux: `cmake --install build` (to /usr/local, or --prefix), as KeyboardEDO's:
+    # the executable in bin, the help page in share/stagehand/help (where Help
+    # looks, from bin), and a launcher and the icons where desktops find them.
+    # The launcher runs `stagehand` from the PATH; tools/install-desktop-entry.sh
+    # is for running a checkout's build/stagehand instead.
+    if(UNIX AND NOT APPLE)
+        include(GNUInstallDirs)
+        set(EXEC stagehand)
+        configure_file(resources/linux/stagehand.desktop.in "${CMAKE_BINARY_DIR}/stagehand.desktop" @ONLY)
+        install(TARGETS stagehand RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+        install(FILES ${help_files} DESTINATION ${CMAKE_INSTALL_DATADIR}/stagehand/help)
+        install(FILES "${CMAKE_BINARY_DIR}/stagehand.desktop" DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+        foreach(size 48 64 128 256 512)
+            install(FILES resources/linux/icons/stagehand-${size}.png
+                    DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/${size}x${size}/apps
+                    RENAME stagehand.png)
+        endforeach()
     endif()
 endif()
 

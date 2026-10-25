@@ -20,8 +20,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: recursive
           token: ${{ secrets.SUBMODULES_TOKEN || github.token }}
+      # fetch_deps.sh's own `git submodule` clones don't get checkout's token.
+      - name: Credentials for the private submodules
+        env:
+          SUBMODULES_TOKEN: ${{ secrets.SUBMODULES_TOKEN }}
+        run: |
+          git config --global url."https://x-access-token:${SUBMODULES_TOKEN}@github.com/erickampman/".insteadOf \
+            "https://github.com/erickampman/"
+      - name: Fetch pinned dependency submodules
+        run: tools/fetch_deps.sh
       - name: Install build dependencies
         run: |
           sudo apt-get update
@@ -35,7 +43,7 @@ jobs:
             libegl1-mesa-dev libgles2-mesa-dev libdrm-dev libgbm-dev libdecor-0-dev libudev-dev \
             libdbus-1-dev libibus-1.0-dev
       - name: Configure
-        run: cmake -S . -B build -G Ninja
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
       - name: Build
         run: cmake --build build
       - name: Test
@@ -49,12 +57,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: recursive
           token: ${{ secrets.SUBMODULES_TOKEN || github.token }}
+      # fetch_deps.sh's own `git submodule` clones don't get checkout's token.
+      - name: Credentials for the private submodules
+        env:
+          SUBMODULES_TOKEN: ${{ secrets.SUBMODULES_TOKEN }}
+        run: |
+          git config --global url."https://x-access-token:${SUBMODULES_TOKEN}@github.com/erickampman/".insteadOf \
+            "https://github.com/erickampman/"
+      - name: Fetch pinned dependency submodules
+        run: tools/fetch_deps.sh
       - name: Install build dependencies
         run: brew install ninja
       - name: Configure
-        run: cmake -S . -B build -G Ninja
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
       - name: Build
         run: cmake --build build
       - name: Test

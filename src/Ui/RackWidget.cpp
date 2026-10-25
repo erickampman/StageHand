@@ -2031,10 +2031,10 @@ void RackWidget::openFileMenu(float x, float y) {
 }
 
 // The help page, as KeyboardEDO's (its docs/decisions.md, "Identity and help"):
-// help/help.html, which the build puts beside the executable on Linux and in
-// the bundle's Resources on the Mac, with the logo it shows, opened in the
-// default browser as the brand opens unlikelyware.com. A missing page is said
-// in the status bar.
+// help/help.html, which the build puts beside the executable on Linux (and
+// `cmake --install` in share/stagehand/help, beside bin) and in the bundle's
+// Resources on the Mac, with the logo it shows, opened in the default browser
+// as the brand opens unlikelyware.com. A missing page is said in the status bar.
 void RackWidget::openHelp() {
     namespace fs = std::filesystem;
     std::error_code ec;
@@ -2045,7 +2045,8 @@ void RackWidget::openHelp() {
     const fs::path page = fs::weakly_canonical(self, ec).parent_path() / "../Resources/help/help.html";
 #else
     const fs::path self = fs::read_symlink("/proc/self/exe", ec);
-    const fs::path page = self.parent_path() / "help/help.html";
+    fs::path       page = self.parent_path() / "help/help.html";
+    if (!fs::exists(page, ec)) page = self.parent_path() / "../share/stagehand/help/help.html";
 #endif
     if (self.empty() || !fs::exists(page, ec)) {
         showNotice("The help page isn't installed (help/help.html beside the app)", ui::nowSeconds());
