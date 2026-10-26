@@ -198,4 +198,4 @@ same package list, the same `build/` folder, the same option names (`<PROJECT>_B
 - `tools/install-desktop-entry.sh` adds a launcher for a checkout's `build/stagehand`, for running a development build from the dock. KeyboardEDO has no such script: its launcher comes only from `cmake --install`.
 - The app icon on macOS needs full Xcode 26 (as KeyboardEDO's); without it the app builds with no icon.
 - Linux CI runs on `ubuntu-24.04`, not `ubuntu-latest`: the ALSA sequencer code needs alsa-lib 1.2.10 or later.
-- No `_WERROR` option: the six synths have one and their CI turns it on; this project's build still has a few warnings in its own sources, so it comes once they're fixed.
+- No `_WERROR` option: the seven synths have one and their CI turns it on; this project's build still has a few warnings in its own sources, so it comes once they're fixed.
