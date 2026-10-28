@@ -31,10 +31,12 @@ bool isSetlistFile(const std::string& path);
 
 // --- where the app was (docs/setlists.md, "Reopening") ---
 // The last setlist and the song it was on, so a start with no arguments
-// reopens there. `setlist` empty: a rack was open on its own (start as usual).
+// reopens there. `setlist` empty: a rack was open on its own, `rack` (its
+// bundle), which reopens instead; both empty: an untitled rack (start as usual).
 struct LastPosition {
     std::string setlist;
     std::size_t song = 0;
+    std::string rack;
 };
 // last.json in appStateDir() (Session/AppPaths.h).
 std::string defaultLastPositionPath();

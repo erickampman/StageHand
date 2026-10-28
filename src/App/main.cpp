@@ -92,8 +92,8 @@ void printUsage() {
         "usage: stagehand [MODE] [options]\n"
         "\n"
         "Without a mode, StageHand plays (--play is the default and can be left out).\n"
-        "With no arguments it reopens the last setlist at the song it was on; with\n"
-        "none (or a rack open on its own last), a new, empty, untitled rack.\n"
+        "With no arguments it reopens the last setlist at the song it was on, or the\n"
+        "rack open on its own last; with neither, a new, empty, untitled rack.\n"
         "\n"
         "Modes:\n"
         "  --play               (the default) host plugins: MIDI in, audio out. Plays\n"
@@ -608,7 +608,22 @@ bool saveTargetAllowed(const std::string& saveTarget, const Options& options) {
     return false;
 }
 
-int runPlay(const Options& options) {
+// A start with no arguments, with no setlist open last: the rack open on its
+// own then, if it still loads (else, with a word why, none: an untitled rack).
+std::string lastRack() {
+    LastPosition last;
+    if (!loadLastPosition(defaultLastPositionPath(), last) || !last.setlist.empty() || last.rack.empty()) return {};
+    Rack rack;
+    if (const RackFileResult result = loadRack(last.rack, rack); !result.ok) {
+        std::printf("The last rack, %s, can't be opened (%s); starting with an untitled rack.\n", last.rack.c_str(),
+                    result.error.c_str());
+        return {};
+    }
+    return last.rack;
+}
+
+int runPlay(Options options) {
+    if (options.reopen) options.rack = lastRack();
     if (!options.plugin.empty() && !options.rack.empty()) {
         std::fprintf(stderr,
                      "Use --rack or --plugin, not both: a rack already names its plugins.\n"

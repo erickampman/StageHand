@@ -104,6 +104,7 @@ RackController::RackController(Session& runningSession, Engine& runningEngine, M
     routeClick(true);
     refreshSources();
     tick(0.0);
+    if (!target.empty()) rememberPosition();   // a rack (--rack) reopens next time
 }
 
 RackController::~RackController() {
@@ -1887,6 +1888,7 @@ RackController::SaveAsResult RackController::saveAs(const std::string& chosen, b
         setlist.songs[song].rack = path;
         writeSetlist();
     }
+    if (!setlistOpen) rememberPosition();   // the rack on its own is this bundle now
     return SaveAsResult::Saved;
 }
 
@@ -1947,6 +1949,7 @@ bool RackController::newRack() {
     rack.name = "Untitled";
     if (!replaceRack(rack, {}, {})) return false;
     if (setlistOpen) closeSetlist();   // a rack opened on its own leaves the set
+    else rememberPosition();
     return true;
 }
 
@@ -1958,6 +1961,7 @@ bool RackController::openRack(const std::string& chosen) {
     }
     if (!loadRackAt(bundle)) return false;
     if (setlistOpen) closeSetlist();   // a rack opened on its own leaves the set
+    else rememberPosition();
     return true;
 }
 
@@ -2550,7 +2554,8 @@ bool RackController::writeSetlist() {
 
 void RackController::rememberPosition() {
     if (config.lastPositionPath.empty()) return;
-    saveLastPosition(config.lastPositionPath, LastPosition{setlistOpen ? setlistFile : std::string{}, song});
+    saveLastPosition(config.lastPositionPath, setlistOpen ? LastPosition{setlistFile, song, {}}
+                                                          : LastPosition{{}, 0, target});
 }
 
 void RackController::refreshSongs(double now) {

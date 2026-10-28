@@ -1072,11 +1072,16 @@ void testSetlist() {
     CHECK(controller.openRack(a));
     tick();
     CHECK(!controller.hasSetlist() && !view.setlist.open);
-    CHECK(loadLastPosition(lastPath, last) && last.setlist.empty());
+    CHECK(loadLastPosition(lastPath, last) && last.setlist.empty() && last.rack == a);   // that rack reopens
 
     // So does a new rack outside the set: untitled, on its own.
     CHECK(controller.openSetlist(file, 0) && controller.hasSetlist());
     CHECK(controller.newRack() && !controller.hasSetlist() && controller.rackPath().empty());
+    CHECK(loadLastPosition(lastPath, last) && last.setlist.empty() && last.rack.empty());
+    // Save As names it: that bundle reopens.
+    CHECK(controller.saveAs((dir / "Racks/E").string()) == RackController::SaveAsResult::Saved);
+    CHECK(loadLastPosition(lastPath, last) && last.rack == (dir / "Racks/E.rack").string());
+
 
     runBlock(*rig.engine);
     rig.engine->collect();

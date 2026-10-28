@@ -140,10 +140,12 @@ void testLastPosition(const fs::path& dir) {
     const std::string path = (dir / "state/stagehand/last.json").string();
     LastPosition      p;
     CHECK(!loadLastPosition(path, p));
-    CHECK(saveLastPosition(path, LastPosition{"/home/me/Friday.setlist", 3}));   // makes the folders
+    CHECK(saveLastPosition(path, LastPosition{"/home/me/Friday.setlist", 3, {}}));   // makes the folders
     CHECK(loadLastPosition(path, p) && p.setlist == "/home/me/Friday.setlist" && p.song == 3);
     CHECK(saveLastPosition(path, LastPosition{}));
-    CHECK(loadLastPosition(path, p) && p.setlist.empty() && p.song == 0);
+    CHECK(loadLastPosition(path, p) && p.setlist.empty() && p.song == 0 && p.rack.empty());
+    CHECK(saveLastPosition(path, LastPosition{{}, 0, "/home/me/Solo.rack"}));   // a rack on its own
+    CHECK(loadLastPosition(path, p) && p.setlist.empty() && p.rack == "/home/me/Solo.rack");
 
     CHECK(defaultLastPositionPath() == appStateDir() + "/last.json");
 }

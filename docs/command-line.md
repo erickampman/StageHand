@@ -47,8 +47,8 @@ stagehand [MODE] [options]
 One mode per run. Without a mode, StageHand plays: `--play` is the default
 (since 2026-10-01) and can be left out, so `stagehand --rack X` plays X. With
 no arguments at all, it reopens the last setlist at the song it was on
-(docs/setlists.md), or, with none, plays a new, empty, untitled rack (see
-"Untitled rack").
+(docs/setlists.md), or the rack that was open on its own last; with
+neither, it plays a new, empty, untitled rack (see "Untitled rack").
 
 | Mode | What it does |
 |---|---|
@@ -69,7 +69,7 @@ What it plays:
 | `--rack PATH` | Play a rack: a `.rack` bundle (docs/rack-format.md) |
 | `--plugin PATH\|ID` | Play one plugin: a `.clap` file, or an id or name from `--list-plugins`. It starts from the plugin's defaults |
 | `--save-rack PATH` alone | Start a new, empty rack, built in the rack window and saved to PATH |
-| none of these | No arguments at all: the last setlist, at its song. Otherwise, or with none, a new, untitled rack (see below) |
+| none of these | No arguments at all: the last setlist, at its song, or the last rack open on its own. Otherwise, or with neither, a new, untitled rack (see below) |
 
 `--rack` and `--plugin` can't be used together: a rack already names its
 plugins.
@@ -84,7 +84,7 @@ plugins.
 ### Untitled rack
 
 `stagehand` with no `--setlist`, `--rack`, `--plugin` or `--save-rack` (and,
-with no arguments at all, no last setlist to reopen) starts a new, empty rack named "Untitled" with the defaults:
+with no arguments at all, no last setlist or rack to reopen) starts a new, empty rack named "Untitled" with the defaults:
 120 BPM, 4/4, every hardware MIDI input plus the virtual inputs, and stereo
 out. Build it in the window as usual.
 

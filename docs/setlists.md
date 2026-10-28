@@ -103,9 +103,12 @@ old rack ring out.
   song are kept in `$XDG_STATE_HOME/stagehand/last.json` (default
   `~/.local/state`; on macOS in `~/Library/Application Support/StageHand`),
   written at each switch (a few bytes, atomic), so a crash
-  reopens where it was too. If that setlist is gone, or a rack was opened on
-  its own last, it starts as today (an untitled rack). A path on the command
-  line wins.
+  reopens where it was too. If that setlist is gone, it starts with an
+  untitled rack. A path on the command line wins.
+- **A rack on its own (2026-10-28):** if a rack was open on its own last
+  (opened, named by Save As, or played with `--rack`), `last.json` keeps its
+  bundle as `rack` instead, and a start with no arguments reopens it. If it
+  won't load, or the last rack was untitled (New), it's an untitled rack.
 
 ### On disk
 
