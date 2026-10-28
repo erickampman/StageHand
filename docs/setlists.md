@@ -173,9 +173,10 @@ rows.
   (the brand and Help move here from the toolbar, 2026-10-19). The arrows are large, for the
   stage, and drawn as skip shapes (|◀ ▶|) so they can't be taken for the
   transport's Start just below. An arrow with nowhere to go is greyed out.
-- **No song playing:** after the playing song is removed from the set, the
-  row shows "-/12" and "Not a song in this set: <rack>" in amber until a song
-  is chosen.
+- **No song playing:** after the playing song is removed from the set, or
+  when a set with no songs opens (the rack that was playing stays), the row
+  shows "-/12" and "Not a song in this set: <rack>" in amber until a song is
+  chosen or that rack is added.
 - **The song list:** a click on the song name opens every song as a menu,
   each with its number, its prepared or missing state, and the current one
   marked. A click on a song goes there. The editing items are at the bottom
@@ -210,6 +211,12 @@ All of this is in the app; a setlist never has to be written by hand.
     add, set up, add the next.
   - File → "Add a rack to this set..." (Ctrl-O) adds an existing rack after
     the current song, without switching to it.
+  - "Add this rack to the set" (File, and the song list under "Not a
+    song"; 2026-10-28), when the rack playing isn't a song: it's added where
+    the next song goes and becomes the current song, with no switch, so
+    what was built in it (rows, sequences, loopers, settings) is the song.
+    An untitled rack is saved first (Save As). A looper's recording isn't
+    kept (docs/looper.md, 15); Keep makes it a sequence first.
   - Save and Save As... work on the current song's rack as always (Save As
     points the song at the new bundle).
 - **Changing songs** (the song list's menu, under "This song": the current

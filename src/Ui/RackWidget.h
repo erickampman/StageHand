@@ -216,6 +216,9 @@ private:
     void openMetronomeMenu(float x, float y);
     void proceed(FileAction action);
     void saveAsThen(std::function<void()> then, const std::string& title = "Save the rack as");
+    // The running rack, not a song in the open set, made one (named first if untitled).
+    void addRunningRack();
+    std::function<void()> addRunningRackAction();   // empty when it can't be (untitled, saving off)
     std::string startFolder() const;
     const RowModel* rowById(const std::string& id) const;   // the current model's row, at event time
     // Filter edits go through here, so the filter panel shows them before the

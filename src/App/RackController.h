@@ -407,6 +407,10 @@ public:
     bool addRackToSetlist(const std::string& chosen);          // after the current song; no switch
     bool addNewRackToSetlist(const std::string& chosen);       // a copy of the song playing (else empty) saved there; goes to it
     bool addThisRackAgain();                                   // the current song's rack, after it
+    // The running rack when it isn't a song (it was playing when the set
+    // opened): added where the next song goes, and it's the current song now,
+    // with no switch. It must be saved somewhere (Save As names an untitled one).
+    bool addRunningRackToSetlist();
     bool moveSong(std::size_t index, int delta);               // -1 up, +1 down
     bool renameSong(std::size_t index, const std::string& name);   // "" = the rack's own name
     bool removeSong(std::size_t index);                        // the rack stays on disk

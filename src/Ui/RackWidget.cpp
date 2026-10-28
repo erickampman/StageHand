@@ -643,8 +643,21 @@ void RackWidget::openSongMenu(float x, float y) {
                                    }});
         m.items.push_back(MenuItem{"   Remove from setlist...", [this, i, x, y] { confirmRemoveSong(i, x, y); }, false,
                                    true});
+    } else {   // the rack playing isn't a song in this set
+        m.items.push_back(MenuItem{"Not a song (" + controller.view().rackName + "):", {}});
+        m.items.push_back(MenuItem{"   Add this rack to the set", addRunningRackAction()});
     }
     openMenu(std::move(m));
+}
+
+std::function<void()> RackWidget::addRunningRackAction() {
+    if (controller.rackPath().empty() && controller.savingOff()) return {};
+    return [this] { addRunningRack(); };
+}
+
+void RackWidget::addRunningRack() {
+    if (!controller.rackPath().empty()) controller.addRunningRackToSetlist();
+    else saveAsThen([this] { controller.addRunningRackToSetlist(); }, "Save this rack for the set");
 }
 
 void RackWidget::openMissingSongMenu(std::size_t index, float x, float y) {
@@ -1998,6 +2011,9 @@ void RackWidget::openFileMenu(float x, float y) {
                                [this] { fileAction(FileAction::New); }});
     m.items.push_back(MenuItem{(inSet ? "Add a rack to this set...  " : "Open...           ") + cmd + "O",
                                [this] { fileAction(FileAction::Open); }});
+    // The rack that was playing when the set opened, made a song in it.
+    if (inSet && controller.view().setlist.current < 0)
+        m.items.push_back(MenuItem{"Add this rack to the set", addRunningRackAction()});
     // The one step out of the set besides Close setlist: an untitled rack on its own.
     if (inSet)
         m.items.push_back(MenuItem{"New rack outside the set", [this] {

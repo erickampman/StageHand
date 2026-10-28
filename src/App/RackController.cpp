@@ -2488,6 +2488,22 @@ bool RackController::addNewRackToSetlist(const std::string& chosen) {
     return goToSong(at);
 }
 
+bool RackController::addRunningRackToSetlist() {
+    if (!setlistOpen || onSong) return false;
+    if (target.empty()) {
+        notice("Not added: this rack is untitled; save it first");
+        return false;
+    }
+    const std::size_t at = insertionPoint();
+    setlist.songs.insert(setlist.songs.begin() + static_cast<std::ptrdiff_t>(at), SetlistSong{target, ""});
+    if (waitingSong && *waitingSong >= at) ++*waitingSong;
+    song   = at;
+    onSong = true;
+    rememberPosition();
+    notice("Added " + rackNameOf(target) + " as song " + std::to_string(at + 1));
+    return writeSetlist();
+}
+
 bool RackController::addThisRackAgain() {
     if (!setlistOpen || !onSong) return false;
     const SetlistSong again = setlist.songs[song];

@@ -1082,6 +1082,24 @@ void testSetlist() {
     CHECK(controller.saveAs((dir / "Racks/E").string()) == RackController::SaveAsResult::Saved);
     CHECK(loadLastPosition(lastPath, last) && last.rack == (dir / "Racks/E.rack").string());
 
+    // A set with no songs opens with E still playing, not a song in it; Add
+    // makes it the first, with no switch.
+    const std::string empty = (dir / "Empty.setlist").string();
+    CHECK(controller.newSetlist(empty, false) == RackController::NewSetlistResult::Created);
+    CHECK(controller.openSetlist(empty) && controller.rackPath() == (dir / "Racks/E.rack").string());
+    tick();
+    CHECK(view.setlist.current == -1);
+    const std::uint64_t before = controller.rackGeneration();
+    CHECK(controller.addRunningRackToSetlist() && !controller.addRunningRackToSetlist());   // once: it's a song now
+    tick();
+    CHECK(view.setlist.current == 0 && controller.rackGeneration() == before);
+    CHECK(loadSetlist(empty, saved).ok && saved.songs.size() == 1 && saved.songs[0].rack == (dir / "Racks/E.rack").string());
+    CHECK(loadLastPosition(lastPath, last) && last.setlist == empty && last.song == 0);
+    // An untitled rack must be saved first.
+    CHECK(controller.newRack() && controller.openSetlist(file, 0));
+    CHECK(controller.newRack() && controller.newSetlist((dir / "Empty2").string(), false) ==
+                                      RackController::NewSetlistResult::Created);
+    CHECK(controller.rackPath().empty() && !controller.addRunningRackToSetlist());
 
     runBlock(*rig.engine);
     rig.engine->collect();
