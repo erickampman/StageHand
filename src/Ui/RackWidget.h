@@ -30,17 +30,18 @@ public:
     float wantedHeight() const;
     // Opens (or raises) a sequence's editor window; set by RackUi.
     std::function<void(const std::string& sequenceId)> openSequenceEditor;
-    // Shows the desktop's file chooser: a rack (a folder) or a setlist (a file)
-    // to open, or a path to save to with `name` suggested. `chosen` runs only
-    // if a path is chosen. Set by RackUi.
-    enum class Choose { Rack, Setlist, Save };
+    // Shows the desktop's file chooser: a set to open (a package; on macOS
+    // also an older setlist file or a rack), a rack to import (a folder), or a
+    // path to save to with `name` suggested. `chosen` runs only if a path is
+    // chosen. Set by RackUi.
+    enum class Choose { Rack, Set, Save };
     std::function<void(Choose what, const std::string& title, const std::string& folder, const std::string& name,
                        std::function<void(const std::string& path)> chosen)>
         chooseFile;
 
     // New, Open, Save, Save As, Quit: from the File menu and keys, and Quit
-    // when the window is closed. New, Open and Quit ask first if an untitled
-    // rack has changes.
+    // when the window is closed. New, Open and Quit ask first if the set has
+    // unsaved changes.
     enum class FileAction { New, Open, Save, SaveAs, Quit };
     void fileAction(FileAction action);
     // A rack or setlist to open from outside the window (Finder, on macOS): a
@@ -196,18 +197,16 @@ private:
     void newSequence(MidiProtocol protocol, float x, float y);
     // The setlist's songs, to go to one (docs/setlists.md, "The setlist row").
     void openSongMenu(float x, float y);
-    // Go to another song: if an untitled rack's changes would be lost, ask
-    // first (as New and Open do). `go` switches.
+    // Go to another song (`go` switches); a song switch never loses edits.
     void switchSong(std::function<void()> go);
-    // File > New setlist... (with this rack: an untitled one is saved first).
-    void newSetlist(bool withThisRack);
+    // Replace the set (`go`): if its changes would be lost, ask first.
+    void replaceSetThen(std::function<void()> go);
     void confirmRemoveSong(std::size_t index, float x, float y);
-    // A missing song: find its rack (it moved), or remove it from the set.
+    // A missing song (its rack folder gone from the set): remove it from the set.
     void openMissingSongMenu(std::size_t index, float x, float y);
-    std::string setlistFolder() const;   // beside the open setlist, else where racks are
-    std::string setRackFolder() const;   // the setlist's Racks/ folder, if it has one
-    // Ask whether to keep an untitled rack's changes, then `then` (unless
-    // cancelled). `quitting` words the discard choice for quitting.
+    // Ask whether to keep the set's changes (Save, or Save As if it's
+    // untitled), then `then` (unless cancelled). `quitting` words the discard
+    // choice for quitting, and it tells the controller not to save at quit.
     void keepChangesThen(std::function<void()> then, bool quitting);
     void openFileMenu(float x, float y);
     void openHelp();   // help/help.html beside the app, in the default browser
@@ -215,11 +214,8 @@ private:
     void openTransportMenu(float x, float y);
     void openMetronomeMenu(float x, float y);
     void proceed(FileAction action);
-    void saveAsThen(std::function<void()> then, const std::string& title = "Save the rack as");
-    // The running rack, not a song in the open set, made one (named first if untitled).
-    void addRunningRack();
-    std::function<void()> addRunningRackAction();   // empty when it can't be (untitled, saving off)
-    std::string startFolder() const;
+    void saveAsThen(std::function<void()> then, const std::string& title = "Save the set as");
+    std::string startFolder() const;   // beside the set, else ~/Racks, else home
     const RowModel* rowById(const std::string& id) const;   // the current model's row, at event time
     // Filter edits go through here, so the filter panel shows them before the
     // next model rebuild.

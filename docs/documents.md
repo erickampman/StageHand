@@ -193,6 +193,25 @@ untitled set isn't reopened (Later: a working copy, as KeyboardEDO keeps).
    start gives an untitled one-song set; New and Open replace it; Cmd-S saves
    it whole. The states, commands and files listed under "What goes away"
    go. Song list edits mark the set edited.
+   **Built 2026-10-28:** `RackController` always holds one set (`Set`,
+   `setPath()`, "" = untitled), its racks by their bundle in the package
+   (for an untitled set, never on disk: every rack but the running one is
+   held in memory). `newSet()`, `openSet()` (a package; an older setlist or a
+   lone rack made into an untitled set), `save()`, `saveAs()`,
+   `unsavedChanges()` and `discardChanges()` replace the rack and setlist
+   file commands; `newSong()` (a copy, "So what 2") and `importRack()` add
+   songs; `removeSong()` keeps at least one and plays the next first. Song
+   switches and Open never save. The rig is the set's (`rig/`), an untitled
+   set's empty, a new set's a copy. The File menu: New set, Open..., Save,
+   Save As..., New song, Import a rack..., Check set, Set settings. Close and
+   Quit ask about unsaved changes (Save, or Save As; Discard; Cancel).
+   `--set` (and `--setlist`), `--rack` and `--plugin` start a set;
+   `--no-save` replaces `--no-save-rack`; `--save-rack` and `--overwrite` are
+   gone. `last.json` keeps the set and song only. `.setlist` is declared a
+   package in `Info.plist` now (from milestone 6), since the open panel can't
+   choose a set otherwise. Docs still to update (milestone 6):
+   setlists.md, rig.md, rack-view.md, rack-format.md, architecture.md and
+   the help page.
 3. **Copy and paste within a set**, and New song saved into the set.
 4. **Several windows.** One window per open set; the active set and the
    front-window rule (decisions 4 and 5); background windows without

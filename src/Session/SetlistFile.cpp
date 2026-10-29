@@ -152,7 +152,6 @@ bool loadLastPosition(const std::string& path, LastPosition& position) {
         LastPosition p;
         p.setlist = doc.value("setlist", std::string{});
         p.song    = doc.value("song", std::size_t{0});
-        p.rack    = doc.value("rack", std::string{});
         position  = p;
         return true;
     } catch (const std::exception&) {
@@ -164,7 +163,6 @@ bool saveLastPosition(const std::string& path, const LastPosition& position) {
     Json doc;
     doc["setlist"] = position.setlist;
     doc["song"]    = position.song;
-    if (!position.rack.empty()) doc["rack"] = position.rack;
     std::string error;
     return writeTextAtomically(path, doc.dump(2) + "\n", error);
 }

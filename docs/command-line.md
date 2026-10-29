@@ -45,10 +45,10 @@ stagehand [MODE] [options]
 ```
 
 One mode per run. Without a mode, StageHand plays: `--play` is the default
-(since 2026-10-01) and can be left out, so `stagehand --rack X` plays X. With
-no arguments at all, it reopens the last setlist at the song it was on
-(docs/setlists.md), or the rack that was open on its own last; with
-neither, it plays a new, empty, untitled rack (see "Untitled rack").
+(since 2026-10-01) and can be left out, so `stagehand --set X` plays X. With
+no arguments at all, it reopens the last set at the song it was on
+(docs/documents.md); with none, or an untitled one last, it plays a new,
+untitled set (see "Untitled set").
 
 | Mode | What it does |
 |---|---|
@@ -65,11 +65,10 @@ What it plays:
 
 | Option | Meaning |
 |---|---|
-| `--setlist PATH` | Play a setlist: a `.setlist` file (docs/setlists.md), from its first song. Can't be combined with `--rack`, `--plugin` or `--save-rack` |
-| `--rack PATH` | Play a rack: a `.rack` bundle (docs/rack-format.md) |
-| `--plugin PATH\|ID` | Play one plugin: a `.clap` file, or an id or name from `--list-plugins`. It starts from the plugin's defaults |
-| `--save-rack PATH` alone | Start a new, empty rack, built in the rack window and saved to PATH |
-| none of these | No arguments at all: the last setlist, at its song, or the last rack open on its own. Otherwise, or with neither, a new, untitled rack (see below) |
+| `--set PATH` | Play a set: a `.setlist` package (docs/documents.md), from its first song. An older `.setlist` file opens as a new, untitled set made from it. `--setlist` is the same. Can't be combined with `--rack` or `--plugin` |
+| `--rack PATH` | Play a `.rack` bundle (docs/rack-format.md), as a new, untitled set of one song |
+| `--plugin PATH\|ID` | Play one plugin, as a new, untitled set of one song: a `.clap` file, or an id or name from `--list-plugins`. It starts from the plugin's defaults |
+| none of these | No arguments at all: the last set, at its song. Otherwise, or with none, a new, untitled set (see below) |
 
 `--rack` and `--plugin` can't be used together: a rack already names its
 plugins.
@@ -81,7 +80,38 @@ plugins.
 | `--no-ui` | No rack window, console only. Every editor opens at start |
 | `--no-editor` | With `--no-ui`: don't open the editors either |
 
-### Untitled rack
+### Untitled set
+
+`stagehand` with no `--set`, `--rack` or `--plugin` (and, with no arguments
+at all, no last set to reopen) starts a new, untitled set with one empty
+song named "Song", with the defaults: 120 BPM, 4/4, every hardware MIDI
+input plus the virtual inputs, stereo out, and an empty rig. Build it in the
+window as usual.
+
+An untitled set is saved with **File > Save As** (or Ctrl-S), which names
+it. With changes still unsaved, New, Open, Ctrl-Q and closing the window ask
+first. Quitting from the terminal (Ctrl-C) doesn't ask; it prints "The
+untitled set's changes weren't saved."
+
+In the window, File also has New set, Open..., New song and Import a
+rack...; see docs/documents.md. The file chooser is the desktop's own
+(zenity, or kdialog on KDE; the system's panel on macOS).
+
+### Saving
+
+A set is saved whole: the song list, the rig, and every rack with edits
+(docs/documents.md, "Saving"). Ctrl-S saves it; switching songs never does.
+Quitting from the terminal (Ctrl-C) saves a titled set that has changes; the
+rack window asks first.
+
+| Option | Meaning |
+|---|---|
+| `--no-save` | Don't save anything |
+
+Save As in the window never replaces something that isn't a set (an older
+`.setlist` file included), and replaces another set only after asking.
+
+## Untitled rack
 
 `stagehand` with no `--setlist`, `--rack`, `--plugin` or `--save-rack` (and,
 with no arguments at all, no last setlist or rack to reopen) starts a new, empty rack named "Untitled" with the defaults:
@@ -175,17 +205,17 @@ In the rack window and in plugin editor windows:
 
 | Key | Action |
 |---|---|
-| Ctrl-Q | Quit (saving a titled rack, unless `--no-save-rack`). In the rack window, an untitled rack with changes asks first |
-| Ctrl-Shift-S | Save the rack now |
+| Ctrl-Q | Quit. In the rack window, a set with unsaved changes asks first |
+| Ctrl-Shift-S | Save the set now |
 
 In the rack window only:
 
 | Key | Action |
 |---|---|
 | Space | Start or stop the transport |
-| Ctrl-S | Save (Save As for an untitled rack) |
-| Ctrl-N | New rack |
-| Ctrl-O | Open a rack |
+| Ctrl-S | Save (Save As for an untitled set) |
+| Ctrl-N | New set |
+| Ctrl-O | Open a set (or, on macOS, an older setlist or a rack) |
 | Escape | Close a menu or panel, and cancel MIDI learn |
 
 Closing the rack window quits the same way as Ctrl-Q. Closing a plugin editor
@@ -198,44 +228,38 @@ terminal, Ctrl-C quits the same way as Ctrl-Q.
 |---|---|
 | 0 | Success, including `--help` |
 | 1 | A run failed (e.g. no audio server, or the save at quit failed) |
-| 2 | Bad arguments, or a refused save target |
+| 2 | Bad arguments |
 
 ## Examples
 
-Open a new, untitled rack:
+Open a new, untitled set:
 
 ```bash
 ./build/stagehand
 ```
 
-Play a setlist, from its first song:
+Play a set, from its first song:
 
 ```bash
-./build/stagehand --setlist ~/Sets/Friday.setlist
+./build/stagehand --set ~/Sets/Friday.setlist
 ```
 
-Play a rack, saving it back at quit:
+Play a rack as a new set of one song (Save As keeps it):
 
 ```bash
 ./build/stagehand --rack ~/Racks/Piano.rack
 ```
 
-Start a new rack and build it in the window:
+Play a gig set at a 128-frame buffer without changing it:
 
 ```bash
-./build/stagehand --save-rack ~/Racks/New.rack
+./build/stagehand --set ~/Sets/Friday.setlist --no-save --quantum 128
 ```
 
-Play a gig rack at a 128-frame buffer without changing it:
+Try one plugin (Save As keeps the result as a set):
 
 ```bash
-./build/stagehand --rack ~/Racks/Gig.rack --no-save-rack --quantum 128
-```
-
-Try one plugin and keep the result as a rack:
-
-```bash
-./build/stagehand --plugin com.unlikelyware.polygraphmodular --save-rack ~/Racks/New.rack
+./build/stagehand --plugin com.unlikelyware.polygraphmodular
 ```
 
 Listen only to one keyboard:

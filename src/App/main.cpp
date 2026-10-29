@@ -30,6 +30,7 @@
 #include "uw/clap/ClapPluginFactory.h"
 #include "Session/RackFile.h"
 #include "Session/RigFile.h"
+#include "Session/SetFile.h"
 #include "Session/SetlistFile.h"
 #include "Session/WindowState.h"
 
@@ -92,12 +93,12 @@ void printUsage() {
         "usage: stagehand [MODE] [options]\n"
         "\n"
         "Without a mode, StageHand plays (--play is the default and can be left out).\n"
-        "With no arguments it reopens the last setlist at the song it was on, or the\n"
-        "rack open on its own last; with neither, a new, empty, untitled rack.\n"
+        "With no arguments it reopens the last set at the song it was on; with none (or\n"
+        "an untitled one last), a new, untitled set with one empty song.\n"
         "\n"
         "Modes:\n"
         "  --play               (the default) host plugins: MIDI in, audio out. Plays\n"
-        "                       --setlist, --rack or --plugin; with none, as above\n"
+        "                       --set, --rack or --plugin; with none, as above\n"
         "  --list-plugins       list installed CLAP plugins\n"
         "  --list-midi          list MIDI sources (id, protocol, hardware/software/app)\n"
         "  --monitor            print incoming MIDI exactly as it arrives\n"
@@ -106,9 +107,10 @@ void printUsage() {
         "  -h, --help           show this help\n"
         "\n"
         "What to play:\n"
-        "  --rack PATH          a rack: a .rack bundle (see docs/rack-format.md)\n"
-        "  --setlist PATH       a setlist: a .setlist file, from its first song (see\n"
-        "                       docs/setlists.md)\n"
+        "  --set PATH           a set: a .setlist package, from its first song (see\n"
+        "                       docs/documents.md). An older .setlist file opens as a\n"
+        "                       new, untitled set made from it (--setlist is the same)\n"
+        "  --rack PATH          a .rack bundle, as a new, untitled set of one song\n"
         "  --plugin PATH|ID     or a single plugin: a .clap file, or an id or name from\n"
         "                       --list-plugins (starts from the plugin's defaults)\n"
         "  --plugin-id ID       which plugin, when the .clap file holds several\n"
@@ -117,13 +119,10 @@ void printUsage() {
         "  --no-ui              no rack window, console only; every editor opens at start\n"
         "  --no-editor          with --no-ui: don't open the editors either\n"
         "\n"
-        "Saving (when playing). A --rack is saved back to itself when StageHand quits, with\n"
-        "each plugin's current state:\n"
-        "  --no-save-rack       don't save anything\n"
-        "  --save-rack PATH     save to PATH instead (\"save as\"); the way to keep a\n"
-        "                       --plugin session\n"
-        "  --overwrite          let --save-rack replace an existing rack other than the\n"
-        "                       one being played (refused otherwise)\n"
+        "Saving (when playing). The set is saved with Ctrl-S, or Save As in the rack\n"
+        "window's File menu for an untitled one. Quitting from the terminal (Ctrl-C)\n"
+        "saves a titled set with changes; the rack window asks first.\n"
+        "  --no-save            don't save anything\n"
         "\n"
         "Audio (playing, --tone):\n"
         "  --quantum N          force a PipeWire buffer size of N frames (4-8192) while\n"
@@ -145,12 +144,11 @@ void printUsage() {
         "                       source is received as MIDI 1.0\n"
         "\n"
         "Keys in the rack window and in plugin editor windows:\n"
-        "  Ctrl-Q               quit StageHand (saving, unless --no-save-rack)\n"
-        "  Ctrl-Shift-S         save the rack now\n"
+        "  Ctrl-Q               quit StageHand (asking about unsaved changes)\n"
+        "  Ctrl-Shift-S         save the set now\n"
         "In the rack window also: Space starts or stops the transport; Ctrl-S saves,\n"
-        "Ctrl-N makes a new rack, Ctrl-O opens one (in a setlist: adds one to the set),\n"
-        "and the File menu has Save As and the setlist commands. An untitled rack with\n"
-        "changes asks before they're lost.\n"
+        "Ctrl-N makes a new set, Ctrl-O opens one, and the File menu has Save As and\n"
+        "the song commands. A set with unsaved changes asks before they're lost.\n"
         "Closing the rack window quits the same way. Closing an editor window closes\n"
         "that editor only; StageHand keeps playing.\n"
         "In the terminal, Ctrl-C quits the same way as Ctrl-Q.\n"
@@ -161,11 +159,9 @@ void printUsage() {
         "\n"
         "Examples:\n"
         "  pw-jack stagehand --rack ~/Racks/Piano.rack\n"
-        "  pw-jack stagehand --setlist ~/Sets/Friday.setlist\n"
-        "  pw-jack stagehand --save-rack ~/Racks/New.rack    (build it in the window)\n"
-        "  pw-jack stagehand --rack ~/Racks/Gig.rack --no-save-rack --quantum 128\n"
-        "  pw-jack stagehand --plugin com.unlikelyware.polygraphmodular \\\n"
-        "      --save-rack ~/Racks/New.rack\n"
+        "  pw-jack stagehand --set ~/Sets/Friday.setlist\n"
+        "  pw-jack stagehand --set ~/Sets/Friday.setlist --no-save --quantum 128\n"
+        "  pw-jack stagehand --plugin com.unlikelyware.polygraphmodular\n"
         "  stagehand --list-plugins");
 }
 
@@ -176,14 +172,12 @@ struct Options {
     std::string              plugin;
     std::string              pluginId;
     std::string              rack;
-    std::string              setlist;
-    bool                     reopen      = false;   // no arguments: the last setlist, at its song
-    std::string              saveRack;
+    std::string              set;       // --set (or --setlist): a package, or an older file
+    bool                     reopen      = false;   // no arguments: the last set, at its song
     bool                     editor      = true;    // --no-ui: open the editors at start
     bool                     openEditors = false;   // with the rack window: open them all at start
     bool                     ui          = true;
-    bool                     overwrite   = false;
-    bool                     noSaveRack  = false;
+    bool                     noSave      = false;
     double                   toneHz      = 440.0;
     unsigned                 channels    = 2;
     unsigned                 quantum     = 0;   // 0 = leave the buffer size to PipeWire
@@ -195,7 +189,7 @@ struct Options {
 
 // Returns 0 to run, -1 to exit successfully (help), or a process exit code.
 int parseArguments(int argc, char** argv, Options& options) {
-    if (argc == 1) {   // the last setlist, else a new, untitled rack
+    if (argc == 1) {   // the last set, else a new, untitled one
         options.mode   = Mode::Play;
         options.reopen = true;
     }
@@ -229,14 +223,10 @@ int parseArguments(int argc, char** argv, Options& options) {
             options.editor = false;
         } else if (arg == "--rack" && i + 1 < argc) {
             options.rack = argv[++i];
-        } else if (arg == "--setlist" && i + 1 < argc) {
-            options.setlist = argv[++i];
-        } else if (arg == "--save-rack" && i + 1 < argc) {
-            options.saveRack = argv[++i];
-        } else if (arg == "--overwrite") {
-            options.overwrite = true;
-        } else if (arg == "--no-save-rack") {
-            options.noSaveRack = true;
+        } else if ((arg == "--set" || arg == "--setlist") && i + 1 < argc) {
+            options.set = argv[++i];
+        } else if (arg == "--no-save") {
+            options.noSave = true;
         } else if (arg == "--channels" && i + 1 < argc) {
             options.channels = static_cast<unsigned>(std::atoi(argv[++i]));
         } else if (arg == "--quantum" && i + 1 < argc) {
@@ -523,7 +513,7 @@ void reportStats(const Engine::Stats& now, Engine::Stats& last) {
 }
 
 // A slot id from a display name: lowercase letters and digits, '-' between words.
-// --plugin as a one-slot rack; --save-rack then writes it out as a starting point.
+// --plugin as a one-slot rack: the song of a new, untitled set.
 Rack rackForPlugin(const PluginDescriptor& desc) {
     Rack rack;
     rack.name = desc.name;
@@ -574,56 +564,7 @@ void printRack(const Session& session) {
     }
 }
 
-// Where this session saves: the --save-rack path if given, else the --rack being
-// played; nothing with --no-save-rack (or a --plugin session without --save-rack).
-std::string saveTargetOf(const Options& options) {
-    if (options.noSaveRack) return {};
-    return !options.saveRack.empty() ? options.saveRack : options.rack;
-}
-
-// Refuse, before any audio starts, a save that would destroy something by
-// accident: a path that exists but isn't a rack (never replaced), or an existing
-// rack other than the one being played (only with --overwrite). Saving back to
-// the rack being played is always allowed.
-bool saveTargetAllowed(const std::string& saveTarget, const Options& options) {
-    if (saveTarget.empty()) return true;
-    switch (classifySaveTarget(saveTarget, options.rack)) {
-        case SaveTarget::New:
-        case SaveTarget::Current: return true;
-        case SaveTarget::NotARack:
-            std::fprintf(stderr,
-                         "--save-rack %s: that path exists and isn't a rack, so StageHand won't replace it.\n"
-                         "Choose another path.\n",
-                         saveTarget.c_str());
-            return false;
-        case SaveTarget::OtherRack:
-            if (options.overwrite) return true;
-            std::fprintf(stderr,
-                         "--save-rack %s would replace an existing rack you aren't playing.\n"
-                         "To edit that rack, play it: --rack %s\n"
-                         "To replace it anyway, add --overwrite.\n",
-                         saveTarget.c_str(), saveTarget.c_str());
-            return false;
-    }
-    return false;
-}
-
-// A start with no arguments, with no setlist open last: the rack open on its
-// own then, if it still loads (else, with a word why, none: an untitled rack).
-std::string lastRack() {
-    LastPosition last;
-    if (!loadLastPosition(defaultLastPositionPath(), last) || !last.setlist.empty() || last.rack.empty()) return {};
-    Rack rack;
-    if (const RackFileResult result = loadRack(last.rack, rack); !result.ok) {
-        std::printf("The last rack, %s, can't be opened (%s); starting with an untitled rack.\n", last.rack.c_str(),
-                    result.error.c_str());
-        return {};
-    }
-    return last.rack;
-}
-
-int runPlay(Options options) {
-    if (options.reopen) options.rack = lastRack();
+int runPlay(const Options& options) {
     if (!options.plugin.empty() && !options.rack.empty()) {
         std::fprintf(stderr,
                      "Use --rack or --plugin, not both: a rack already names its plugins.\n"
@@ -632,21 +573,14 @@ int runPlay(Options options) {
                      options.rack.c_str(), options.plugin.c_str());
         return 2;
     }
-    if (!options.setlist.empty() && (!options.rack.empty() || !options.plugin.empty() || !options.saveRack.empty())) {
-        std::fprintf(stderr,
-                     "--setlist chooses its racks itself: don't combine it with --rack, --plugin or --save-rack.\n");
+    if (!options.set.empty() && (!options.rack.empty() || !options.plugin.empty())) {
+        std::fprintf(stderr, "--set holds its own racks: don't combine it with --rack or --plugin.\n");
         return 2;
     }
-    if (!options.setlist.empty() && !isSetlistFile(options.setlist)) {
-        std::fprintf(stderr, "--setlist %s: no setlist file there.\n", options.setlist.c_str());
+    if (!options.set.empty() && !isSetPackage(options.set) && !isSetlistFile(options.set)) {
+        std::fprintf(stderr, "--set %s: no set there.\n", options.set.c_str());
         return 1;
     }
-    if (options.noSaveRack && !options.saveRack.empty()) {
-        std::fprintf(stderr, "--save-rack and --no-save-rack contradict each other; use one.\n");
-        return 2;
-    }
-    const std::string saveTarget = saveTargetOf(options);
-    if (!saveTargetAllowed(saveTarget, options)) return 2;
     ClapPluginFactory factory;
     Rack              rack;
     if (!options.rack.empty()) {
@@ -656,14 +590,13 @@ int runPlay(Options options) {
             return 1;
         }
         for (const std::string& warning : result.warnings) std::fprintf(stderr, "warning: %s\n", warning.c_str());
+        rack.name = rackNameOf(options.rack);   // the song's name in the new set
     } else if (!options.plugin.empty()) {
         PluginDescriptor desc;
         if (!resolvePlugin(factory, options, desc)) return 1;
         rack = rackForPlugin(desc);
-    } else if (!options.saveRack.empty()) {   // --save-rack alone: a new, empty rack, named after its file
-        rack.name = rackNameOf(options.saveRack);
-    } else {   // nothing to play: a new, untitled rack (Save As names it)
-        rack.name = "Untitled";
+    } else {   // nothing to play yet: a new, untitled set's empty song
+        rack.name = "Song";
     }
 
     // Declaration order matters: destruction runs in reverse, so plugins (held
@@ -765,8 +698,8 @@ int runPlay(Options options) {
     config.quit               = [&loop] { loop.requestQuit(); };
     config.virtualInputs      = kVirtualInputs;
     config.protocolPreference = options.preference;
-    config.saveTarget         = saveTarget.empty() ? std::string{} : resolveRackPath(saveTarget);
-    config.savingOff          = options.noSaveRack;
+    config.savingOff          = options.noSave;
+    config.rig                = true;   // an untitled set's own, empty
     config.clickRouting       = &backend;
     config.outputLatencySeconds = backend.outputLatencySeconds();   // started and connected by now
     config.lastPositionPath   = defaultLastPositionPath();
@@ -775,18 +708,17 @@ int runPlay(Options options) {
     const bool allMidi     = options.midiSources.size() == 1 && options.midiSources.front() == "all";
     config.openNewInputs   = options.midiSources.empty() || allMidi;
     config.openNewSoftware = allMidi;
-    config.defaultRigPath     = defaultRigPath();
     RackController controller(session, *engine, *input, factory, std::move(config));
-    // A setlist: --setlist from its first song, or (no arguments) the last one
-    // at its song. Its rack replaces the untitled one loaded above.
-    if (!options.setlist.empty()) {
-        controller.openSetlist(options.setlist);
+    // A set: --set from its first song, or (no arguments) the last one at its
+    // song. It replaces the untitled one started above.
+    if (!options.set.empty()) {
+        controller.openSet(options.set);
     } else if (LastPosition last; options.reopen && loadLastPosition(defaultLastPositionPath(), last) &&
                                   !last.setlist.empty()) {
-        if (isSetlistFile(last.setlist))
-            controller.openSetlist(last.setlist, last.song);
+        if (isSetPackage(last.setlist))
+            controller.openSet(last.setlist, last.song);
         else
-            std::printf("The last setlist, %s, isn't there any more; starting with an untitled rack.\n",
+            std::printf("The last set, %s, isn't there any more; starting with an untitled one.\n",
                         last.setlist.c_str());
     }
     controllerRef = &controller;
@@ -808,15 +740,15 @@ int runPlay(Options options) {
     // the rack window they open on request; without it, at start.
     if (ui ? options.openEditors : options.editor) controller.openAllEditors();
 
-    if (!saveTarget.empty())
-        std::printf("Saves to %s on exit; %s-Shift-S in %s saves now (--no-save-rack: off).\n", saveTarget.c_str(), kWindowKey,
-                    ui ? "StageHand's windows" : "an editor window");
-    else if (options.noSaveRack)
-        std::puts("Not saving (--no-save-rack).");
+    if (options.noSave)
+        std::puts("Not saving (--no-save).");
+    else if (!controller.setPath().empty())
+        std::printf("Saves to %s; %s-Shift-S in %s saves now (--no-save: off).\n", controller.setPath().c_str(),
+                    kWindowKey, ui ? "StageHand's windows" : "an editor window");
     else if (ui)
-        std::puts("Untitled rack: Save As in the rack window's File menu keeps it.");
+        std::puts("Untitled set: Save As in the rack window's File menu keeps it.");
     else
-        std::puts("Not saving: this session has no rack. Add --save-rack PATH to keep it.");
+        std::puts("Not saving: this set is untitled, and Save As needs the rack window.");
     const std::string stopHow = ui ? std::string(kWindowKey) + "-Q in StageHand's windows, or Ctrl-C here,"
                                 : controller.openEditorCount() > 0
                                     ? std::string(kWindowKey) + "-Q in an editor window, or Ctrl-C here,"
@@ -882,8 +814,7 @@ int runPlay(Options options) {
         },
         [&](const std::string& path) {
             if (ui) ui->openDocument(path);
-            else if (isSetlistFile(path)) controller.openSetlist(path);
-            else controller.openRack(path);
+            else controller.openSet(path);
         });
 #endif
     activeLoop.store(&loop);
@@ -901,10 +832,10 @@ int runPlay(Options options) {
     uiPtr = nullptr;
     ui.reset();
     controller.closeAllEditors();
-    const bool unsaved  = controller.unsavedUntitled();
+    const bool unsaved  = controller.setPath().empty() && controller.unsavedChanges();
     const int  exitCode = controller.saveForQuit() ? 0 : 1;
     printNotices();
-    if (unsaved) std::puts("The untitled rack's changes weren't saved.");
+    if (unsaved) std::puts("The untitled set's changes weren't saved.");
     input.reset();
     host.onStateChanged = nullptr;   // plugins may outlive `session` (in the engine's graphs)
     session.unload();

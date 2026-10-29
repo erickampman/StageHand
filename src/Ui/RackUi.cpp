@@ -215,15 +215,22 @@ std::unique_ptr<RackUi> RackUi::open(RackController& controller, const std::stri
     impl->widget->chooseFile = [raw](RackWidget::Choose what, const std::string& title, const std::string& folder,
                                      const std::string& name, std::function<void(const std::string&)> chosen) {
         std::string problem;
-        const FileDialog::Mode mode = what == RackWidget::Choose::Save      ? FileDialog::Mode::Save
-                                      : what == RackWidget::Choose::Setlist ? FileDialog::Mode::OpenFile
-                                                                            : FileDialog::Mode::OpenFolder;
-        const std::string shown = what == RackWidget::Choose::Setlist ? "*.setlist" : name;
 #ifdef __APPLE__
-        const std::string pattern = what == RackWidget::Choose::Rack ? std::string("*.rack") : shown;   // a package
+        // A set (and a rack) is a package, a file to the open panel: a set is
+        // chosen as a file with no filter, so an older setlist file or a rack
+        // can be opened too (docs/documents.md, decision 10). A rack to import:
+        // the rack type, or a plain folder.
+        const FileDialog::Mode mode = what == RackWidget::Choose::Save  ? FileDialog::Mode::Save
+                                      : what == RackWidget::Choose::Set ? FileDialog::Mode::OpenFile
+                                                                        : FileDialog::Mode::OpenFolder;
+        const std::string pattern = what == RackWidget::Choose::Rack ? std::string("*.rack")
+                                    : what == RackWidget::Choose::Save ? name
+                                                                       : std::string{};
         const bool started = raw->dialog.start(mode, title, folder, pattern, raw->window.getNativeWindowHandle(), problem);
 #else
-        const bool started = raw->dialog.start(mode, title, folder, shown, problem);
+        const FileDialog::Mode mode = what == RackWidget::Choose::Save ? FileDialog::Mode::Save : FileDialog::Mode::OpenFolder;
+        const bool started = raw->dialog.start(mode, title, folder, what == RackWidget::Choose::Save ? name : std::string{},
+                                               problem);
 #endif
         if (!started) {
             raw->widget->showNotice("Can't show a file dialog: " + problem, ui::nowSeconds());
@@ -231,9 +238,9 @@ std::unique_ptr<RackUi> RackUi::open(RackController& controller, const std::stri
         }
         raw->chosen = std::move(chosen);
     };
-    // Closing the window with an untitled rack's changes asks first (as Ctrl-Q does).
+    // Closing the window with unsaved changes asks first (as Ctrl-Q does).
     impl->window.allowClose = [raw] {
-        if (!raw->controller.unsavedUntitled()) return true;
+        if (!raw->controller.unsavedChanges()) return true;
         raw->widget->fileAction(RackWidget::FileAction::Quit);
         raw->widget->repaint();
         return false;
@@ -390,7 +397,7 @@ void RackUi::showNotice(const std::string& text) {
 }
 
 void RackUi::quitAsInWindow() {
-    if (impl->controller.unsavedUntitled()) impl->window.focus();   // where it asks
+    if (impl->controller.unsavedChanges()) impl->window.focus();   // where it asks
     impl->widget->fileAction(RackWidget::FileAction::Quit);
     impl->widget->repaint();
 }

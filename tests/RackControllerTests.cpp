@@ -19,6 +19,7 @@
 #include "SessionFakes.h"
 #include "Session/RackFile.h"
 #include "Session/RigFile.h"
+#include "Session/SetFile.h"
 #include "Session/SetlistFile.h"
 
 using namespace stagehand;
@@ -60,7 +61,7 @@ struct Rig {
         session = std::make_unique<Session>(factory, host, midi, *engine);
     }
 
-    RackController::Config config(const std::string& saveTarget = {}) {
+    RackController::Config config() {
         RackController::Config c;
         c.openGenericEditor = [this](HostedPlugin& plugin, const std::string&) -> std::unique_ptr<EditorHandle> {
             genericFor.push_back(&plugin);
@@ -74,7 +75,6 @@ struct Rig {
         c.audioStatus   = [] { return RackController::AudioStatus{48000.0, 256, 3, 4}; };
         c.quit          = [this] { ++quits; };
         c.virtualInputs = {{"MIDI 2.0 In", MidiProtocol::Midi2}, {"MIDI 1.0 In", MidiProtocol::Midi1}};
-        c.saveTarget    = saveTarget;
         return c;
     }
 
@@ -142,7 +142,7 @@ void testViewModel() {
     }
     CHECK(view.status.sampleRate == 48000.0 && view.status.bufferSize == 256 && view.status.xruns == 3);
     CHECK(view.status.outputs == 4);
-    CHECK(view.status.saveTarget.empty() && view.status.noSaveReason == "Untitled: File > Save As keeps it");
+    CHECK(view.status.saveTarget.empty() && view.status.noSaveReason == "Untitled set: File > Save As keeps it");
 
     // Edits show up in the next model; structural ones are committed by tick().
     MidiFilter lower;
@@ -677,7 +677,7 @@ void testTransportControls() {
     controller.tick(1.7);
     CHECK(view.transport.startOnNote == "From other apps (MIDI 2.0)" && view.transport.startOnNoteConnected);
     CHECK(rig.session->capture().transport.startOnNote);
-    controller.newRack();
+    controller.newSet();
     runBlock(*rig.engine);
     controller.tick(1.8);
     CHECK(!view.transport.running && view.transport.startOnNote.empty());
@@ -839,140 +839,182 @@ void testRenameRow() {
     CHECK(view.rows[0].name == "synth" && rig.session->capture().slots[0].name == "synth");
 }
 
+// A set package at `path` holding `racks` (by their names), its songs naming
+// them in order, with `setRig` as its rig.
+std::string makeSet(const std::filesystem::path& path, const std::vector<Rack>& racks,
+                    const std::vector<std::string>& songs, const stagehand::Rig& setRig = {}) {
+    Set set;
+    for (const std::string& name : songs) set.songs.push_back(SetSong{name, ""});
+    std::map<std::string, Rack> byName;
+    for (const Rack& rack : racks) byName.emplace(rack.name, rack);
+    CHECK(saveSet(path.string(), set, &setRig, byName).ok);
+    return path.string();
+}
+
+// An older setlist file as a set package beside it ("Gig.setlist" -> "Gig
+// set.setlist"), its racks and rig copied in (none named: an empty rig).
+std::string packageOf(const std::string& file) {
+    Setlist   old;
+    LoadedSet made;
+    CHECK(loadSetlist(file, old).ok && convertSetlist(file, made).ok);
+    if (old.rig.empty()) made.rig = stagehand::Rig{};
+    const std::string package = file.substr(0, file.size() - 8) + " set.setlist";
+    CHECK(saveSet(package, made.set, &made.rig, made.racks).ok);
+    return package;
+}
+
+Rack keysRack(const std::string& name) {
+    Rack rack;
+    rack.name  = name;
+    rack.slots = {slot("keys", "synth", "/clap/Synth.clap")};
+    return rack;
+}
+
 void testSave() {
     const std::filesystem::path dir = scratchDir("stagehand-controller-test");
     std::filesystem::remove_all(dir);
     std::filesystem::create_directories(dir);
-    const std::string target = (dir / "Saved.rack").string();
+    Rack rack;
+    rack.name  = "Saved";
+    rack.slots = {slot("a", "synth", "/clap/Synth.clap")};
+    const std::string set = makeSet(dir / "Saved.setlist", {rack}, {"Saved"});
 
     Rig                 rig;
     Session::LoadReport report;
-    Rack                rack;
-    rack.name  = "Saved";
-    rack.slots = {slot("a", "synth", "/clap/Synth.clap")};
     rig.session->load(rack, 48000.0, report);
-    {
-        RackController controller(*rig.session, *rig.engine, rig.midi, rig.factory, rig.config());
-        CHECK(!controller.save());   // no target
-        const std::vector<std::string> notices = controller.takeNotices();
-        CHECK(notices.size() == 1 && notices[0] == "Not saved: this rack is untitled; use Save As");
-    }
-    RackController controller(*rig.session, *rig.engine, rig.midi, rig.factory, rig.config(target));
+    RackController controller(*rig.session, *rig.engine, rig.midi, rig.factory, rig.config());
+    CHECK(!controller.save());   // untitled
+    std::vector<std::string> notices = controller.takeNotices();
+    CHECK(notices.size() == 1 && notices[0] == "Not saved: this set is untitled; use Save As");
+
+    CHECK(controller.openSet(set));
+    controller.takeNotices();
     controller.setMuted("a", true);
-    CHECK(rig.session->modified());
+    CHECK(rig.session->modified() && controller.unsavedChanges());
     CHECK(controller.save());
-    CHECK(!rig.session->modified());
-    CHECK(controller.takeNotices() == std::vector<std::string>{"Saved the rack to " + target});
+    CHECK(!rig.session->modified() && !controller.unsavedChanges());
+    CHECK(controller.takeNotices() == std::vector<std::string>{"Saved the set to " + set});
 
     Rack loaded;
-    CHECK(loadRack(target, loaded).ok);
+    CHECK(loadRack(setRackPath(set, "Saved"), loaded).ok);
     CHECK(loaded.slots.size() == 1 && loaded.slots[0].muted);
     std::filesystem::remove_all(dir);
 }
 
-// New, Open and Save As: switching racks while running, the save-first rule,
-// and what Save As will and won't replace.
+// New, Open and Save As (docs/documents.md): the set replaced while running,
+// nothing saved by it, an older setlist or a lone rack opened as an untitled
+// set, and what Save As will and won't replace.
 void testFiles() {
-    const std::filesystem::path dir = scratchDir("stagehand-files-test");
-    std::filesystem::remove_all(dir);
-    std::filesystem::create_directories(dir / "notes.rack");   // exists, but isn't a rack
+    namespace fs = std::filesystem;
+    const fs::path dir = scratchDir("stagehand-files-test");
+    fs::remove_all(dir);
+    fs::create_directories(dir / "notes.setlist");   // exists, but isn't a set
 
-    Rack gig;
-    gig.name     = "Gig";
-    gig.slots    = {slot("keys", "synth", "/clap/Synth.clap")};
+    Rack gig  = keysRack("Gig");
     Sequence arp;
-    arp.id       = "arp";
+    arp.id        = "arp";
     gig.sequences = {arp};
-    const std::string gigPath = (dir / "Gig.rack").string();
-    CHECK(saveRack(gigPath, gig).ok);
+    const std::string gigSet = makeSet(dir / "Gig.setlist", {gig}, {"Gig"});
+    CHECK(saveRack((dir / "Lone.rack").string(), keysRack("Lone")).ok);
 
     Rig                 rig;
     Session::LoadReport report;
     Rack                untitled;
-    untitled.name = "Untitled";
+    untitled.name = "Song";
     rig.session->load(untitled, 48000.0, report);
     RackController       controller(*rig.session, *rig.engine, rig.midi, rig.factory, rig.config());
     const RackViewModel& view = controller.view();
-    CHECK(controller.rackPath().empty() && !controller.unsavedUntitled());
+    CHECK(controller.setPath().empty() && controller.songRack() == "Song" && !controller.unsavedChanges());
 
-    // Changes to an untitled rack are what the UI asks about.
+    // Changes to the untitled set are what the UI asks about.
     controller.addPlugin(installedPlugin("bass", "/clap/Bass.clap"), 0);
-    CHECK(controller.unsavedUntitled());
+    CHECK(controller.unsavedChanges());
 
-    // Open: by the bundle or its rack.json. Editors close; the generation moves.
+    // Open a set: editors close; the generation moves.
     controller.tick(0.5);
     controller.openEditor(view.rows[0].id);
     CHECK(*rig.editorsOpen == 1);
     const std::uint64_t before = controller.rackGeneration();
-    CHECK(controller.openRack((dir / "Gig.rack" / "rack.json").string()));
+    CHECK(controller.openSet(gigSet));
     controller.tick(1.0);
     CHECK(*rig.editorsOpen == 0 && controller.rackGeneration() == before + 1);
-    CHECK(controller.rackPath() == gigPath && view.rackName == "Gig" && !view.modified);
+    CHECK(controller.setPath() == gigSet && view.rackName == "Gig" && !view.modified && !controller.unsavedChanges());
     CHECK(view.rows.size() == 1 && view.rows[0].id == "keys" && view.sequences.size() == 1);
+    CHECK(view.setlist.name == "Gig" && view.setlist.songs.size() == 1 && view.setlist.current == 0);
     runBlock(*rig.engine);   // the old plugins go once the engine lets go of them
     rig.engine->collect();
 
-    // Not a rack: nothing changes.
+    // Not a set: nothing changes.
     controller.takeNotices();
-    CHECK(!controller.openRack((dir / "notes.rack").string()));
-    CHECK(controller.takeNotices().size() == 1 && controller.rackPath() == gigPath);
+    CHECK(!controller.openSet((dir / "notes.setlist").string()));
+    CHECK(controller.takeNotices().size() == 1 && controller.setPath() == gigSet);
 
-    // New saves the titled rack first (as quitting would), then starts over.
+    // New doesn't save the set left (the UI asks first): an untitled set, one empty song.
     controller.setMuted("keys", true);
-    CHECK(controller.newRack());
+    controller.newSet();
     controller.tick(1.1);
-    CHECK(controller.rackPath().empty() && view.rows.empty() && view.rackName == "Untitled");
+    CHECK(controller.setPath().empty() && view.rows.empty() && view.rackName == "Song" && !controller.unsavedChanges());
     Rack reread;
-    CHECK(loadRack(gigPath, reread).ok && reread.slots.size() == 1 && reread.slots[0].muted);
+    CHECK(loadRack(setRackPath(gigSet, "Gig"), reread).ok && reread.slots.size() == 1 && !reread.slots[0].muted);
 
-    // Save As: ".rack" added, the name follows the file. An existing rack needs
-    // a yes; something that isn't a rack is never replaced.
-    controller.addPlugin(installedPlugin("synth", "/clap/Synth.clap"), 0);
-    CHECK(controller.saveAs((dir / "notes").string()) == RackController::SaveAsResult::Failed);
-    CHECK(controller.saveAs(gigPath) == RackController::SaveAsResult::NeedsReplace);
-    CHECK(controller.saveAs((dir / "Live").string()) == RackController::SaveAsResult::Saved);
+    // A lone rack opens as an untitled set of one song; so does an older setlist.
+    CHECK(controller.openSet((dir / "Lone.rack").string()));
     controller.tick(1.2);
-    CHECK(controller.rackPath() == (dir / "Live.rack").string() && view.rackName == "Live" && !view.modified);
-    CHECK(!controller.unsavedUntitled());
-    CHECK(controller.saveAs(gigPath, true) == RackController::SaveAsResult::Saved);
-    CHECK(loadRack(gigPath, reread).ok && reread.name == "Gig" && reread.slots.size() == 1 &&
-          reread.slots[0].plugin.id == "synth");
+    CHECK(controller.setPath().empty() && controller.songRack() == "Lone" && view.rows.size() == 1);
+    CHECK(controller.unsavedChanges());   // a set made from it, not saved yet
+    Setlist old;
+    old.songs = {SetlistSong{(dir / "Lone.rack").string(), ""}, SetlistSong{(dir / "Lone.rack").string(), "Again"}};
+    CHECK(saveSetlist((dir / "Old.setlist").string(), old).ok);
+    CHECK(controller.openSet((dir / "Old.setlist").string()));
+    controller.tick(1.3);
+    CHECK(controller.setPath().empty() && view.setlist.songs.size() == 2 && view.setlist.songs[1].name == "Again");
 
-    // Saving off (--no-save-rack): switching doesn't save, Save As refuses.
-    RackController::Config off = rig.config(gigPath);
+    // Save As: ".setlist" added. An existing set needs a yes; something that
+    // isn't a set (the older setlist file too) is never replaced.
+    CHECK(controller.saveAs((dir / "notes").string()) == RackController::SaveAsResult::Failed);
+    CHECK(controller.saveAs((dir / "Old").string()) == RackController::SaveAsResult::Failed);
+    CHECK(controller.saveAs(gigSet) == RackController::SaveAsResult::NeedsReplace);
+    CHECK(controller.saveAs((dir / "Live").string()) == RackController::SaveAsResult::Saved);
+    controller.tick(1.4);
+    const std::string live = (dir / "Live.setlist").string();
+    CHECK(controller.setPath() == live && !view.modified && !controller.unsavedChanges() && view.setlist.name == "Live");
+    Set saved;
+    CHECK(loadSet(live, saved).ok && saved.songs.size() == 2 && saved.songs[0].rack == "Lone" &&
+          saved.songs[1].rack == "Lone" && saved.songs[1].name == "Again");
+    CHECK(saveSetlist((dir / "Old.setlist").string(), old).ok);   // untouched: still readable as a setlist
+    CHECK(controller.saveAs(gigSet, true) == RackController::SaveAsResult::Saved);
+    CHECK(loadSet(gigSet, saved).ok && saved.songs.size() == 2 && !fs::exists(setRackPath(gigSet, "Gig")));
+
+    // Saving off (--no-save): Save As refuses, and nothing counts as unsaved.
+    RackController::Config off = rig.config();
     off.savingOff              = true;
     RackController readOnly(*rig.session, *rig.engine, rig.midi, rig.factory, off);
     CHECK(readOnly.saveAs((dir / "Other").string()) == RackController::SaveAsResult::Failed);
-    CHECK(readOnly.newRack() && !std::filesystem::exists(dir / "Other.rack"));
-    CHECK(!readOnly.unsavedUntitled());
+    readOnly.setMuted("keys", true);
+    CHECK(!readOnly.unsavedChanges() && !fs::exists(dir / "Other.setlist"));
 
     rig.session->unload();
     runBlock(*rig.engine);
     rig.engine->collect();
-    std::filesystem::remove_all(dir);
+    fs::remove_all(dir);
 }
 
-// Setlists (docs/setlists.md, milestone 1): making one, going through it,
-// editing it (saved at once), missing racks skipped, Save As re-pointing the
-// song, the last position, and leaving it by opening a rack on its own.
+// Songs in a set (docs/setlists.md, docs/documents.md): going through it,
+// editing it (unsaved until Save), a rack imported, a new song as a copy,
+// removing songs (never the last), a missing rack skipped, the last position,
+// and opening at a song.
 void testSetlist() {
     namespace fs = std::filesystem;
     const fs::path dir = scratchDir("stagehand-setlist-test");
     fs::remove_all(dir);
-    for (const char* name : {"A", "B", "C"}) {
-        Rack rack;
-        rack.name  = name;
-        rack.slots = {slot("keys", "synth", "/clap/Synth.clap")};
-        CHECK(saveRack((dir / "Racks" / (std::string(name) + ".rack")).string(), rack).ok);
-    }
-    const std::string a = (dir / "Racks/A.rack").string(), b = (dir / "Racks/B.rack").string(),
-                      c = (dir / "Racks/C.rack").string();
+    const std::string gig = makeSet(dir / "Gig.setlist", {keysRack("A")}, {"A"});
+    CHECK(saveRack((dir / "Loose/B.rack").string(), keysRack("B")).ok);
     const std::string lastPath = (dir / "state/last.json").string();
 
     Rig                 rig;
     Session::LoadReport report;
     Rack                untitled;
-    untitled.name = "Untitled";
+    untitled.name = "Song";
     rig.session->load(untitled, 48000.0, report);
     RackController::Config config = rig.config();
     config.lastPositionPath       = lastPath;
@@ -981,35 +1023,31 @@ void testSetlist() {
     double               now  = 0.0;
     auto tick = [&] { controller.tick(now += 2.0); };   // past the once-a-second disk check
 
-    // An untitled rack can't be a song.
-    const std::string gig = (dir / "Gig").string();
-    CHECK(controller.newSetlist(gig, true) == RackController::NewSetlistResult::Failed);
-    CHECK(!controller.hasSetlist());
-
-    // New setlist with this rack: it's song 1, and the file exists at once.
-    CHECK(controller.openRack(a));
-    CHECK(controller.newSetlist(gig, true) == RackController::NewSetlistResult::Created);
-    const std::string file = (dir / "Gig.setlist").string();
-    CHECK(controller.hasSetlist() && controller.setlistPath() == file && isSetlistFile(file));
+    // The untitled set at start: one song, the rack running.
     tick();
-    CHECK(view.setlist.open && view.setlist.name == "Gig" && view.setlist.songs.size() == 1);
-    CHECK(view.setlist.current == 0 && view.setlist.next == -1 && view.setlist.songs[0].name == "A");
-    CHECK(controller.newSetlist(gig, false) == RackController::NewSetlistResult::NeedsReplace);
+    CHECK(view.setlist.open && view.setlist.name == "Untitled" && view.setlist.songs.size() == 1);
+    CHECK(view.setlist.current == 0 && !view.setlist.edited);
 
-    // Adding: after the current song, without switching; a non-rack is refused.
-    CHECK(controller.addRackToSetlist(b));
-    CHECK(!controller.addRackToSetlist((dir / "Nothing").string()));
+    CHECK(controller.openSet(gig) && controller.songRack() == "A");
     tick();
-    CHECK(view.setlist.songs.size() == 2 && view.setlist.songs[1].name == "B" && controller.rackPath() == a);
-    Setlist saved;
-    CHECK(loadSetlist(file, saved).ok && saved.songs.size() == 2 && saved.songs[1].rack == b);
+    CHECK(view.setlist.name == "Gig" && view.setlist.songs.size() == 1 && view.setlist.current == 0);
+    CHECK(view.setlist.next == -1 && !view.setlist.edited);
 
-    // Next and Previous, and the remembered position.
-    CHECK(controller.nextSong() && controller.rackPath() == b);
+    // Import: a copy of the rack, after the current song, without switching.
+    CHECK(controller.importRack((dir / "Loose/B.rack").string()));
+    CHECK(!controller.importRack((dir / "Nothing").string()));
+    tick();
+    CHECK(view.setlist.songs.size() == 2 && view.setlist.songs[1].name == "B" && controller.songRack() == "A");
+    CHECK(view.setlist.edited && controller.unsavedChanges());
+    Set saved;
+    CHECK(loadSet(gig, saved).ok && saved.songs.size() == 1);   // not saved yet
+
+    // Next and Previous (B from memory), and the remembered position.
+    CHECK(controller.nextSong() && controller.songRack() == "B");
     CHECK(!controller.nextSong());   // the end
     LastPosition last;
-    CHECK(loadLastPosition(lastPath, last) && last.setlist == file && last.song == 1);
-    CHECK(controller.previousSong() && controller.rackPath() == a && !controller.previousSong());
+    CHECK(loadLastPosition(lastPath, last) && last.setlist == gig && last.song == 1);
+    CHECK(controller.previousSong() && controller.songRack() == "A" && !controller.previousSong());
 
     // Again, move, rename: [A, A, B] -> [A, B, A]; B renamed, then back.
     CHECK(controller.addThisRackAgain());
@@ -1024,139 +1062,99 @@ void testSetlist() {
     tick();
     CHECK(view.setlist.current == 1 && view.setlist.songs[0].name == "B (fast)");
     CHECK(controller.renameSong(0, "B"));   // the rack's own name: no override
-    CHECK(loadSetlist(file, saved).ok && saved.songs[0].name.empty());
 
-    // Remove the playing song: the rack still plays; Next goes to the one after.
+    // Save: the song list and the imported rack.
+    CHECK(controller.save());
+    tick();
+    CHECK(!view.setlist.edited && !controller.unsavedChanges());
+    CHECK(loadSet(gig, saved).ok && saved.songs.size() == 3 && saved.songs[0] == (SetSong{"B", ""}) &&
+          saved.songs[1].rack == "A" && saved.songs[2].rack == "A");
+    CHECK(!rackBundleOf(setRackPath(gig, "B")).empty());
+
+    // Remove the playing song: the next plays first (A again: the same rack,
+    // so only the position moves).
+    const std::uint64_t generation = controller.rackGeneration();
     CHECK(controller.removeSong(1));   // [B, A]
     tick();
-    CHECK(view.setlist.current == -1 && view.setlist.next == 1 && controller.rackPath() == a);
-    CHECK(fs::exists(a));   // the rack stays on disk
-    // It's A again: the same rack (one copy per path), so only the position moves.
-    const std::uint64_t generation = controller.rackGeneration();
-    CHECK(controller.nextSong() && view.setlist.current == 1 && controller.rackGeneration() == generation);
+    CHECK(view.setlist.current == 1 && controller.songRack() == "A" && controller.rackGeneration() == generation);
+    // B removed and saved: its rack goes. The last song can't be removed.
+    CHECK(controller.removeSong(0) && !controller.removeSong(0));   // [A]
+    CHECK(controller.save() && !fs::exists(setRackPath(gig, "B")));
+
+    // A new song: a copy of the one playing (with an edit not yet saved),
+    // named for it, after it, and played.
+    controller.setTempo(97.0);
+    CHECK(controller.newSong());
+    for (int i = 0; i < 4 && controller.songRack() != "A 2"; ++i) tick();   // its plugin prepared
+    CHECK(controller.songRack() == "A 2" && rig.session->capture().tempoBpm == 97.0);
+    tick();
+    CHECK(view.setlist.songs.size() == 2 && view.setlist.songs[1].name == "A 2" && view.setlist.current == 1);
+    CHECK(controller.save());
+    Rack copied;
+    CHECK(loadRack(setRackPath(gig, "A 2"), copied).ok && copied.tempoBpm == 97.0 && copied.slots.size() == 1);
 
     // A missing rack is shown and skipped.
-    CHECK(controller.addRackToSetlist(c));   // [B, A, C]
-    fs::rename(c, (dir / "Racks/C-away.rack").string());
-    CHECK(controller.previousSong() && controller.rackPath() == b);   // previous from A
+    CHECK(controller.goToSong(0));
+    fs::rename(setRackPath(gig, "A 2"), dir / "away.rack");
     tick();
-    CHECK(view.setlist.songs[2].missing && view.setlist.next == 1);
-    CHECK(controller.nextSong() && !controller.nextSong() && !controller.goToSong(2));
-    // Found again: pointed at where it went. A missing song can also be removed.
-    CHECK(!controller.relinkSong(2, (dir / "Nothing").string()));
-    CHECK(controller.relinkSong(2, (dir / "Racks/C-away.rack").string()) && controller.goToSong(2));
-    CHECK(controller.goToSong(1));
-    fs::rename((dir / "Racks/C-away.rack").string(), c);
-    CHECK(controller.relinkSong(2, c));
-
-    // Save As while on a song points the song at the new bundle.
-    CHECK(controller.saveAs((dir / "Racks/A2").string()) == RackController::SaveAsResult::Saved);
-    CHECK(loadSetlist(file, saved).ok && saved.songs[1].rack == (dir / "Racks/A2.rack").string());
-
-    // A new rack added to the set is created on disk and played: a copy of
-    // the song playing (A2, with an edit not yet saved), named for its bundle.
-    controller.setTempo(97.0);
-    CHECK(controller.addNewRackToSetlist((dir / "Racks/D").string()));
-    for (int i = 0; i < 4 && controller.rackPath() != (dir / "Racks/D.rack").string(); ++i) tick();   // its plugin prepared
-    CHECK(controller.rackPath() == (dir / "Racks/D.rack").string() && !rackBundleOf((dir / "Racks/D.rack").string()).empty());
-    Rack copied;
-    CHECK(loadRack((dir / "Racks/D.rack").string(), copied).ok && copied.name == "D" && copied.tempoBpm == 97.0 &&
-          copied.slots.size() == 1 && copied.slots[0].id == "keys");
-    CHECK(!controller.addNewRackToSetlist((dir / "Racks/D").string()));   // exists: refused
+    CHECK(view.setlist.songs[1].missing && view.setlist.next == -1 && !controller.goToSong(1));
+    fs::rename(dir / "away.rack", setRackPath(gig, "A 2"));
 
     // Reopening at a song, as a start with no arguments does.
-    CHECK(controller.openSetlist(file, 0) && controller.rackPath() == b);
-    CHECK(controller.openSetlist(file, 9) && controller.rackPath() == c);   // clamped to the last
+    CHECK(controller.openSet(gig, 1) && controller.songRack() == "A 2");
+    CHECK(controller.openSet(gig, 9) && controller.songRack() == "A 2");   // clamped to the last
+    CHECK(controller.openSet(gig, 0) && controller.songRack() == "A");
+    CHECK(loadLastPosition(lastPath, last) && last.setlist == gig && last.song == 0);
 
-    // Opening a rack on its own leaves the set, and forgets it.
-    CHECK(controller.openRack(a));
-    tick();
-    CHECK(!controller.hasSetlist() && !view.setlist.open);
-    CHECK(loadLastPosition(lastPath, last) && last.setlist.empty() && last.rack == a);   // that rack reopens
-
-    // So does a new rack outside the set: untitled, on its own.
-    CHECK(controller.openSetlist(file, 0) && controller.hasSetlist());
-    CHECK(controller.newRack() && !controller.hasSetlist() && controller.rackPath().empty());
-    CHECK(loadLastPosition(lastPath, last) && last.setlist.empty() && last.rack.empty());
-    // Save As names it: that bundle reopens.
-    CHECK(controller.saveAs((dir / "Racks/E").string()) == RackController::SaveAsResult::Saved);
-    CHECK(loadLastPosition(lastPath, last) && last.rack == (dir / "Racks/E.rack").string());
-
-    // A set with no songs opens with E still playing, not a song in it; Add
-    // makes it the first, with no switch.
-    const std::string empty = (dir / "Empty.setlist").string();
-    CHECK(controller.newSetlist(empty, false) == RackController::NewSetlistResult::Created);
-    CHECK(controller.openSetlist(empty) && controller.rackPath() == (dir / "Racks/E.rack").string());
-    tick();
-    CHECK(view.setlist.current == -1);
-    const std::uint64_t before = controller.rackGeneration();
-    CHECK(controller.addRunningRackToSetlist() && !controller.addRunningRackToSetlist());   // once: it's a song now
-    tick();
-    CHECK(view.setlist.current == 0 && controller.rackGeneration() == before);
-    CHECK(loadSetlist(empty, saved).ok && saved.songs.size() == 1 && saved.songs[0].rack == (dir / "Racks/E.rack").string());
-    CHECK(loadLastPosition(lastPath, last) && last.setlist == empty && last.song == 0);
-    // An untitled rack must be saved first.
-    CHECK(controller.newRack() && controller.openSetlist(file, 0));
-    CHECK(controller.newRack() && controller.newSetlist((dir / "Empty2").string(), false) ==
-                                      RackController::NewSetlistResult::Created);
-    CHECK(controller.rackPath().empty() && !controller.addRunningRackToSetlist());
+    // A new set: untitled, so nothing reopens.
+    controller.newSet();
+    CHECK(controller.songRack() == "Song" && loadLastPosition(lastPath, last) && last.setlist.empty());
 
     runBlock(*rig.engine);
     rig.engine->collect();
     fs::remove_all(dir);
 }
 
-// Rigs (docs/rig.md): the default one created on first use, a setlist's own
-// used while it's open (and the default after), and Ctrl-S saving the rig
-// with the rack. Switching rigs saves the one in use if it has changes.
+// Rigs (docs/rig.md, docs/documents.md): the set's own, in its package; an
+// untitled set's empty; Ctrl-S saving it with the set; a new set starting
+// with a copy of the rig in use; edits not saved by leaving the set.
 // (`Rig` here is the test harness; the rig model is stagehand::Rig.)
 void testRigs() {
     namespace fs = std::filesystem;
     const fs::path dir = scratchDir("stagehand-rigs-test");
     fs::remove_all(dir);
-    Rack song;
-    song.name  = "Song";
-    song.slots = {slot("keys", "synth", "/clap/Synth.clap")};
-    const std::string songPath = (dir / "Song.rack").string();
-    CHECK(saveRack(songPath, song).ok);
     stagehand::Rig stage;
-    stage.buses[0].returnDb     = -3.0f;
-    const std::string stagePath = (dir / "Stage.rig").string();
-    CHECK(saveRig(stagePath, stage).ok);
-    Setlist set;
-    set.songs = {SetlistSong{songPath, ""}};
-    set.rig   = stagePath;
-    const std::string setPath = (dir / "Gig.setlist").string();
-    CHECK(saveSetlist(setPath, set).ok);
+    stage.buses[0].returnDb = -3.0f;
+    const std::string gig   = makeSet(dir / "Gig.setlist", {keysRack("Song")}, {"Song"}, stage);
 
     Rig                 rig;
     Session::LoadReport report;
     Rack                untitled;
-    untitled.name = "Untitled";
+    untitled.name = "Song";
     rig.session->load(untitled, 48000.0, report);
     RackController::Config config = rig.config();
-    config.defaultRigPath         = (dir / "data" / "Default.rig").string();
+    config.rig                    = true;
     RackController controller(*rig.session, *rig.engine, rig.midi, rig.factory, config);
 
-    // Started on its own: the default rig, created empty where the app keeps it.
-    CHECK(controller.rigPath() == config.defaultRigPath && rig.session->hasRig());
-    CHECK(!rigBundleOf(config.defaultRigPath).empty());
+    // Untitled: an empty rig.
+    CHECK(rig.session->hasRig() && rig.session->rig().saved.buses[0].returnDb == 0.0f);
 
-    // A setlist's own rig while it's open.
-    CHECK(controller.openSetlist(setPath));
-    CHECK(controller.rigPath() == stagePath && rig.session->rig().saved.buses[0].returnDb == -3.0f);
+    // The set's own rig while it's open.
+    CHECK(controller.openSet(gig));
+    CHECK(rig.session->rig().saved.buses[0].returnDb == -3.0f && !rig.session->rigModified());
 
-    // Ctrl-S saves the rig with the rack.
-    CHECK(rig.session->setReturnDb(0, -10.0f) && rig.session->rigModified());
+    // Ctrl-S saves the rig with the set.
+    CHECK(rig.session->setReturnDb(0, -10.0f) && rig.session->rigModified() && controller.unsavedChanges());
     CHECK(controller.save() && !rig.session->rigModified());
     stagehand::Rig onDisk;
-    CHECK(loadRig(stagePath, onDisk).ok && onDisk.buses[0].returnDb == -10.0f);
+    CHECK(loadRig(setRigPath(gig), onDisk).ok && onDisk.buses[0].returnDb == -10.0f);
 
-    // Leaving the set: the default rig again, the setlist's saved first.
+    // A new set: a copy of the rig in use. Leaving didn't save the edit.
     CHECK(rig.session->setReturnDb(0, -12.0f));
-    controller.closeSetlist();
-    CHECK(controller.rigPath() == config.defaultRigPath && rig.session->rig().saved.buses[0].returnDb == 0.0f);
-    CHECK(loadRig(stagePath, onDisk).ok && onDisk.buses[0].returnDb == -12.0f);
+    controller.newSet();
+    CHECK(rig.session->rig().saved.buses[0].returnDb == -12.0f && !controller.unsavedChanges());
+    CHECK(loadRig(setRigPath(gig), onDisk).ok && onDisk.buses[0].returnDb == -10.0f);
+    CHECK(controller.openSet(gig) && rig.session->rig().saved.buses[0].returnDb == -10.0f);
 
     runBlock(*rig.engine);
     rig.engine->collect();
@@ -1208,7 +1206,7 @@ void testPreparedRacks() {
     auto tick = [&] { controller.tick(now += 2.0); };
 
     // Opening the set isn't a live switch: song 1 plays at once.
-    CHECK(controller.openSetlist(file, 0) && controller.rackPath() == a && !controller.switchPending());
+    CHECK(controller.openSet(packageOf(file), 0) && controller.songRack() == "A" && !controller.switchPending());
     const HostedPlugin* fx = rig.session->rig().effects[0][0].plugin.get();
     CHECK(fx != nullptr);
 
@@ -1228,7 +1226,7 @@ void testPreparedRacks() {
     CHECK(*rig.editorsOpen == 1);
     const std::weak_ptr<HostedPlugin> oldRow   = rig.session->slot("row1")->plugin;
     const std::uint64_t               switched = controller.rackGeneration();
-    CHECK(controller.nextSong() && controller.rackPath() == b && !controller.switchPending());
+    CHECK(controller.nextSong() && controller.songRack() == "B" && !controller.switchPending());
     CHECK(rig.engine->graphCommits() == commits + 1);
     CHECK(*rig.editorsOpen == 0 && controller.rackGeneration() == switched + 1);
     CHECK(rig.session->slots().size() == 2 && view.setlist.current == 1);
@@ -1242,25 +1240,30 @@ void testPreparedRacks() {
     CHECK(controller.songPrepared(2) && !controller.songPrepared(0));
     tick();
     CHECK(controller.songPrepared(0) && rig.engine->graphCommits() == commits + 1);
-    CHECK(controller.previousSong() && controller.rackPath() == a);
+    CHECK(controller.previousSong() && controller.songRack() == "A");
     CHECK(rig.session->slot("row1") != nullptr && rig.session->slot("row1")->saved.gainDb == -6.0f);
 
     // A jump to a rack not prepared waits for it while the current one plays;
     // a second jump replaces the first.
-    CHECK(controller.goToSong(3) && controller.switchPending() && controller.rackPath() == a);
+    CHECK(controller.goToSong(3) && controller.switchPending() && controller.songRack() == "A");
     tick();
-    CHECK(controller.rackPath() == a && view.setlist.waiting == 3);
+    CHECK(controller.songRack() == "A" && view.setlist.waiting == 3);
     CHECK(view.status.preparing == "Preparing song 4 (D): 1/2 plugins");
     CHECK(controller.goToSong(2) && controller.switchPending());
     tick();   // C: one plugin, then the switch
-    CHECK(controller.rackPath() == c && !controller.switchPending() && view.setlist.current == 2);
+    CHECK(controller.songRack() == "C" && !controller.switchPending() && view.setlist.current == 2);
     CHECK(view.setlist.waiting == -1);
 
     // A reprise: B before and after C is one prepared copy, ready for both at once.
-    CHECK(controller.addRackToSetlist(b));   // [A, B, C, B, D]
+    CHECK(controller.goToSong(1));
+    for (int i = 0; i < 4 && controller.switchPending(); ++i) tick();
+    CHECK(controller.songRack() == "B" && controller.addThisRackAgain() && controller.moveSong(2, 1));   // [A, B, C, B, D]
+    CHECK(controller.goToSong(2));
+    for (int i = 0; i < 4 && controller.switchPending(); ++i) tick();
+    CHECK(controller.songRack() == "C");
     for (int i = 0; i < 6 && !controller.songPrepared(1); ++i) tick();
     CHECK(controller.songPrepared(1) && controller.songPrepared(3));
-    CHECK(controller.goToSong(3) && controller.rackPath() == b && view.setlist.current == 3);
+    CHECK(controller.goToSong(3) && controller.songRack() == "B" && view.setlist.current == 3);
     // Going to its other appearance moves the position only: it's the same rack.
     const std::uint64_t reprise = controller.rackGeneration();
     CHECK(controller.goToSong(1) && view.setlist.current == 1 && controller.rackGeneration() == reprise);
@@ -1315,9 +1318,9 @@ void testSetlistTriggers() {
         rig.engine->onMidi(7, m);
         runBlock(*rig.engine);
     };
-    CHECK(controller.openSetlist(file, 0) && controller.rackPath() == racks[0]);
+    CHECK(controller.openSet(packageOf(file), 0) && controller.songRack() == rackNameOf(racks[0]));
 
-    // Learn Next on CC 80, and Program Change on channel 1; saved at once.
+    // Learn Next on CC 80, and Program Change on channel 1; saved with the set.
     controller.learnSetlistTrigger(SetlistTrigger::Action::Next);
     tick();
     CHECK(view.setlist.learning && view.setlist.learningAction == SetlistTrigger::Action::Next);
@@ -1334,8 +1337,9 @@ void testSetlistTriggers() {
     CHECK(!view.setlist.learning);
     CHECK((view.setlist.triggers == std::vector<std::string>{"Next song: From other apps (MIDI 2.0), CC 80, ch 1",
                                                              "Program Change: From other apps (MIDI 2.0), ch 1 (program n: song n)"}));
-    Setlist saved;
-    CHECK(loadSetlist(file, saved).ok && saved.triggers.size() == 2 &&
+    CHECK(view.setlist.edited && controller.save());
+    Set saved;
+    CHECK(loadSet(controller.setPath(), saved).ok && saved.triggers.size() == 2 &&
           saved.triggers[0].action == SetlistTrigger::Action::Next && saved.triggers[0].number == 80);
     controller.takeNotices();
 
@@ -1343,7 +1347,7 @@ void testSetlistTriggers() {
     send(0x20B0507Fu);
     send(0x20B05000u);
     tick();
-    CHECK(controller.rackPath() == racks[1] && view.setlist.current == 1);
+    CHECK(controller.songRack() == rackNameOf(racks[1]) && view.setlist.current == 1);
 
     // Two presses in one tick: two songs on, in one switch. C's own Start on
     // the same pedal is reported, and the setlist's wins.
@@ -1353,24 +1357,24 @@ void testSetlistTriggers() {
     send(0x20B05000u);
     send(0x20B0507Fu);
     send(0x20B05000u);
-    for (int i = 0; i < 4 && (controller.switchPending() || controller.rackPath() == racks[1]); ++i) tick();
-    CHECK(controller.rackPath() == racks[3] && controller.rackGeneration() == generation + 1);
+    for (int i = 0; i < 4 && (controller.switchPending() || controller.songRack() == rackNameOf(racks[1])); ++i) tick();
+    CHECK(controller.songRack() == rackNameOf(racks[3]) && controller.rackGeneration() == generation + 1);
     send(0x20C00200u);   // Program Change 2: the third song, C
-    for (int i = 0; i < 4 && controller.rackPath() != racks[2]; ++i) tick();
-    CHECK(controller.rackPath() == racks[2] && !rig.engine->transport().running);
+    for (int i = 0; i < 4 && controller.songRack() != rackNameOf(racks[2]); ++i) tick();
+    CHECK(controller.songRack() == rackNameOf(racks[2]) && !rig.engine->transport().running);
     bool reported = false;
     for (const std::string& text : controller.takeNotices())
         reported = reported || text.find("is also the setlist's Next song; the setlist's wins") != std::string::npos;
     CHECK(reported);
     send(0x20C00900u);   // past the end: a notice, no switch
     tick();
-    CHECK(controller.rackPath() == racks[2] && !controller.takeNotices().empty());
+    CHECK(controller.songRack() == rackNameOf(racks[2]) && !controller.takeNotices().empty());
 
-    // Removed: the pedal no longer acts. Closing the set removes them all.
+    // Removed: the pedal no longer acts. A new set has none.
     controller.removeSetlistTrigger(0);
     tick();
     CHECK(view.setlist.triggers.size() == 1 && rig.session->setlistTriggers().size() == 1);
-    controller.closeSetlist();
+    controller.newSet();
     CHECK(rig.session->setlistTriggers().empty());
 
     runBlock(*rig.engine);
@@ -1405,10 +1409,12 @@ void testRigControls() {
     rack.slots     = {keys};
     Session::LoadReport report;
     rig.session->load(rack, 48000.0, report);
-    RackController::Config config = rig.config();
-    config.defaultRigPath         = rigPath;
-    RackController       controller(*rig.session, *rig.engine, rig.midi, rig.factory, config);
+    rack.name = "Song";
+    const std::string gig = makeSet(dir / "Gig.setlist", {rack}, {"Song"}, stage);
+    RackController       controller(*rig.session, *rig.engine, rig.midi, rig.factory, rig.config());
     const RackViewModel& view = controller.view();
+    CHECK(controller.openSet(gig));
+    controller.tick(0.01);
 
     CHECK(view.rig.loaded && view.rig.name == "Stage" && !view.rig.modified);
     CHECK(view.rig.buses[0].name == "A" && view.rig.buses[0].effects[0].name == "old" &&
@@ -1446,11 +1452,13 @@ void testRigControls() {
     controller.tick(1.2);
     CHECK(view.rig.buses[0].meterDb[0] > -60.0f);
 
-    // A bus effect's editor stays open when the rack changes; emptying its slot closes it.
+    // A bus effect's editor stays open when the song changes; emptying its slot closes it.
     controller.openBusEditor(0, 0);
     controller.tick(1.3);
     CHECK(*rig.editorsOpen == 1 && view.rig.buses[0].effects[0].editorOpen);
-    CHECK(controller.newRack());
+    CHECK(controller.newSong());
+    for (int i = 0; i < 4 && controller.songRack() != "Song 2"; ++i) controller.tick(1.31 + 0.01 * i);
+    CHECK(controller.songRack() == "Song 2");
     CHECK(*rig.editorsOpen == 1);
     controller.setBusEffect(0, 0, nullptr);
     controller.tick(1.4);
@@ -1496,7 +1504,7 @@ void testSwitchSettings() {
     const RackViewModel& view = controller.view();
     double               now  = 0.0;
     auto tick = [&] { controller.tick(now += 2.0); };
-    CHECK(controller.openSetlist(file, 0));
+    CHECK(controller.openSet(packageOf(file), 0));
     tick();
     tick();   // B prepared
     CHECK(view.setlist.switching == SwitchSettings{});
@@ -1506,7 +1514,7 @@ void testSwitchSettings() {
     // runBlock's 64), then B's tempo, with its At Start from that bar.
     controller.startTransport();
     for (int i = 0; i < 4; ++i) runBlock(*rig.engine);
-    CHECK(controller.nextSong() && controller.rackPath() == racks[1]);
+    CHECK(controller.nextSong() && controller.songRack() == rackNameOf(racks[1]));
     runBlock(*rig.engine);
     CHECK(rig.engine->transport().running && rig.engine->transport().tempoBpm == 100.0);   // waiting for the bar
     int blocks = 0;
@@ -1515,19 +1523,20 @@ void testSwitchSettings() {
     CHECK(rig.session->sequenceState("intro") == SequenceState::Starting ||
           rig.session->sequenceState("intro") == SequenceState::Playing);
 
-    // Stop, and Cut: saved at once; the next switch stops the transport and mutes the old song.
+    // Stop, and Cut: saved with the set; the next switch stops the transport and mutes the old song.
     SwitchSettings settings;
     settings.transport = SwitchSettings::Transport::Stop;
     settings.when      = SwitchSettings::When::Now;   // as soon as it's ready
     settings.oldRack   = SwitchSettings::OldRack::Cut;
     controller.setSwitchSettings(settings);
-    Setlist saved;
-    CHECK(loadSetlist(file, saved).ok && saved.switching == settings);
+    CHECK(controller.save());
+    Set saved;
+    CHECK(loadSet(controller.setPath(), saved).ok && saved.switching == settings);
     tick();
     CHECK(view.setlist.switching == settings);
     tick();   // C prepared
     const std::shared_ptr<SlotRuntime> old = rig.session->slot("keys")->runtime;
-    CHECK(controller.nextSong() && controller.rackPath() == racks[2]);
+    CHECK(controller.nextSong() && controller.songRack() == rackNameOf(racks[2]));
     runBlock(*rig.engine);
     runBlock(*rig.engine);
     CHECK(!rig.engine->transport().running && rig.engine->transport().tempoBpm == 80.0);
@@ -1541,7 +1550,7 @@ void testSwitchSettings() {
 // Saving in a set (docs/setlists.md, section 6): a switch never saves, so a
 // write can't hold it up; the rack left keeps its edits in memory,
 // shown as unsaved, and a reprise plays them; one Save writes every unsaved
-// rack; closing the set saves them too.
+// rack.
 void testSavingInASet() {
     namespace fs = std::filesystem;
     const fs::path dir = scratchDir("stagehand-saving-test");
@@ -1559,6 +1568,8 @@ void testSavingInASet() {
     set.songs = {SetlistSong{a, ""}, SetlistSong{b, ""}, SetlistSong{a, ""}, SetlistSong{c, ""}};   // A again: a reprise
     const std::string file = (dir / "Gig.setlist").string();
     CHECK(saveSetlist(file, set).ok);
+    const std::string gig = packageOf(file);
+    const std::string pa = setRackPath(gig, "A"), pb = setRackPath(gig, "B");
     auto gainOnDisk = [](const std::string& path) {
         Rack rack;
         return loadRack(path, rack).ok && !rack.slots.empty() ? rack.slots[0].gainDb : 99.0f;
@@ -1571,40 +1582,40 @@ void testSavingInASet() {
     const RackViewModel& view = controller.view();
     double               now  = 0.0;
     auto tick = [&] { controller.tick(now += 2.0); };
-    CHECK(controller.openSetlist(file, 0));
+    CHECK(controller.openSet(gig, 0));
     tick();
 
     // Edit A, switch: nothing is written; A's edit is kept, and shown.
     controller.setGainDb("keys", -6.0f);
-    CHECK(controller.nextSong() && controller.rackPath() == b);
+    CHECK(controller.nextSong() && controller.songRack() == "B");
     tick();
-    CHECK(gainOnDisk(a) == 0.0f && controller.unsavedRackCount() == 1 && view.otherUnsaved == 1 && !view.modified);
+    CHECK(gainOnDisk(pa) == 0.0f && controller.unsavedRackCount() == 1 && view.otherUnsaved == 1 && !view.modified);
     CHECK(view.setlist.songs[0].unsaved && view.setlist.songs[2].unsaved && !view.setlist.songs[1].unsaved);
 
     // The reprise plays the edit (its prepared copy came from memory), and it's unsaved there.
     for (int i = 0; i < 3 && !controller.songPrepared(2); ++i) tick();
-    CHECK(controller.nextSong() && controller.rackPath() == a);
+    CHECK(controller.nextSong() && controller.songRack() == "A");
     CHECK(rig.session->slot("keys")->saved.gainDb == -6.0f && rig.session->modified() &&
           controller.unsavedRackCount() == 0);
 
     // Edit A again and B, switching between: then one Save writes both.
     controller.setGainDb("keys", -9.0f);
     for (int i = 0; i < 4 && !controller.songPrepared(1); ++i) tick();
-    CHECK(controller.previousSong() && controller.rackPath() == b);
+    CHECK(controller.previousSong() && controller.songRack() == "B");
     controller.setGainDb("keys", -3.0f);
     tick();
     CHECK(view.otherUnsaved == 1 && view.modified);   // "2 songs unsaved"
     CHECK(controller.save());
-    CHECK(gainOnDisk(a) == -9.0f && gainOnDisk(b) == -3.0f && controller.unsavedRackCount() == 0 &&
+    CHECK(gainOnDisk(pa) == -9.0f && gainOnDisk(pb) == -3.0f && controller.unsavedRackCount() == 0 &&
           !rig.session->modified());
 
-    // Edited again and left: closing the set saves what it kept.
+    // Edited again and left: the next Save writes what was kept.
     controller.setGainDb("keys", -1.0f);
     for (int i = 0; i < 4 && !controller.songPrepared(2); ++i) tick();
-    CHECK(controller.nextSong() && controller.rackPath() == a && controller.unsavedRackCount() == 1);
-    CHECK(gainOnDisk(b) == -3.0f);   // not written by the switch
-    controller.closeSetlist();
-    CHECK(controller.unsavedRackCount() == 0 && gainOnDisk(b) == -1.0f);
+    CHECK(controller.nextSong() && controller.songRack() == "A" && controller.unsavedRackCount() == 1);
+    CHECK(gainOnDisk(pb) == -3.0f);   // not written by the switch
+    CHECK(controller.unsavedChanges() && controller.save());
+    CHECK(controller.unsavedRackCount() == 0 && gainOnDisk(pb) == -1.0f);
 
     runBlock(*rig.engine);
     rig.engine->collect();
@@ -1627,10 +1638,13 @@ void testLoopers() {
     rack.slots = {slot("keys", "synth", "/clap/Synth.clap")};
     Session::LoadReport report;
     rig.session->load(rack, 48000.0, report);
-    const std::string rackPath = (dir / "Song.rack").string();
-    RackController::Config config = rig.config(rackPath);
-    config.defaultRigPath         = (dir / "Default.rig").string();
+    RackController::Config config = rig.config();
+    config.rig                    = true;
     RackController       controller(*rig.session, *rig.engine, rig.midi, rig.factory, config);
+    const std::string    gig = (dir / "Gig.setlist").string();
+    CHECK(controller.saveAs(gig) == RackController::SaveAsResult::Saved);   // a set to save into
+    controller.takeNotices();
+    const std::string rackPath = setRackPath(gig, controller.songRack()), rigPath = setRigPath(gig);
     const RackViewModel& view = controller.view();
     double               now  = 0.0;
     auto tick = [&] { controller.tick(now += 0.05); };
@@ -1714,14 +1728,14 @@ void testLoopers() {
           saved.loopers[0].name == "Bass vamp" &&
           !saved.loopers[0].atBar && saved.loopers[0].quantize == 0.0 && !saved.loopers[0].cleanup);
     stagehand::Rig savedRig;
-    CHECK(loadRig(config.defaultRigPath, savedRig).ok && savedRig.looperSwitch &&
+    CHECK(loadRig(rigPath, savedRig).ok && savedRig.looperSwitch &&
           savedRig.looperSwitch->number == 82);
 
-    // Another rack, then this one again: its looper is back, empty.
-    CHECK(controller.newRack());
+    // Another set, then this one again: its looper is back, empty.
+    controller.newSet();
     tick();
     CHECK(view.loopers.empty());
-    CHECK(controller.openRack(rackPath));
+    CHECK(controller.openSet(gig));
     tick();
     CHECK(view.loopers.size() == 1 && view.loopers[0].current && view.loopers[0].state == LooperState::Empty &&
           view.loopers[0].notes == 0 && view.loopers[0].name == "Bass vamp");
@@ -1837,11 +1851,12 @@ void testCheckSetlist() {
     const std::string b = make("B", {slot("gone", "missing"), unplugged});
     const std::string c = make("C", {slot("keys", "synth", "/clap/Synth.clap")});
     const std::string d = make("D", {});
-    std::ofstream((dir / "Racks/D.rack/rack.json").string()) << "{ not json";
     Setlist set;
     set.songs = {SetlistSong{a, ""}, SetlistSong{b, ""}, SetlistSong{a, ""}, SetlistSong{c, ""}, SetlistSong{d, ""}};
     const std::string file = (dir / "Gig.setlist").string();
     CHECK(saveSetlist(file, set).ok);
+    const std::string gig = packageOf(file);
+    std::ofstream(setRackPath(gig, "D") + "/rack.json") << "{ not json";   // in the set, unreadable
 
     Rig                 rig;
     Session::LoadReport report;
@@ -1850,7 +1865,7 @@ void testCheckSetlist() {
     const RackViewModel& view = controller.view();
     double               now  = 0.0;
     auto tick = [&] { controller.tick(now += 2.0); };
-    CHECK(controller.openSetlist(file, 0) && controller.rackPath() == a);
+    CHECK(controller.openSet(gig, 0) && controller.songRack() == "A");
     for (int i = 0; i < 4; ++i) tick();   // B prepared ahead
     controller.takeNotices();
 
@@ -1874,16 +1889,16 @@ void testCheckSetlist() {
     for (const std::string& text : controller.takeNotices())
         summed = summed || text == "Check setlist: 2 songs have problems (in amber in the song list)";
     CHECK(summed);
-    CHECK(controller.rackPath() == a && controller.songPrepared(1));   // nothing else changed
+    CHECK(controller.songRack() == "A" && controller.songPrepared(1));   // nothing else changed
 
     // Switching to B: what the switch reports replaces what the check found.
-    CHECK(controller.nextSong() && controller.rackPath() == b);
+    CHECK(controller.nextSong() && controller.songRack() == "B");
     tick();
     CHECK(view.setlist.songs[1].problems.size() == 2 && has(view.setlist.songs[1].problems, "hear nothing"));
-    // A new check starts afresh; closing the set forgets it.
+    // A new check starts afresh; another set forgets it.
     CHECK(controller.checkSetlist());
-    controller.closeSetlist();
-    CHECK(!controller.checkingSetlist() && !controller.checkSetlist());
+    controller.newSet();
+    CHECK(!controller.checkingSetlist());
     fs::remove_all(dir);
 }
 
@@ -1964,9 +1979,13 @@ void testPanic() {
     rack.slots = {slot("keys", "synth", "/clap/Synth.clap")};
     Session::LoadReport report;
     rig.session->load(rack, 48000.0, report);
-    RackController::Config config = rig.config((dir / "Song.rack").string());
-    config.defaultRigPath         = (dir / "Default.rig").string();
+    RackController::Config config = rig.config();
+    config.rig                    = true;
     RackController       controller(*rig.session, *rig.engine, rig.midi, rig.factory, config);
+    const std::string    gig = (dir / "Gig.setlist").string();
+    CHECK(controller.saveAs(gig) == RackController::SaveAsResult::Saved);   // a set to save into
+    controller.takeNotices();
+    const std::string rackPath = setRackPath(gig, controller.songRack()), rigPath = setRigPath(gig);
     const RackViewModel& view = controller.view();
     double               now  = 0.0;
     auto tick = [&] { controller.tick(now += 0.05); };
@@ -2008,7 +2027,7 @@ void testPanic() {
 
     CHECK(controller.save());
     stagehand::Rig savedRig;
-    CHECK(loadRig(config.defaultRigPath, savedRig).ok && savedRig.panic && savedRig.panic->number == 83 &&
+    CHECK(loadRig(rigPath, savedRig).ok && savedRig.panic && savedRig.panic->number == 83 &&
           savedRig.panic->control == SequenceTrigger::Control::Controller);
     controller.removePanic();
     tick();
@@ -2086,10 +2105,13 @@ void testControlLinks() {
     rack.slots = {slot("keys", "synth", "/clap/Synth.clap")};
     Session::LoadReport report;
     rig.session->load(rack, 48000.0, report);
-    const std::string rackPath    = (dir / "Song.rack").string();
-    RackController::Config config = rig.config(rackPath);
-    config.defaultRigPath         = (dir / "Default.rig").string();
+    RackController::Config config = rig.config();
+    config.rig                    = true;
     RackController       controller(*rig.session, *rig.engine, rig.midi, rig.factory, config);
+    const std::string    gig = (dir / "Gig.setlist").string();
+    CHECK(controller.saveAs(gig) == RackController::SaveAsResult::Saved);   // a set to save into
+    controller.takeNotices();
+    const std::string rackPath = setRackPath(gig, controller.songRack()), rigPath = setRigPath(gig);
     const RackViewModel& view = controller.view();
     rig.factory.created.at("synth")->params = {ParameterInfo{7, nullptr, "Cutoff", 0.0, 1.0, 0.5},
                                                ParameterInfo{8, nullptr, "Hidden", 0.0, 1.0, 0.5, false}};
@@ -2242,7 +2264,7 @@ void testControlLinks() {
     stagehand::Rig  savedRig;
     CHECK(loadRack(rackPath, savedRack).ok && savedRack.controls.size() == 1 &&
           savedRack.controls[0].targets[0].row == "keys");
-    CHECK(loadRig(config.defaultRigPath, savedRig).ok && savedRig.controls.size() == 1 &&
+    CHECK(loadRig(rigPath, savedRig).ok && savedRig.controls.size() == 1 &&
           savedRig.controls[0].targets[0].plugin == "synth" && !savedRig.controls[0].pickUp);
 
     controller.removeControlLink(ControlScope::AllSongs, 0);

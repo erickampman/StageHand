@@ -21,7 +21,7 @@
     <key>NSSupportsAutomaticGraphicsSwitching</key> <true/>
     <!-- No NSMicrophoneUsageDescription: StageHand opens outputs only (decision 2). -->
 
-    <!-- A rack is a folder shown as one file (decision 6); a setlist is a JSON file. -->
+    <!-- A rack and a set are folders shown as one file (decision 6; docs/documents.md). -->
     <key>UTExportedTypeDeclarations</key>
     <array>
         <dict>
@@ -34,9 +34,9 @@
         </dict>
         <dict>
             <key>UTTypeIdentifier</key>  <string>${MACOSX_BUNDLE_GUI_IDENTIFIER}.setlist</string>
-            <key>UTTypeDescription</key> <string>StageHand setlist</string>
+            <key>UTTypeDescription</key> <string>StageHand set</string>
             <key>UTTypeConformsTo</key>
-            <array><string>public.json</string></array>
+            <array><string>com.apple.package</string><string>public.composite-content</string></array>
             <key>UTTypeTagSpecification</key>
             <dict><key>public.filename-extension</key><array><string>setlist</string></array></dict>
         </dict>
@@ -51,9 +51,10 @@
             <key>LSItemContentTypes</key>   <array><string>${MACOSX_BUNDLE_GUI_IDENTIFIER}.rack</string></array>
         </dict>
         <dict>
-            <key>CFBundleTypeName</key>     <string>StageHand setlist</string>
+            <key>CFBundleTypeName</key>     <string>StageHand set</string>
             <key>CFBundleTypeRole</key>     <string>Editor</string>
             <key>LSHandlerRank</key>        <string>Owner</string>
+            <key>LSTypeIsPackage</key>      <true/>
             <key>LSItemContentTypes</key>   <array><string>${MACOSX_BUNDLE_GUI_IDENTIFIER}.setlist</string></array>
         </dict>
     </array>

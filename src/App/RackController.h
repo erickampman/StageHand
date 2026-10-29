@@ -20,6 +20,7 @@
 #include "uw/midi/MidiInput.h"
 #include "uw/plugin/PluginFactory.h"
 #include "Core/UwNames.h"
+#include "Session/RackFile.h"
 #include "Session/Session.h"
 #include "Session/Setlist.h"
 
@@ -71,13 +72,11 @@ public:
         // Where the click's outputs are connected (the backend); null: nowhere.
         AuxRouting* clickRouting = nullptr;
 
-        // The rack's bundle, where save() writes; empty = untitled (Save As
-        // names it). `savingOff` (--no-save-rack): nothing is ever saved.
-        std::string saveTarget;
-        bool        savingOff = false;
+        // `savingOff` (--no-save): nothing is ever saved.
+        bool savingOff = false;
 
-        // Where the last setlist and song are remembered, for reopening there
-        // (docs/setlists.md, "Reopening"); empty = not remembered (tests).
+        // Where the last set and song are remembered, for reopening there
+        // (docs/documents.md, "Reopening"); empty = not remembered (tests).
         std::string lastPositionPath;
 
         // MIDI devices that appear while running (hotplug): opened, as the
@@ -91,10 +90,10 @@ public:
         bool openNewInputs   = true;
         bool openNewSoftware = false;
 
-        // The default rig (docs/rig.md), used by a rack on its own and a setlist
-        // that names none; created empty if it isn't there. Empty = no rig at
-        // all (tests): no buses, and sends go nowhere.
-        std::string defaultRigPath;
+        // Whether the untitled set the controller starts with has a rig (an
+        // empty one). False: no rig at all (tests), so no buses, and sends go
+        // nowhere, until a set with a rig is opened.
+        bool rig = false;
     };
 
     RackController(Session& session, Engine& engine, MidiInput& midiInput, PluginFactory& pluginFactory,
@@ -336,85 +335,73 @@ public:
     // Refresh the source menu (MidiInput::enumerate()); call when it opens.
     void refreshSources();
 
-    // --- the rack file (docs/rack-view.md, "Files") ---
-    // Where Save writes: the rack's bundle; empty for an untitled rack (a
-    // no-argument start, a --plugin session, or after New).
-    const std::string& rackPath() const noexcept { return target; }
+    // --- the set (docs/documents.md): the one document, always open. The
+    // controller starts with an untitled set whose one song is the running
+    // rack. Racks are kept by their bundle in the set's package (for an
+    // untitled set, a path under "Racks/" that's never on disk). ---
+    // The set's package; empty for an untitled set (Save As names it).
+    const std::string& setPath() const noexcept { return setFile; }
+    // The running rack's name in the set ("So what").
+    std::string        songRack() const;
     bool               savingOff() const noexcept { return config.savingOff; }
-    // An untitled rack with changes that switching racks or quitting would
-    // lose: the UI asks first.
-    bool unsavedUntitled() const;
-    // Replace the running rack with a new, empty one, or with the rack at
-    // `chosen` (a bundle, or its rack.json). A titled rack is saved first, as
-    // at quit (unless saving is off); if that fails, nothing changes. Editors
-    // close, MIDI learn is cancelled. False (with a notice) if nothing changed.
-    bool newRack();
-    bool openRack(const std::string& chosen);
-    // To rackPath(), and the rig too if it has changes, and every other rack
-    // with edits kept in memory (Ctrl-S saves everything; docs/setlists.md,
-    // section 6). False (with a notice) if untitled, saving is off, or a write
-    // failed (that rack stays unsaved).
+    // Anything Save would write: the song list, the running rack, other songs'
+    // racks edited, the rig. Close and Quit ask first when there is.
+    bool unsavedChanges() const;
+    // Quitting without saving (the user said so): saveForQuit() then does nothing.
+    void discardChanges() noexcept { discarding = true; }
+    // Replace the set with a new, untitled one: one empty song, and a copy of
+    // the rig in use. Edits to the set left are dropped (the UI asks first).
+    void newSet();
+    // Replace the set with the one at `chosen`, at `song` (clamped): a set
+    // package; or an older `.setlist` file or a lone `.rack` bundle, made into
+    // an untitled set (their files left alone). False (with a notice, nothing
+    // changed) if it can't be read.
+    bool openSet(const std::string& chosen, std::size_t song = 0);
+    // The whole set to setPath(): the song list, the rig if it changed, every
+    // rack with edits (the running one's and those kept in memory), and racks
+    // no song uses are removed. False (with a notice) if untitled, saving is
+    // off, or the write failed (everything stays unsaved).
     bool save();
-    // Racks switched away from with unsaved edits: kept in memory, one copy per
-    // rack path, which preparing, switching to or opening that rack uses (it's
-    // unsaved again then). A live switch never saves (section 6).
+    // Racks switched away from with edits (and every rack of an untitled set
+    // but the running one): kept in memory until the set is saved.
     std::size_t unsavedRackCount() const noexcept { return unsavedRacks.size(); }
-    // The rig in use: the setlist's, else the default (empty: none).
-    const std::string& rigPath() const noexcept { return rigFile; }
-    // Save to a new bundle (".rack" added if missing), which becomes the rack's
-    // path and its name. An existing rack there is replaced only with `replace`;
+    // Save to a new package (".setlist" added if missing), which becomes the
+    // set's file. An existing set there is replaced only with `replace`;
     // anything else there never is.
     enum class SaveAsResult { Saved, Failed, NeedsReplace };
     SaveAsResult saveAs(const std::string& chosen, bool replace = false);
-    // At quit: save a titled rack and every rack kept unsaved (unless saving is
-    // off). False if a save failed.
+    // At quit: a titled set with changes is saved, unless saving is off or
+    // discardChanges() was called. False if the save failed.
     bool saveForQuit();
     // Changes whenever another rack replaces the running one: windows tied to
     // its sequences must close (their ids may mean something else now).
     std::uint64_t rackGeneration() const noexcept { return generation; }
     void quit();
 
-    // --- the setlist (docs/setlists.md, section 1). Its edits are saved at
-    // once (a setlist has no unsaved state); a rack's are saved as always. ---
-    bool               hasSetlist() const noexcept { return setlistOpen; }
-    const std::string& setlistPath() const noexcept { return setlistFile; }
-    // A new setlist at `chosen` (".setlist" added), opened at once. With
-    // `withThisRack`, the running rack is its first song: it must be saved
-    // somewhere (an untitled rack can't be a song). An existing setlist is
-    // replaced only with `replace`; anything else there never is.
-    enum class NewSetlistResult { Created, Failed, NeedsReplace };
-    NewSetlistResult newSetlist(const std::string& chosen, bool withThisRack, bool replace = false);
-    // Open a setlist and go to `song` (clamped; a missing song: the next one
-    // there is). A set with no songs opens with the running rack left as is.
-    bool openSetlist(const std::string& chosen, std::size_t song = 0);
-    void closeSetlist();   // the running rack stays open, on its own
-    // Switch to a song's rack (the running rack is saved first, as Open does),
-    // with one graph commit; editors, MIDI learn and sequence windows close.
-    // A rack that isn't prepared yet (section 2) is prepared first, one plugin
-    // per tick() while the current one plays, and the switch happens when it's
-    // ready (true then too; switchPending() meanwhile). Only the last request
-    // counts. Another appearance of the rack playing is the same rack: only
-    // the position moves. False, with a notice, if its rack is missing or
-    // won't load.
+    // --- songs (docs/setlists.md, sections 1 to 5). Edits mark the set
+    // edited; Save writes them. ---
+    // Switch to a song's rack, with one graph commit; editors, MIDI learn and
+    // sequence windows close. The rack left keeps its edits in memory.
     bool goToSong(std::size_t index);
     bool switchPending() const noexcept { return waitingSong.has_value(); }
     // Ready to switch to at once: prepared, or the rack playing.
     bool songPrepared(std::size_t index) const;
     bool nextSong();       // skipping missing songs; false at the end
     bool previousSong();
-    // Edits, all saved to the setlist file at once. "After the current song":
-    // after the song playing, or where its song was if that was removed.
-    bool addRackToSetlist(const std::string& chosen);          // after the current song; no switch
-    bool addNewRackToSetlist(const std::string& chosen);       // a copy of the song playing (else empty) saved there; goes to it
-    bool addThisRackAgain();                                   // the current song's rack, after it
-    // The running rack when it isn't a song (it was playing when the set
-    // opened): added where the next song goes, and it's the current song now,
-    // with no switch. It must be saved somewhere (Save As names an untitled one).
-    bool addRunningRackToSetlist();
+    // Edits. "After the current song": where the next song goes.
+    // A copy of the song playing, as a rack of its own ("So what 2"), after
+    // it; it's played.
+    bool newSong();
+    // A copy of the rack bundle at `chosen` (a bundle, or its rack.json), as a
+    // rack of the set's own, after the current song; no switch.
+    bool importRack(const std::string& chosen);
+    bool addThisRackAgain();                                   // the current song's rack, after it (a reprise)
     bool moveSong(std::size_t index, int delta);               // -1 up, +1 down
     bool renameSong(std::size_t index, const std::string& name);   // "" = the rack's own name
-    bool removeSong(std::size_t index);                        // the rack stays on disk
-    bool relinkSong(std::size_t index, const std::string& chosen);   // point a (missing) song at another rack
+    // A set keeps at least one song: false for the last one. Removing the song
+    // playing goes to the next (else the previous) first. Its rack goes when
+    // the set is saved, unless another song uses it.
+    bool removeSong(std::size_t index);
     // Check setlist (milestone 7, edge case 9): each song's rack is read and
     // prepared once, in turn (one plugin per tick, after preparing ahead, as
     // the status bar shows), then dropped, and what reaching it would report
@@ -484,20 +471,14 @@ private:
     template <typename Change>
     void           editLooper(const std::string& id, Change change);
     void           buildLoopers();   // model.loopers
-    bool           replaceRack(const Rack& rack, const std::string& path, const std::vector<std::string>& warnings);
-    // Save the running rack as quitting would, close what belongs to it, and
-    // make `next` the running rack (one graph commit). `next` is taken only on
-    // success; false (nothing changed) if the save failed.
-    // `how`: the setlist's switch settings for a song; Open and New (not live
-    // actions) stop the transport and switch at once.
-    // `live`: a song switch, which never saves; the rack left keeps its edits
-    // in memory (unsavedRacks). Otherwise it's saved first, as at quit, and a
-    // failed save changes nothing.
+    // Make `next` the running rack (one graph commit), closing what belonged
+    // to the one left, which keeps its edits in memory (unsavedRacks) if it has
+    // some, or if it isn't on disk. `next` is taken only on success.
+    // `how`: the setlist's switch settings for a live switch; opening a set
+    // stops the transport and switches at once.
     bool           switchRack(std::unique_ptr<PreparedRack>& next, const std::string& path,
                               const std::vector<std::string>& warnings, const Session::SwitchOptions& how,
                               bool live);
-    bool           saveUnsavedRacks();   // every rack in unsavedRacks; a notice for each that fails
-    bool           saveCaptured(const Rack& captured);   // to target, as save() does
     // goToSong(); `now`: finish preparing it at once rather than over ticks.
     bool           goTo(std::size_t index, bool now);
     // Read the rack at `bundle` and start preparing it (its plugins come at
@@ -513,14 +494,23 @@ private:
     void           forgetChecks();   // the set changed: its checks were for another
     void           refreshSongs(double now);   // songCache and songBundles
     int            neighbour(int step) const;  // where Next (1) or Previous (-1) goes, by songCache; -1: none
-    // Open the rack bundle at `bundle` (with replaceRack()); false, with a notice, if it can't.
-    bool           loadRackAt(const std::string& bundle);
-    bool           writeSetlist();          // to setlistFile; a notice if it fails
-    // Use the rig at `path` ("" = the default): the one in use is saved first
-    // if it has changes, as a rack is when switching. A missing default rig is
-    // created empty. Nothing happens if it's already in use.
-    void           useRig(const std::string& path);
-    bool           saveRigIfModified();     // false (with a notice) if a save failed
+    bool           setEdited();             // the song list changed: marked edited, the songs checked again
+    // A song's rack, by its name in the set: its bundle (the key in prepared,
+    // unsavedRacks and the like), whether it's there, and reading it (the
+    // copy in memory if there is one).
+    std::string    bundleOf(const std::string& rack) const;
+    bool           rackThere(const std::string& bundle) const;
+    RackFileResult readRack(const std::string& bundle, Rack& rack) const;
+    std::set<std::string> rackNames() const;   // the set's, for a new one's name
+    // Make the set running `next` (its file "" for untitled), with `racks` (by
+    // name) held in memory and `rig` in use, at `start`. Everything of the set
+    // left is dropped.
+    bool           adoptSet(Set next, const std::string& file, const Rig& rig, std::map<std::string, Rack> racks,
+                            std::size_t start, bool edited);
+    // Write the set to `path` (from setFile, if it's another); on success it's
+    // the set's file and nothing is unsaved.
+    bool           writeSet(const std::string& path);
+    void           useRig(const Rig& rig);   // into the Session (busEditors close)
     void           rememberPosition();      // config.lastPositionPath
     void           buildSetlist();             // model.setlist
     std::size_t    insertionPoint() const;  // where "after the current song" is
@@ -602,8 +592,7 @@ private:
     std::string                                           learningId;   // the sequence being learned for
     SequenceTrigger::Action                               learningAction = SequenceTrigger::Action::Toggle;
     SetlistTrigger::Action                                setlistLearnAction = SetlistTrigger::Action::Next;
-    std::string                                           target;          // the rack's bundle; "" = untitled
-    std::string                                           rigFile;         // the rig in use; "" = none
+    std::string                                           target;          // the running rack's bundle
     std::uint64_t                                         generation = 0;  // rackGeneration()
     std::string                                           clickDevice;     // connected to; "" = nowhere
     bool                                                  clickMissing = false;
@@ -615,11 +604,12 @@ private:
     static constexpr double                               kPanicLitSeconds = 0.5;
     std::vector<std::string>                              notices;
 
-    // The open setlist. `song` is the song playing when `onSong`; otherwise
-    // where the next song is (its song was removed, or nothing is played yet).
-    bool                                                  setlistOpen = false;
-    Setlist                                               setlist;
-    std::string                                           setlistFile;
+    // The set. `song` is the song playing when `onSong` (only false when a
+    // set's racks couldn't be read).
+    Set                                                   setlist;
+    std::string                                           setFile;   // its package; "" = untitled
+    bool                                                  edited     = false;   // its song list, since saved
+    bool                                                  discarding = false;   // discardChanges()
     std::size_t                                           song   = 0;
     bool                                                  onSong = false;
     // The songs as the view shows them (names, missing racks): checked on

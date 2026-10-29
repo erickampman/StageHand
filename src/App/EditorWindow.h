@@ -20,8 +20,8 @@ namespace stagehand {
 // Closing the window (the window manager's close button) closes the editor and
 // the window only: audio keeps running, since a live rig must not stop because
 // an editor was closed. Ctrl-Q in the window quits StageHand (by asking the
-// MainLoop to stop, the same path as Ctrl-C in the terminal, so --save-rack still
-// saves). Ctrl-Shift-S calls the app's save action, if one was given. Both are
+// MainLoop to stop, the same path as Ctrl-C in the terminal, so a titled set
+// with changes is still saved). Ctrl-Shift-S calls the app's save action, if one was given. Both are
 // grabbed on the host window, so they work while the plugin's editor has focus;
 // every other key (Ctrl-C, Ctrl-S, ...) still goes to the plugin.
 class EditorWindow final : public EditorHost {

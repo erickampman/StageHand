@@ -259,11 +259,11 @@ struct SongModel {
     bool operator==(const SongModel&) const = default;
 };
 struct SetlistModel {
-    bool                   open = false;
-    std::string            name;          // the file's name
+    bool                   open = false;   // always, now: the set is the one document
+    std::string            name;          // the package's name; "Untitled"
+    bool                   edited = false;   // its song list, switch settings or triggers, since saved
     std::vector<SongModel> songs;
-    // The song playing, or -1: none yet (an empty set), or its song was removed
-    // (the rack still plays; Next goes to the song that followed it).
+    // The song playing; -1 only if none of the set's racks could be played.
     int                    current = -1;
     int                    next     = -1;  // where Next goes (missing songs skipped), or -1
     int                    previous = -1;  // where Previous goes, or -1
