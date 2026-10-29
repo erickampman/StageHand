@@ -41,4 +41,25 @@ struct Setlist {
     bool operator==(const Setlist&) const = default;
 };
 
+// --- the set (docs/documents.md): a package holding its racks and its rig ---
+
+// One place in a set: a rack in the set's own Racks/ folder, by name, and
+// optionally the name it goes by here. Two songs naming one rack are a reprise.
+struct SetSong {
+    std::string rack;   // "So what" is Racks/So what.rack
+    std::string name;   // "" = the rack's name
+
+    bool operator==(const SetSong&) const = default;
+};
+
+// setlist.json in a set package. The rig and the racks are files of their own
+// beside it (Session/SetFile.h).
+struct Set {
+    std::vector<SetSong>        songs;   // at least one, once saved
+    SwitchSettings              switching;
+    std::vector<SetlistTrigger> triggers;
+
+    bool operator==(const Set&) const = default;
+};
+
 } // namespace stagehand

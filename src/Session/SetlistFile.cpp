@@ -9,11 +9,12 @@
 
 #include "Session/AppPaths.h"
 #include "Session/BundleFiles.h"
+#include "Session/SetlistJson.h"
 
 namespace stagehand {
 
 namespace fs = std::filesystem;
-using Json   = nlohmann::ordered_json;
+using Json   = bundle::Json;
 using namespace bundle;
 
 namespace {
@@ -32,71 +33,6 @@ std::string rackPathText(const fs::path& rack, const fs::path& folder) {
         if (!relative.empty()) return relative.generic_string();
     }
     return abbreviateHome(rack.string());
-}
-
-constexpr std::pair<const char*, SwitchSettings::Transport> kTransports[] = {
-    {"keep", SwitchSettings::Transport::Keep}, {"stop", SwitchSettings::Transport::Stop}};
-constexpr std::pair<const char*, SwitchSettings::When> kWhens[] = {   // the first is the default
-    {"nextBar", SwitchSettings::When::NextBar}, {"now", SwitchSettings::When::Now}};
-constexpr std::pair<const char*, SwitchSettings::OldRack> kOldRacks[] = {
-    {"ringOut", SwitchSettings::OldRack::RingOut}, {"cut", SwitchSettings::OldRack::Cut}};
-
-template <typename Enum, std::size_t N>
-Enum choice(const Json& j, const char* field, const std::pair<const char*, Enum> (&values)[N]) {
-    if (!j.contains(field)) return values[0].second;   // the first is the default
-    const std::string text = j.at(field).get<std::string>();
-    for (const auto& [name, value] : values)
-        if (text == name) return value;
-    fail(std::string("unknown \"") + field + "\": \"" + text + "\"");
-}
-
-constexpr std::pair<const char*, SetlistTrigger::Action> kTriggerActions[] = {
-    {"next", SetlistTrigger::Action::Next}, {"previous", SetlistTrigger::Action::Previous},
-    {"song", SetlistTrigger::Action::Song}};
-
-int numberIn(const Json& j, const char* field, int fallback, int low, int high) {
-    const int value = j.value(field, fallback);
-    if (value < low || value > high)
-        fail(std::string(field) + " must be within " + std::to_string(low) + "-" + std::to_string(high));
-    return value;
-}
-
-template <typename Enum, std::size_t N>
-const char* nameOf(const std::pair<const char*, Enum> (&values)[N], Enum value) {
-    for (const auto& [name, v] : values)
-        if (v == value) return name;
-    return values[0].first;
-}
-
-// {"action": "next", "source": "device:<id>", "controller": 80, "channel": 1,
-// "group": 1}, or "note" instead of "controller"; "song" (a Program Change)
-// has neither.
-SetlistTrigger parseTrigger(const Json& j) {
-    if (!j.is_object()) fail("each trigger is an object");
-    SetlistTrigger t;
-    t.action = choice(j, "action", kTriggerActions);
-    t.source = parseSource(j.value("source", std::string("all")));
-    if (t.source.kind == MidiSourceRef::Kind::Sequence || t.source.kind == MidiSourceRef::Kind::None)
-        fail("a trigger's source must be an input");
-    if (t.action != SetlistTrigger::Action::Song) {
-        if (j.contains("note") == j.contains("controller")) fail("a Next or Previous trigger has a \"note\" or a \"controller\"");
-        t.control = j.contains("note") ? SequenceTrigger::Control::Note : SequenceTrigger::Control::Controller;
-        t.number  = static_cast<std::uint8_t>(numberIn(j, j.contains("note") ? "note" : "controller", 0, 0, 127));
-    }
-    t.channel = static_cast<std::uint8_t>(numberIn(j, "channel", 1, 1, 16) - 1);
-    t.group   = static_cast<std::uint8_t>(numberIn(j, "group", 1, 1, 16) - 1);
-    return t;
-}
-
-Json triggerJson(const SetlistTrigger& t) {
-    Json j;
-    j["action"] = nameOf(kTriggerActions, t.action);
-    j["source"] = sourceText(t.source);
-    if (t.action != SetlistTrigger::Action::Song)
-        j[t.control == SequenceTrigger::Control::Note ? "note" : "controller"] = t.number;
-    j["channel"] = t.channel + 1;
-    j["group"]   = t.group + 1;
-    return j;
 }
 
 } // namespace
@@ -142,11 +78,7 @@ RackFileResult loadSetlist(const std::string& path, Setlist& setlist) {
             if (!loaded.rig.empty() && loaded.rig.back() == '/') loaded.rig.pop_back();
         }
         if (doc.contains("switching")) {
-            const Json& sw = doc.at("switching");
-            if (!sw.is_object()) fail("\"switching\" must be an object");
-            loaded.switching.transport = choice(sw, "transport", kTransports);
-            loaded.switching.when      = choice(sw, "at", kWhens);
-            loaded.switching.oldRack   = choice(sw, "oldRack", kOldRacks);
+            loaded.switching = parseSwitching(doc.at("switching"));
         }
         if (doc.contains("triggers")) {
             if (!doc.at("triggers").is_array()) fail("\"triggers\" must be a list");
@@ -178,13 +110,7 @@ RackFileResult saveSetlist(const std::string& path, const Setlist& setlist) {
     }
     doc["songs"] = songs;
     if (!setlist.rig.empty()) doc["rig"] = rackPathText(fs::path(setlist.rig).lexically_normal(), folder);
-    if (setlist.switching != SwitchSettings{}) {
-        Json sw;
-        sw["transport"] = nameOf(kTransports, setlist.switching.transport);
-        sw["at"]        = nameOf(kWhens, setlist.switching.when);
-        sw["oldRack"]   = nameOf(kOldRacks, setlist.switching.oldRack);
-        doc["switching"] = sw;
-    }
+    if (setlist.switching != SwitchSettings{}) doc["switching"] = switchingJson(setlist.switching);
     if (!setlist.triggers.empty()) {
         Json triggers = Json::array();
         for (const SetlistTrigger& t : setlist.triggers) triggers.push_back(triggerJson(t));

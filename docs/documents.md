@@ -57,8 +57,7 @@ rack"), and each was found the hard way.
 ```
 Friday gig.setlist/          a package on macOS: one file in the Finder
   setlist.json               order, names, switch settings, MIDI triggers
-  rig.json                   the set's rig (rig.md's rig.json, unchanged)
-  rig-state/A1.bin           its effects' saved state
+  rig/                       the set's rig: rig.json, state/*.bin (rig.md's bundle)
   Racks/
     Autumn leaves.rack/      rack.json, state/*.bin (rack-format.md, unchanged)
     So what.rack/
@@ -180,8 +179,16 @@ untitled set isn't reopened (Later: a working copy, as KeyboardEDO keeps).
 ## Proposed milestones
 
 1. **The set package.** `Session/SetFile`: load and save a set package
-   (setlist.json, rig.json and its state, `Racks/`), with tests. Conversion
-   from an old `.setlist` and from a `.rack`, if it's easy (decision 10).
+   (setlist.json, rig/, `Racks/`), with tests. Conversion from an old
+   `.setlist` and from a `.rack`, if it's easy (decision 10).
+   **Built 2026-10-28:** `loadSet()`; `saveSet()` in place (edited racks and
+   the rig swapped in whole, then setlist.json, then unused racks removed) or
+   to a new package (built beside it and swapped in, copying unedited racks
+   and the rig from the set it came from); `convertSetlist()` and
+   `setFromRack()` make an unsaved set in memory (`LoadedSet`), the old files
+   left alone. The setlist's switch settings and triggers are read and
+   written by the same code as before (`Session/SetlistJson.h`). Not used by
+   the app yet (milestone 2). Tests: `tests/SetFileTests.cpp`.
 2. **One set, always.** The app always has exactly one set open: a plain
    start gives an untitled one-song set; New and Open replace it; Cmd-S saves
    it whole. The states, commands and files listed under "What goes away"

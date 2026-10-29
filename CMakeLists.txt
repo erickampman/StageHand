@@ -133,6 +133,7 @@ add_library(stagehand-session STATIC
     src/Session/RackFile.cpp
     src/Session/RigFile.cpp
     src/Session/Session.cpp
+    src/Session/SetFile.cpp
     src/Session/SetlistFile.cpp
     src/Session/WindowState.cpp)
 target_link_libraries(stagehand-session
@@ -341,6 +342,7 @@ stagehand_add_test(test-sequence tests/SequenceTests.cpp stagehand-engine)
 stagehand_add_test(test-looper  tests/LooperTests.cpp    stagehand-engine)
 stagehand_add_test(test-rackfile tests/RackFileTests.cpp stagehand-session)
 stagehand_add_test(test-setlistfile tests/SetlistFileTests.cpp stagehand-session)
+stagehand_add_test(test-setfile tests/SetFileTests.cpp stagehand-session)
 stagehand_add_test(test-rigfile tests/RigFileTests.cpp stagehand-session)
 stagehand_add_test(test-session  tests/SessionTests.cpp  stagehand-session)
 stagehand_add_test(test-rackcontroller tests/RackControllerTests.cpp stagehand-app)
