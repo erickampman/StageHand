@@ -354,7 +354,7 @@ void SequenceEditorWidget::drawStrip(const Sequence& seq) {
         "Click: add a note; drag right: longer", "Drag a note: move (Shift: one way)", "Drag its right edge: length",
         alt + "-drag: copy    " + cmd + "-drag: velocity", "Right- or double-click: delete",
         "Shift-click: select    Shift-drag: area", "Arrows: move    Delete: remove",
-        cmd + "-Z, " + cmd + "-Shift-Z: undo, redo", "Space: play or stop", "Wheel: scroll    Shift: sideways",
+        cmd + "-Z, " + cmd + "-Shift-Z: undo, redo", "Space: play or stop", "Wheel: scroll    Shift or swipe: sideways",
         cmd + "-wheel: zoom"};
     float y = 468.0f;
     for (const std::string& line : help) {
@@ -486,6 +486,11 @@ void SequenceEditorWidget::wheelUnclaimed(float x, float, float notches, std::ui
         scrollY -= notches * kRowH * 3.0f;
     }
     clampScroll();
+}
+
+// A sideways swipe scrolls as Shift+wheel does (Umpire's grid does the same).
+void SequenceEditorWidget::swipeUnclaimed(float x, float y, float notches) {
+    wheelUnclaimed(x, y, notches, dgl::kModifierShift);
 }
 
 bool SequenceEditorWidget::onKeyboard(const KeyboardEvent& ev) {

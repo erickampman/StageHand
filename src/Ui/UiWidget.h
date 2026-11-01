@@ -97,6 +97,9 @@ protected:
     virtual void dismissOverlays() {}         // a click elsewhere, or Escape
     // A wheel no region took (e.g. scroll a list).
     virtual void wheelUnclaimed(float /*x*/, float /*y*/, float /*notches*/, std::uint32_t /*mod*/) {}
+    // A sideways swipe (a trackpad's, or a tilt wheel's): `notches` right is
+    // positive. Ignored unless a widget scrolls sideways.
+    virtual void swipeUnclaimed(float /*x*/, float /*y*/, float /*notches*/) {}
 
     // --- geometry (logical pixels; the window's scale factor is applied when drawing)
     float scaleFactor();

@@ -21,6 +21,7 @@ public:
 protected:
     void draw() override;
     void wheelUnclaimed(float x, float y, float notches, std::uint32_t mod) override;
+    void swipeUnclaimed(float x, float y, float notches) override;
     bool onKeyboard(const KeyboardEvent& ev) override;
 
 private:

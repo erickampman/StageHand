@@ -720,6 +720,11 @@ bool UiWidget::onMotion(const MotionEvent& ev) {
 bool UiWidget::onScroll(const ScrollEvent& ev) {
     const float sf = scaleFactor();
     const float x = static_cast<float>(ev.pos.getX()) / sf, y = static_cast<float>(ev.pos.getY()) / sf;
+    if (ev.delta.getY() == 0 && ev.delta.getX() != 0) {   // sideways: no region takes it
+        swipeUnclaimed(x, y, static_cast<float>(ev.delta.getX()));
+        repaint();
+        return true;
+    }
     const float notches = static_cast<float>(ev.delta.getY());
     // The topmost region under the pointer that takes the wheel gets it.
     for (auto r = regions.rbegin(); r != regions.rend(); ++r) {

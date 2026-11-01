@@ -285,8 +285,10 @@ Implemented 2026-09-29 (milestone 4):
   - Arrows move the selection; Shift moves by a beat, or by an octave (one EDO
     period) vertically.
   - Space plays or stops the sequence.
-  - The wheel scrolls, Shift-wheel scrolls sideways, and Ctrl-wheel zooms. The
-    zoom fits the loop to the window until you zoom yourself.
+  - The wheel scrolls, Shift-wheel or a sideways swipe (a trackpad's, or a
+    tilt wheel's; added 2026-11-01, as Umpire's grid) scrolls sideways, and
+    Ctrl-wheel zooms. The zoom fits the loop to the window until you zoom
+    yourself.
 - **The strip also sets:** "Step 0 at" (the reference note), and the length
   of new notes. The note-off offset steps by 10 ms (Shift: 100 ms).
 - **Hearing notes as you edit (added 2026-10-01):** adding a note sounds it,
