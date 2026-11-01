@@ -170,7 +170,16 @@ void MainLoop::run() {
                                                       untilDate:[NSDate dateWithTimeIntervalSinceNow:0.05]
                                                          inMode:NSDefaultRunLoopMode
                                                         dequeue:YES];
-            if (event != nil && event.type != NSEventTypeApplicationDefined) [NSApp sendEvent:event];
+            if (event != nil && event.type != NSEventTypeApplicationDefined) {
+                // Timers that fire from here on are inside AppKit's own loop
+                // (a resize tracked, a menu), not this one: inNestedLoop().
+                ++dispatching;
+                @try {
+                    [NSApp sendEvent:event];
+                } @finally {
+                    --dispatching;
+                }
+            }
         }
     }
 }

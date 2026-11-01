@@ -52,6 +52,18 @@ public:
     // to the wake-up pipe.
     void requestQuit() noexcept;
 
+    // True while a callback runs inside a loop other than run()'s own: on
+    // macOS, AppKit's (a live resize, a menu tracked, a modal panel), which
+    // run() entered by dispatching an event. Something that takes events
+    // itself (DGL's idle(), pugl's puglUpdate()) must wait until it's false:
+    // taken from inside that loop, the loop's own events are dispatched again,
+    // nested, and AppKit's resize tracking crashes. Always false on Linux.
+#ifdef __APPLE__
+    bool inNestedLoop() const noexcept { return dispatching > 0; }
+#else
+    bool inNestedLoop() const noexcept { return false; }
+#endif
+
 private:
 #ifdef __APPLE__
     struct Timer {
@@ -76,6 +88,7 @@ private:
     int                      wakeRead    = -1;   // self-pipe: requestQuit() from a signal handler
     int                      wakeWrite   = -1;
     std::atomic<bool>        quit{false};
+    int                      dispatching = 0;   // run() inside sendEvent:
 #else
     using Clock = std::chrono::steady_clock;
 

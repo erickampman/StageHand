@@ -586,6 +586,15 @@ console only and says so. The click isn't routed on macOS yet
   could wait on forever (half of ten AppleScript quits; Ctrl-C the same).
   `run()` now waits at most 50 ms for an event before looking at its quit
   flag again: 10 of 10 quits through AppleScript, 5 of 5 Ctrl-Cs.
+- **Found: a crash in AppKit's resize tracking** (2026-11-01, a crash
+  report: `-[NSWindow _resizeChangedForDirectTouch:...]` reading 0x28, from
+  `_runResizeTrackingLoop`, under `MainLoop::run()`'s `sendEvent:`). The
+  timers run in the common modes, so the 16 ms one ran DGL's `idle()` inside
+  AppKit's resize loop too, and pugl's `puglUpdate()` took that loop's
+  mouse events and sent them again from inside it. `MainLoop::inNestedLoop()`
+  (true while `run()` is inside `sendEvent:`) now keeps `idle()` out of
+  AppKit's loops; the other timers (service, tick, refresh) still run there.
+  Not yet checked on a Mac.
 - **Choosing a rack:** once the app is registered, a `.rack` is a package (a
   file to the open panel), so the rack chooser takes the rack type or a
   plain folder (a rack from before, or from Linux).

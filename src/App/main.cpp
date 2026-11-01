@@ -799,7 +799,11 @@ int runPlay(const Options& options) {
     });
     if (ui)
         loop.addTimer(16, [&] {   // the rack window's events
-            ui->idle();
+            // Not from inside AppKit's own loop (a window being resized): DGL's
+            // idle() takes events, and the resize tracking's would be sent again
+            // from in it, which crashed AppKit. The window still draws (AppKit
+            // asks it); the rest waits for the resize to end.
+            if (!loop.inNestedLoop()) ui->idle();
             if (ui->closed()) loop.requestQuit();   // closing it quits, like Ctrl-Q
         });
 
