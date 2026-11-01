@@ -594,7 +594,8 @@ console only and says so. The click isn't routed on macOS yet
   mouse events and sent them again from inside it. `MainLoop::inNestedLoop()`
   (true while `run()` is inside `sendEvent:`) now keeps `idle()` out of
   AppKit's loops; the other timers (service, tick, refresh) still run there.
-  Not yet checked on a Mac.
+  Checked on a Mac: dragging the rack window's and a sequence editor's edges
+  and corners, playing, then quitting; no crash.
 - **Choosing a rack:** once the app is registered, a `.rack` is a package (a
   file to the open panel), so the rack chooser takes the rack type or a
   plain folder (a rack from before, or from Linux).
