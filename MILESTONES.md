@@ -44,3 +44,4 @@
 - [ ] Backing tracks: an audio file per song, in time with the transport
 - [ ] Song notes in the Perform view
 - [ ] Undo for rack edits
+- [ ] Sequence editor: horizontal scrolling by a trackpad's sideways swipe too, not only Shift+wheel, as Umpire's grid (Umpire docs/clip-editor.md, "Scrolling")
