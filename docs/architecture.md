@@ -1,6 +1,6 @@
 # StageHand — Architecture & Technology Decisions
 
-A CLAP (later VST3) plugin host / live rig for Linux, MIDI-2.0-native on the CLAP
+A CLAP (later VST® 3) plugin host / live rig for Linux, MIDI-2.0-native on the CLAP
 path (VST3 is best-effort — see §3a). A MainStage-style performance host, not a
 DAW. Sequencer UI is a future goal.
 
@@ -497,3 +497,5 @@ minimal picks never block tomorrow's:
    later. Routing and protocol translation live in the engine, not the seam.
 2. **Audio backend seam** — JACK today, PortAudio/CoreAudio later.
 3. **Hosted-plugin seam** — CLAP today, VST3 later.
+
+VST is a registered trademark of Steinberg Media Technologies GmbH.

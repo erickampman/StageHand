@@ -209,7 +209,7 @@ if several).**
   original sample offset, in order.
 - The engine does routing and translation. The plugin seam only maps the type
   already chosen (MT `0x2`/`0x1` → `clap_event_midi`, MT `0x4` →
-  `clap_event_midi2`). A VST3 impl decodes both into VST3's own event model
+  `clap_event_midi2`). A VST® 3 impl decodes both into VST3's own event model
   (architecture.md §3a); which dialect it advertises is its choice.
 
 ### Routing: which plugin hears what
@@ -491,3 +491,5 @@ take the non-RT `params.flush` path instead.
   choice. Clarify what's wanted before designing. It could be "receive as"
   (Auto = the plugin's preference, or force MIDI 1.0 / MIDI 2.0 translation for
   this row), or accepting only sources of one protocol.
+
+VST is a registered trademark of Steinberg Media Technologies GmbH.

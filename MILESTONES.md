@@ -24,11 +24,11 @@
 - [ ] DPF portal file dialog on Linux (replaces zenity/kdialog)
 
 ## M3: Performance features
-- [ ] Count-in per song; Perform view with large beat display
-- [ ] Panic: all notes off and pedals up, button and learned trigger; CPU and xrun display
+- [x] Count-in per song; Perform view with large beat display
+- [x] Panic: all notes off and pedals up, button and learned trigger; CPU and xrun display
 - [ ] Panic clears retuned keys: track keys sent Pitch 7.25, send Per-Note Management Reset to those only
 - [x] Take the uw-core pin with Pitch 7.25 transpose (value moves with the key)
-- [ ] MIDI controllers to plugin parameters (knobs, faders, expression pedal), learned per rack or global
+- [x] MIDI controllers to plugin parameters (knobs, faders, expression pedal), learned per rack or global (Control Links; made and edited graphically too, later)
 - [ ] Velocity curves per row, or fixed velocity
 - [x] MIDI effects per row: plugin note/MIDI output (uw-core), the chain in the engine, Retune → StruckSynth test (docs/midi-effects.md)
 - [x] MIDI effects in the rack file and the row's input side: MIDI FX menu, editors, bypass (docs/midi-effects.md, section 3)
@@ -44,4 +44,4 @@
 - [ ] Backing tracks: an audio file per song, in time with the transport
 - [ ] Song notes in the Perform view
 - [ ] Undo for rack edits
-- [x] Sequence editor: horizontal scrolling by a trackpad's sideways swipe too, not only Shift+wheel, as Umpire's grid (Umpire docs/clip-editor.md, "Scrolling")
+- [x] Sequence editor: horizontal scrolling by a trackpad's sideways swipe too, not only Shift+wheel, as Umpire's grid
