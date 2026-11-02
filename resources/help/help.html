@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <title>help-StageHand</title>
     <style>
-    :root {
+:root {
   --bg: #0f1115;
   --page: #141823;
   --text: #e6e2d8;
@@ -249,340 +249,804 @@ h1.card, h2.card, h3.card {
 .breadcrumb a:hover { opacity: 1.0; }
 .breadcrumb .crumb-current { opacity: 1.0; }
 
-    </style>
+
+/* Tables (pipe tables from pandoc) */
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1rem 0;
+  font-size: 0.95em;
+}
+
+th, td {
+  padding: 0.4rem 0.6rem;
+  border-bottom: 1px solid #ddd;
+  text-align: left;
+  vertical-align: top;
+}
+
+thead th {
+  border-bottom: 2px solid #bbb;
+  font-weight: 600;
+}
+
+tbody tr:nth-child(even) {
+  background: rgba(0, 0, 0, 0.025);
+}    </style>
 </head>
 <body>
 <div class="page">
-<p><div style="display: flex; align-items: center; gap: 0.75rem; margin: 1.5rem 0 0.5rem;"> <a href="https://www.unlikelyware.com" target="_blank" rel="noopener noreferrer"> <img src="Unlikelyware.png" alt="Unlikelyware" style="width: 56px; height: auto; border-radius: 10px; margin: 0; display: block;"> </a> <h1 style="margin: 0;">StageHand</h1> </div></p>
-<p><p> <em>StageHand runs on macOS and Linux. Shortcuts are written with Cmd, as on the Mac; on Linux, use Ctrl. Where the Mac says Option, Linux says Alt.</em> </p></p>
-<div class="callout callout-note card">
-<div class="callout-content">
+<div style="display: flex; align-items: center; gap: 0.75rem; margin: 1.5rem 0 0.5rem;">
+  <a href="https://www.unlikelyware.com" target="_blank" rel="noopener noreferrer">
+    <img src="Unlikelyware.png" alt="Unlikelyware" style="width: 56px; height: auto; border-radius: 10px; margin: 0; display: block;">
+  </a>
+  <h1 style="margin: 0;">StageHand</h1>
+</div>
+
+<p>
+  <em>StageHand runs on macOS and Linux. Shortcuts are written with Cmd, as on the Mac; on Linux, use Ctrl. Where the Mac says Option, Linux says Alt.</em>
+</p>
+
+<section id="on-this-page" class="callout callout-note card">
 <h2>On This Page</h2>
-<p><a href="#overview">Overview</a> · <a href="#getting-started">Getting Started</a> · <a href="#nomenclature">Nomenclature</a> · <a href="#window">The Window</a> · <a href="#files">Files and Saving</a></p>
-<p><strong>The rack —</strong> <a href="#rows">Rack Rows</a> · <a href="#adding">Adding Plugins</a> · <a href="#inputs">Inputs and Filters</a> · <a href="#midifx">MIDI Effects</a> · <a href="#levels">Levels and Outputs</a> · <a href="#buses">The Rig's Buses</a></p>
-<p><strong>Time and sources —</strong> <a href="#transport">Transport and Click</a> · <a href="#count-in">Count-in</a> · <a href="#dock">The Sources Dock</a> · <a href="#sequences">Sequences</a> · <a href="#loopers">Loopers</a></p>
-<p><strong>On stage —</strong> <a href="#setlists">Setlists</a> · <a href="#perform">The Perform View</a> · <a href="#control-links">Control Links</a> · <a href="#panic">Panic</a> · <a href="#dsp">DSP and Xruns</a> · <a href="#shortcuts">Shortcuts</a> · <a href="#troubleshooting">Troubleshooting</a></p>
-</div>
-</div>
-<div class="callout callout-note card">
-<div class="callout-content">
-<h2 id="overview">Overview</h2>
-<p>StageHand is a <strong>live-performance host for CLAP plugins</strong>. It holds a set of instruments ready to play from your keyboards and controllers, moves through the songs of a set without gaps, and keeps the band in time with a click, sequences and loopers.</p>
-<p><strong>MIDI 1.0 and MIDI 2.0 are both first-class.</strong> A MIDI 2.0 keyboard reaches a MIDI 2.0 plugin with its full resolution and per-note expression; MIDI 1.0 gear and plugins work as they always have, with StageHand translating between the two where they meet.</p>
-<p>It's built for the stage first: large, high-contrast controls on a dark window; faders that move only when dragged, so a stray click changes nothing; song switches that let the last song's reverb ring out; and a Perform view with nothing on it to knock by accident.</p>
-</div>
-</div>
-<div class="callout callout-note card">
-<div class="callout-content">
-<h2 id="getting-started">Getting Started</h2>
-<ol>
-<li><strong>Add an instrument.</strong> Right-click the empty space below the rows (or click the large <strong>+</strong> there) and choose an instrument. <strong>+ Add plugin</strong> in the toolbar lists every plugin.</li>
-<li><strong>Choose what plays it.</strong> The menu at the left of the row is its input: <strong>All inputs</strong>, one keyboard or controller, or StageHand's own inputs for other apps. Play, and the light beside it flickers.</li>
-<li><strong>Set its level</strong> with the fader on the right. Open the plugin's own window with <strong>Editor</strong>.</li>
-<li><strong>Save</strong> with Cmd-S. A rack is saved as a <code>.rack</code> bundle, with every plugin's settings in it.</li>
-<li><strong>For a whole set,</strong> choose File → <strong>New setlist with this rack...</strong>, then add a song for each piece (see <a href="#setlists">Setlists</a>).</li>
+<p><a href="#overview">Overview</a> · <a href="#getting-started">Getting
+Started</a> · <a href="#nomenclature">Nomenclature</a> · <a
+href="#window">The Window</a> · <a href="#files">Files and
+Saving</a></p>
+<p><strong>The rack —</strong> <a href="#rows">Rack Rows</a> · <a
+href="#adding">Adding Plugins</a> · <a href="#inputs">Inputs and
+Filters</a> · <a href="#midifx">MIDI Effects</a> · <a
+href="#levels">Levels and Outputs</a> · <a href="#buses">The Rig's
+Buses</a></p>
+<p><strong>Time and sources —</strong> <a href="#transport">Transport
+and Click</a> · <a href="#count-in">Count-in</a> · <a href="#dock">The
+Sources Dock</a> · <a href="#sequences">Sequences</a> · <a
+href="#loopers">Loopers</a></p>
+<p><strong>On stage —</strong> <a href="#setlists">The Set and Its
+Songs</a> · <a href="#perform">The Perform View</a> · <a
+href="#control-links">Control Links</a> · <a href="#panic">Panic</a> ·
+<a href="#dsp">DSP and Xruns</a> · <a href="#shortcuts">Shortcuts</a> ·
+<a href="#troubleshooting">Troubleshooting</a></p>
+</section>
+<section id="overview" class="callout callout-note card">
+<h2>Overview</h2>
+<p>StageHand is a <strong>live-performance host for CLAP
+plugins</strong>. It holds a set of instruments ready to play from your
+keyboards and controllers, moves through the songs of a set without
+gaps, and keeps the band in time with a click, sequences and
+loopers.</p>
+<p><strong>MIDI 1.0 and MIDI 2.0 are both first-class.</strong> A MIDI
+2.0 keyboard reaches a MIDI 2.0 plugin with its full resolution and
+per-note expression; MIDI 1.0 gear and plugins work as they always have,
+with StageHand translating between the two where they meet.</p>
+<p>It's built for the stage first: large, high-contrast controls on a
+dark window; faders that move only when dragged, so a stray click
+changes nothing; song switches that let the last song's reverb ring out;
+and a Perform view with nothing on it to knock by accident.</p>
+</section>
+<section id="getting-started" class="callout callout-note card">
+<h2>Getting Started</h2>
+<ol type="1">
+<li><strong>Add an instrument.</strong> Right-click the empty space
+below the rows (or click the large <strong>+</strong> there) and choose
+an instrument. <strong>+ Add plugin</strong> in the toolbar lists every
+plugin.</li>
+<li><strong>Choose what plays it.</strong> The menu at the left of the
+row is its input: <strong>All inputs</strong>, one keyboard or
+controller, or StageHand's own inputs for other apps. Play, and the
+light beside it flickers.</li>
+<li><strong>Set its level</strong> with the fader on the right. Open the
+plugin's own window with <strong>Editor</strong>.</li>
+<li><strong>Save</strong> with Cmd-S. The first time, you name the set:
+it's saved as a <code>.setlist</code> package, with every song's rack
+and every plugin's settings in it.</li>
+<li><strong>For more songs,</strong> choose File → <strong>New song (a
+copy of this one)</strong>, or <strong>Import a rack...</strong> for one
+you made before (see <a href="#setlists">The Set and Its
+Songs</a>).</li>
 </ol>
-<p>Started with no arguments, StageHand reopens the last setlist at the song it was on, so after a crash or a restart you're back where you were.</p>
-</div>
-</div>
-<div class="callout callout-note card">
-<div class="callout-content">
-<h2 id="nomenclature">Nomenclature</h2>
+<p>Started with no arguments, StageHand reopens the last set at the song
+it was on, so after a crash or a restart you're back where you were.
+With no set saved before (or an untitled one last), it starts a new,
+untitled set of one empty song.</p>
+</section>
+<section id="nomenclature" class="callout callout-note card">
+<h2>Nomenclature</h2>
 <ul>
-<li><strong>Rack</strong> — Everything one piece of music needs: its rows, sequences, tempo, time signature and click. Saved as a <code>.rack</code> bundle (a folder that Finder shows as one file).</li>
-<li><strong>Row</strong> — One plugin in a rack, with its input, filter, level, sends and output.</li>
-<li><strong>Rig</strong> — What every song shares: the two effect buses and the master level. It stays loaded through song switches, so effects never reload and their tails ring on.</li>
-<li><strong>Setlist</strong> — The order of a set's songs and how to move between them. Saved as a <code>.setlist</code> file.</li>
-<li><strong>Song</strong> — One place in a setlist. It points to a rack and can give it a name of its own for that set.</li>
-<li><strong>Sequence</strong> — A short loop of notes that plays into one or more rows, in time with the transport.</li>
-<li><strong>Looper</strong> — Records what you play into rows and loops it back, driven by one footswitch.</li>
-<li><strong>Control Link</strong> — A hardware knob, fader or pedal tied to a plugin parameter or a level.</li>
+<li><strong>Set</strong> (or setlist) — The one document StageHand opens
+and saves: its songs in order, each song's rack, the rig, and how to
+move between songs. Saved as a <code>.setlist</code> package (a folder
+that Finder shows as one file; on Linux, a folder).</li>
+<li><strong>Song</strong> — One place in a set. It plays a rack of the
+set's own, and can give it a name of its own.</li>
+<li><strong>Rack</strong> — Everything one song needs: its rows,
+sequences, tempo, time signature and click. It lives inside its
+set.</li>
+<li><strong>Row</strong> — One plugin in a rack, with its input, filter,
+level, sends and output.</li>
+<li><strong>Rig</strong> — What every song in a set shares: the two
+effect buses and the master level. It stays loaded through song
+switches, so effects never reload and their tails ring on.</li>
+<li><strong>Sequence</strong> — A short loop of notes that plays into
+one or more rows, in time with the transport.</li>
+<li><strong>Looper</strong> — Records what you play into rows and loops
+it back, driven by one footswitch.</li>
+<li><strong>Control Link</strong> — A hardware knob, fader or pedal tied
+to a plugin parameter or a level.</li>
 </ul>
-</div>
-</div>
-<div class="callout callout-note card">
-<div class="callout-content">
-<h2 id="window">The Window</h2>
-<p><strong>The toolbar, left to right:</strong></p>
+</section>
+<section id="window" class="callout callout-note card">
+<h2>The Window</h2>
+<p><strong>At the top is the set's row</strong> (<a href="#setlists">The
+Set and Its Songs</a>): the <strong>Unlikelyware logo</strong> (it opens
+unlikelyware.com), the songs, the set's name, its MIDI button, and
+<strong>?</strong> for this page.</p>
+<p><strong>The toolbar, below it, left to right:</strong></p>
 <ul>
-<li><strong>Unlikelyware logo</strong>: opens unlikelyware.com.</li>
-<li><strong>The rack's name</strong>, with "unsaved changes" under it when there are some.</li>
-<li><strong>Tempo</strong>: drag up or down to change it (Shift for fine steps), use the wheel, or double-click for 120.</li>
+<li><strong>The rack's name</strong>, with what Cmd-S would save under
+it: "unsaved changes", "3 songs unsaved", "unsaved rig changes" or
+"unsaved set changes".</li>
+<li><strong>Tempo</strong>: drag up or down to change it (Shift for fine
+steps), use the wheel, or double-click for 120.</li>
 <li><strong>Tap</strong>: tap the tempo in.</li>
-<li><strong>Start/Stop</strong> (▶ / ■): the transport. Green while running.</li>
-<li><strong>Panic</strong>: all notes off (<a href="#panic">Panic</a>).</li>
-<li><strong>MIDI</strong>: the transport's learned triggers, start on first note, and Panic's control.</li>
+<li><strong>Start/Stop</strong> (▶ / ■): the transport. Green while
+running.</li>
+<li><strong>Panic</strong>: all notes off (<a
+href="#panic">Panic</a>).</li>
+<li><strong>MIDI</strong>: the transport's learned triggers, start on
+first note, and Panic's control.</li>
 <li><strong>Time signature</strong>: 2/4 to 12/8.</li>
-<li><strong>Beat lights</strong>: one per pulse of the bar; the downbeat in amber.</li>
-<li><strong>⋮</strong>: what the lights count, the click, the count-in and the edge flash (<a href="#transport">Transport and Click</a>).</li>
-<li><strong>Perform</strong>, <strong>+ Add plugin</strong> and <strong>File</strong>.</li>
-<li><strong>?</strong>: this page.</li>
+<li><strong>Beat lights</strong>: one per pulse of the bar; the downbeat
+in amber.</li>
+<li><strong>⋮</strong>: what the lights count, the click, the count-in
+and the edge flash (<a href="#transport">Transport and Click</a>).</li>
+<li><strong>Perform</strong>, <strong>+ Add plugin</strong> and
+<strong>File</strong> (which also has <strong>Help</strong>, this
+page).</li>
 </ul>
-<p><strong>Below the toolbar:</strong> the rack's rows, then the rig's two buses, then the <strong>Sources</strong> dock (inputs, sequences and loopers), and the status bar at the bottom. With a setlist open, the setlist's row sits above the toolbar, and the logo and <strong>?</strong> move up into it.</p>
-<p><strong>The status bar</strong> shows the sample rate and buffer size, the DSP load, xruns, the MIDI protocol, where the rack saves (or the latest notice), and the master level.</p>
-<p>Menus and panels open inside the window. A click outside one, or Escape, closes it.</p>
-</div>
-</div>
-<div class="callout callout-note card">
-<div class="callout-content">
-<h2 id="files">Files and Saving</h2>
-<p>The <strong>File</strong> menu has New rack, Open..., Save and Save As..., and the setlist items.</p>
+<p><strong>Below the toolbar:</strong> the rack's rows, then the rig's
+two buses, then the <strong>Sources</strong> dock (inputs, sequences and
+loopers), and the status bar at the bottom.</p>
+<p><strong>The status bar</strong> shows the sample rate and buffer
+size, the DSP load, xruns, the MIDI protocol (and "MIDI dropped" in
+amber if any MIDI was lost), where the set saves (or the latest notice),
+and the master fader and level.</p>
+<p>Menus and panels open inside the window. A click outside one, or
+Escape, closes it.</p>
+</section>
+<section id="files" class="callout callout-note card">
+<h2>Files and Saving</h2>
+<p><strong>The set is the only document.</strong> It holds its songs'
+racks and its rig inside it, so it never depends on files elsewhere. One
+set is open at a time.</p>
+<p>The <strong>File</strong> menu, titled with the set's path ("Untitled
+set" until it's saved), has <strong>New set</strong> (Cmd-N),
+<strong>Open...</strong> (Cmd-O), <strong>Save</strong> (Cmd-S),
+<strong>Save As...</strong>, then <strong>New song (a copy of this
+one)</strong>, <strong>Import a rack...</strong>, <strong>Check
+set</strong>, <strong>Set settings...</strong> and <strong>Help</strong>
+(<a href="#setlists">The Set and Its Songs</a>).</p>
 <ul>
-<li><strong>A titled rack saves itself</strong> when you quit or switch to another rack. An untitled one asks first: Save As..., Discard, or Cancel.</li>
-<li><strong>Cmd-S saves everything with changes</strong>: the current rack, any other unsaved racks in the set, and the rig.</li>
-<li><strong>Save As</strong> adds <code>.rack</code> if you leave it out, and asks before replacing an existing rack.</li>
-<li><strong>Open</strong> takes a <code>.rack</code> bundle or a <code>.setlist</code> file. One that doesn't load leaves the running rack alone.</li>
+<li><strong>Cmd-S saves the whole set</strong>: the song list, the rig,
+and every song's rack with changes, the current one's and those you
+switched away from. An untitled set asks for a name (Save As) instead.
+Shift-Cmd-S saves too.</li>
+<li><strong>Switching songs never saves.</strong> A song you leave keeps
+its changes in memory until the set is saved; the toolbar counts the
+songs unsaved.</li>
+<li><strong>Save As</strong> adds <code>.setlist</code> if you leave it
+out, and asks before replacing an existing set. The new package becomes
+the set's file.</li>
+<li><strong>New set</strong> starts an untitled set of one empty song,
+with a copy of the rig in use.</li>
+<li><strong>Open</strong> takes a set (<code>.setlist</code>). An older
+<code>.setlist</code> file, from before sets held their racks, or a lone
+<code>.rack</code> bundle opens as a new, untitled set made from it, and
+the old files are left alone. A set that doesn't load leaves the running
+one alone. On Linux, a set is a folder, and Open chooses a folder.</li>
+<li><strong>New, Open, Quit and closing the window ask first</strong>
+when the set has unsaved changes: <strong>Save</strong> (or <strong>Save
+As...</strong> for an untitled set), <strong>Discard the
+changes</strong> (<strong>Quit without saving</strong>), or
+<strong>Cancel</strong>.</li>
 </ul>
-<p>Started with <code>--no-save-rack</code>, StageHand never saves: Save is disabled and switching racks discards changes.</p>
-</div>
-</div>
-<div class="callout callout-note card">
-<div class="callout-content">
-<h2 id="rows">Rack Rows</h2>
+<p>The status bar says where the set saves, or "Untitled set: File &gt;
+Save As keeps it".</p>
+<p>Started with <code>--no-save</code>, StageHand never saves: Save and
+Save As are disabled.</p>
+</section>
+<section id="rows" class="callout callout-note card">
+<h2>Rack Rows</h2>
 <p>Each row is one plugin, in three parts:</p>
 <ul>
-<li><strong>Input</strong> (left): the input menu, the <strong>MIDI FX</strong> menu, a MIDI 1.0 / 2.0 badge, the key range bar, and the filter chip (<a href="#inputs">Inputs and Filters</a>, <a href="#midifx">MIDI Effects</a>).</li>
-<li><strong>Plugin</strong> (middle): the row's name, the plugin and its maker, its <strong>Control Links</strong> button (the MIDI plug), <strong>Editor</strong>, and its share of the DSP load.</li>
-<li><strong>Output</strong> (right): <strong>M</strong> (mute), the two sends (<strong>A</strong> and <strong>B</strong>), the fader over a stereo meter, the clip light, the level, and the output pair (<a href="#levels">Levels and Outputs</a>).</li>
+<li><strong>Input</strong> (left): the input menu, the <strong>MIDI
+FX</strong> menu, a MIDI 1.0 / 2.0 badge, the key range bar, and the
+filter chip (<a href="#inputs">Inputs and Filters</a>, <a
+href="#midifx">MIDI Effects</a>).</li>
+<li><strong>Plugin</strong> (middle): the row's name, the plugin and its
+maker, its <strong>Control Links</strong> button (the MIDI plug),
+<strong>Editor</strong>, and its share of the DSP load.</li>
+<li><strong>Output</strong> (right): <strong>M</strong> (mute), the two
+sends (<strong>A</strong> and <strong>B</strong>), the fader over a
+stereo meter, the clip light, the level, and the output pair (<a
+href="#levels">Levels and Outputs</a>).</li>
 </ul>
-<p><strong>Editor</strong> opens the plugin's own window. For a plugin without one, it opens StageHand's <strong>generic editor</strong> instead: a slider, switch or menu for each of its parameters, and the value as the plugin writes it (click it to type a number). Double-click a control for its default; Shift-drag a slider for finer steps. It only opens when you click Editor.</p>
-<p>Each row has its own colour, as a stripe down its left edge and a tint across it. A sequence or looper that plays into a row takes the row's colour, so you can see what plays what.</p>
-<p><strong>Removing a row:</strong> the red X at its right end asks first. <strong>Shift-click</strong> the X to remove it at once.</p>
-<p>A row whose plugin can't be found is kept as a placeholder, with the reason, so the rack still opens. Install the plugin and open the rack again.</p>
-</div>
-</div>
-<div class="callout callout-note card">
-<div class="callout-content">
-<h2 id="adding">Adding Plugins</h2>
-<p>StageHand finds CLAP plugins in the usual places: <code>~/Library/Audio/Plug-Ins/CLAP</code> and <code>/Library/Audio/Plug-Ins/CLAP</code> on the Mac, <code>~/.clap</code> and <code>/usr/lib/clap</code> on Linux, and anywhere <code>CLAP_PATH</code> names.</p>
+<p><strong>Click the row's name</strong> to type a new one (left empty,
+it's the plugin's name again). <strong>Click the plugin's name</strong>
+under it to replace the plugin: the row keeps its settings, MIDI effects
+and what plays into it, and the new plugin starts from its defaults.
+This song's Control Links to the old plugin's parameters go.</p>
+<p><strong>Editor</strong> opens the plugin's own window. For a plugin
+without one, it opens StageHand's <strong>generic editor</strong>
+instead: a slider, switch or menu for each of its parameters, and the
+value as the plugin writes it (click it to type a number). Double-click
+a control for its default; Shift-drag a slider for finer steps. It only
+opens when you click Editor.</p>
+<p>Each row has its own colour, as a stripe down its left edge and a
+tint across it. A sequence or looper that plays into a row takes the
+row's colour, so you can see what plays what.</p>
+<p><strong>Removing a row:</strong> the red X at its right end asks
+first. <strong>Shift-click</strong> the X to remove it at once.</p>
+<p>A row whose plugin can't be found is kept as a placeholder, with the
+reason, so the song still plays. Install the plugin and open the set
+again.</p>
+</section>
+<section id="adding" class="callout callout-note card">
+<h2>Adding Plugins</h2>
+<p>StageHand finds CLAP plugins in the usual places:
+<code>~/Library/Audio/Plug-Ins/CLAP</code> and
+<code>/Library/Audio/Plug-Ins/CLAP</code> on the Mac,
+<code>~/.clap</code> and <code>/usr/lib/clap</code> on Linux, and
+anywhere <code>CLAP_PATH</code> names.</p>
 <ul>
-<li><strong>+ Add plugin</strong> lists the instruments, then the note effects and the audio effects, greyed: note effects go in a row's MIDI FX menu, audio effects on the rig's buses.</li>
-<li><strong>Right-click below the rows</strong>, or click the <strong>+</strong> there, for the instruments alone.</li>
+<li><strong>+ Add plugin</strong> lists the instruments, then the note
+effects and the audio effects, greyed: note effects go in a row's MIDI
+FX menu, audio effects on the rig's buses.</li>
+<li><strong>Right-click below the rows</strong>, or click the
+<strong>+</strong> there, for the instruments alone.</li>
 </ul>
-<p>The new row goes at the bottom. The first scan can take a moment; after that the list opens at once.</p>
-<p>On Apple Silicon, a plugin built only for Intel can't be loaded: the scan skips it and says it's Intel only.</p>
-</div>
-</div>
-<div class="callout callout-note card">
-<div class="callout-content">
-<h2 id="inputs">Inputs and Filters</h2>
+<p>The new row goes at the bottom. The first scan can take a moment;
+after that the list opens at once.</p>
+<p>On Apple Silicon, a plugin built only for Intel can't be loaded: the
+scan skips it and says it's Intel only.</p>
+</section>
+<section id="inputs" class="callout callout-note card">
+<h2>Inputs and Filters</h2>
 <p><strong>The input menu</strong> chooses what a row hears:</p>
 <ul>
-<li><strong>All inputs</strong>: every keyboard and controller StageHand opened.</li>
+<li><strong>All inputs</strong>: every keyboard and controller StageHand
+opened.</li>
 <li><strong>One device</strong>, by name, with its protocol.</li>
-<li><strong>From other apps (MIDI 2.0)</strong> and <strong>From other apps (MIDI 1.0)</strong>: StageHand's own inputs, which other apps (an on-screen keyboard, a DAW) can send to. On Linux they're <code>StageHand MIDI 2.0</code> and <code>StageHand</code> in the ALSA sequencer.</li>
-<li><strong>No live input</strong>: for a row that only plays the sequences and loopers aimed at it.</li>
+<li><strong>From other apps (MIDI 2.0)</strong> and <strong>From other
+apps (MIDI 1.0)</strong>: StageHand's own inputs, which other apps (an
+on-screen keyboard, a DAW) can send to. Other apps see them as
+<code>MIDI 2.0 In</code> and <code>MIDI 1.0 In</code>; on Linux, under
+the clients <code>StageHand MIDI 2.0</code> and <code>StageHand</code>
+in the ALSA sequencer.</li>
+<li><strong>No live input</strong>: for a row that only plays the
+sequences and loopers aimed at it.</li>
 </ul>
-<p>A device that's unplugged shows in red, and the row hears it again when it's back.</p>
-<p><strong>The key range bar</strong> under the menu is the row's range of notes. Drag an end to move it, drag the middle to move the whole range, or click outside it to stretch the nearer end. Two rows with ranges side by side make a split; overlapping ranges make a layer.</p>
-<p><strong>The filter chip</strong> opens the filter panel: channels, groups (MIDI 2.0), the key and velocity ranges, and transpose, with Reset. Steppers take Shift for an octave or 10, and the wheel works too.</p>
-<p><strong>An amber "!"</strong> beside the badge means a MIDI 2.0 input feeds a MIDI 1.0 plugin, so per-note data is lost on the way.</p>
-</div>
-</div>
-<div class="callout callout-note card">
-<div class="callout-content">
-<h2 id="midifx">MIDI Effects</h2>
-<p>A row can run note effects (CLAP plugins that change MIDI, such as Retune) in front of its plugin. Everything the row hears goes through them, in order, then to the plugin. Their own audio isn't heard.</p>
+<p>A device that's unplugged shows in red, and the row hears it again
+when it's back.</p>
+<p><strong>The key range bar</strong> under the menu is the row's range
+of notes. Drag an end to move it, drag the middle to move the whole
+range, or click outside it to stretch the nearer end. Two rows with
+ranges side by side make a split; overlapping ranges make a layer.</p>
+<p><strong>The filter chip</strong> opens the filter panel: channels,
+groups (MIDI 2.0), the key and velocity ranges, and transpose, with
+Reset. Steppers take Shift for an octave or 10, and the wheel works
+too.</p>
+<p><strong>An amber "!"</strong> beside the badge means a MIDI 2.0 input
+feeds a MIDI 1.0 plugin, so per-note data is lost on the way.</p>
+</section>
+<section id="midifx" class="callout callout-note card">
+<h2>MIDI Effects</h2>
+<p>A row can run note effects (CLAP plugins that change MIDI, such as
+Retune) in front of its plugin. Everything the row hears goes through
+them, in order, then to the plugin. Their own audio isn't heard.</p>
 <ul>
-<li><strong>The MIDI FX menu</strong>, beside the input menu, shows the first effect's name (and &quot;+1&quot; for each more), or &quot;MIDI FX&quot; when there are none. Its <strong>Add a MIDI effect...</strong> lists the note effects; a new one goes after the others.</li>
-<li>For each effect the menu has <strong>Editor</strong>, <strong>Bypass</strong> (the row hears its input directly), <strong>Move up</strong>, <strong>Move down</strong> and <strong>Remove</strong>.</li>
-<li>With one effect, <strong>E</strong> beside the menu opens its editor.</li>
-<li>An effect that isn't installed shows in red. It's kept and saved with the rack, and the row's MIDI passes it by until it's back.</li>
+<li><strong>The MIDI FX menu</strong>, beside the input menu, shows the
+first effect's name (and "+1" for each more), or "MIDI FX" when there
+are none. Its <strong>Add a MIDI effect...</strong> lists the note
+effects; a new one goes after the others.</li>
+<li>For each effect the menu has <strong>Editor</strong>,
+<strong>Bypass</strong> (the row hears its input directly), <strong>Move
+up</strong>, <strong>Move down</strong> and
+<strong>Remove</strong>.</li>
+<li>With one effect, <strong>E</strong> beside the menu opens its
+editor.</li>
+<li>An effect that isn't installed shows in red. It's kept and saved
+with the rack, and the row's MIDI passes it by until it's back.</li>
 </ul>
-</div>
-</div>
-<div class="callout callout-note card">
-<div class="callout-content">
-<h2 id="levels">Levels and Outputs</h2>
+</section>
+<section id="levels" class="callout callout-note card">
+<h2>Levels and Outputs</h2>
 <ul>
-<li><strong>The fader</strong> moves with your drag, not to where you click. <strong>Shift</strong> is finer, <strong>double-click</strong> returns to 0 dB, and the wheel moves half a dB. It stops at 0 dB on the way past.</li>
-<li><strong>M</strong> mutes the row: its notes are released, new notes don't reach it, and once it's quiet the plugin rests, costing no DSP. A muted row is dimmed, except its M.</li>
-<li><strong>The sends, A and B,</strong> feed the rig's buses, after the fader. Drag up or down, use the wheel, or double-click to turn one on (0 dB) or off.</li>
-<li><strong>The clip light</strong> latches red when the row's output clips. Click it to clear.</li>
-<li><strong>The output pair</strong> ("out 1-2") is a menu when there are more than two outputs.</li>
+<li><strong>The fader</strong> moves with your drag, not to where you
+click. <strong>Shift</strong> is finer, <strong>double-click</strong>
+returns to 0 dB, and the wheel moves half a dB. It stops at 0 dB on the
+way past.</li>
+<li><strong>M</strong> mutes the row: its notes are released, new notes
+don't reach it, and once it's quiet the plugin rests, costing no DSP. A
+muted row is dimmed, except its M.</li>
+<li><strong>The sends, A and B,</strong> feed the rig's buses, after the
+fader. Drag up or down, use the wheel, or double-click to turn one on (0
+dB) or off.</li>
+<li><strong>The clip light</strong> latches red when the row's output
+clips. Click it to clear.</li>
+<li><strong>The output pair</strong> ("out 1-2") is a menu when there
+are more than two outputs.</li>
 </ul>
-</div>
-</div>
-<div class="callout callout-note card">
-<div class="callout-content">
-<h2 id="buses">The Rig's Buses</h2>
-<p>The rig has <strong>two effect buses</strong>, A and B, between the rows and the dock. Each has two effect slots in series (a reverb, then an EQ, say), a return fader with its meter, <strong>M</strong>, and its output pair. Either slot can be empty.</p>
+</section>
+<section id="buses" class="callout callout-note card">
+<h2>The Rig's Buses</h2>
+<p>The rig has <strong>two effect buses</strong>, A and B, between the
+rows and the dock. Each has two effect slots in series (a reverb, then
+an EQ, say), <strong>M</strong>, a return fader with its meter, and its
+output pair. Either slot can be empty, and passes the audio on.</p>
 <ul>
-<li>Choose an effect from a slot's menu; <strong>Edit</strong> opens its window.</li>
-<li>Rows feed a bus with their <strong>send</strong> of that letter.</li>
-<li>The <strong>master</strong> fader, in the status bar, sets the level of everything on the main outputs.</li>
+<li>Choose an effect from a slot's menu; <strong>Edit</strong> opens its
+window, and the MIDI plug beside it its <a href="#control-links">Control
+Links</a>.</li>
+<li>Rows feed a bus with their <strong>send</strong> of that
+letter.</li>
+<li>The <strong>master</strong> fader, in the status bar, sets the level
+of everything on the main outputs. Double-click it, or a return fader,
+for 0 dB.</li>
 </ul>
-<p>The rig is the same in every song, so a song switch never reloads its effects. A setlist names its rig; a rack opened on its own uses the default rig.</p>
-</div>
-</div>
-<div class="callout callout-note card">
-<div class="callout-content">
-<h2 id="transport">Transport and Click</h2>
-<p><strong>Stopped</strong>, the transport is at bar 1 and plugins see it stopped. <strong>Running</strong>, bar 1 beat 1 is the moment you pressed Start. Start and Stop from the toolbar, with <strong>Space</strong>, or from learned MIDI triggers.</p>
-<p><strong>The MIDI button</strong> beside Panic holds the transport's triggers (Learn Start/Stop, Learn Start, Learn Stop) and <strong>Start on first note</strong>: while stopped, the first note from the chosen input starts the transport, with beat 1 on that note.</p>
+<p>The rig is the same in every song of a set, so a song switch never
+reloads its effects. Each set keeps its own rig inside it; a new set
+starts with a copy of the rig in use.</p>
+</section>
+<section id="transport" class="callout callout-note card">
+<h2>Transport and Click</h2>
+<p><strong>Stopped</strong>, the transport is at bar 1 and plugins see
+it stopped. <strong>Running</strong>, bar 1 beat 1 is the moment you
+pressed Start. Start and Stop from the toolbar, with
+<strong>Space</strong>, or from learned MIDI triggers.</p>
+<p><strong>The MIDI button</strong> beside Panic holds the transport's
+triggers (Learn Start/Stop, Learn Start, Learn Stop) and <strong>Start
+on first note</strong>: while stopped, the first note from the chosen
+input starts the transport, with beat 1 on that note.</p>
 <p><strong>The ⋮ menu</strong> after the beat lights:</p>
 <ul>
-<li><strong>What the lights count</strong>: the beats (6/8 counts two, 7/8 seven), or every note.</li>
-<li><strong>The click</strong>: off, or a level from -24 to 0 dB, and its output. The click has its own output, never mixed into the mains, so it can go to your in-ear mix while the PA gets the band. <strong>Test the click</strong> plays one blip, to check where it's heard.</li>
-<li><strong>The count-in</strong> (<a href="#count-in">Count-in</a>).</li>
-<li><strong>Flash the window's edge on each beat</strong>: the whole border flashes, brighter on the downbeat, readable from across the stage.</li>
+<li><strong>What the lights count</strong>: the beats (6/8 counts two,
+7/8 seven), or every note.</li>
+<li><strong>The click</strong>: off, or a level from -24 to 0 dB, and
+its output. The click has its own output, never mixed into the mains, so
+it can go to your in-ear mix while the PA gets the band. <strong>Test
+the click</strong> plays one blip, to check where it's heard.</li>
+<li><strong>The count-in</strong> (<a
+href="#count-in">Count-in</a>).</li>
+<li><strong>Flash the window's edge on each beat</strong>: the whole
+border flashes, brighter on the downbeat, readable from across the
+stage.</li>
 </ul>
-<p>The ⋮ turns amber when the click is on but its output isn't there, and the menu says why it's silent.</p>
-</div>
-</div>
-<div class="callout callout-note card">
-<div class="callout-content">
-<h2 id="count-in">Count-in</h2>
-<p>Each song can count in before bar 1: <strong>off, half a bar, 1 bar or 2 bars</strong>, chosen in the ⋮ menu and saved with the rack.</p>
+<p>The ⋮ turns amber when the click is on but its output isn't there,
+and the menu says why it's silent.</p>
+</section>
+<section id="count-in" class="callout callout-note card">
+<h2>Count-in</h2>
+<p>Each song can count in before bar 1: <strong>off, half a bar, 1 bar
+or 2 bars</strong>, chosen in the ⋮ menu and saved with the rack.</p>
 <ul>
-<li>Start begins the count-in; <strong>bar 1 lands right after it</strong>, with everything that starts with the song.</li>
+<li>Start begins the count-in; <strong>bar 1 lands right after
+it</strong>, with everything that starts with the song.</li>
 <li>The count-in always clicks, even in a song whose click is off.</li>
-<li>The tempo shows "Count-in 2 … 1", and the beat lights turn amber.</li>
-<li>No count-in when the music is already going: a start on first note, or a song switch with the transport running.</li>
+<li>The tempo shows "Count-in 2 … 1", and the beat lights turn
+amber.</li>
+<li>No count-in when the music is already going: a start on first note,
+or a song switch with the transport running.</li>
 <li>Stop during the count-in cancels it.</li>
 </ul>
-</div>
-</div>
-<div class="callout callout-note card">
-<div class="callout-content">
-<h2 id="dock">The Sources Dock</h2>
+</section>
+<section id="dock" class="callout callout-note card">
+<h2>The Sources Dock</h2>
 <p>The dock at the bottom holds what makes notes besides your hands:</p>
 <ul>
-<li><strong>Inputs</strong>: one chip per open MIDI input, lit as its messages arrive. A device that left is amber until it's back.</li>
-<li><strong>+ Sequence</strong>, <strong>+ Looper</strong> and <strong>Stop all</strong> (which stops every sequence).</li>
+<li><strong>Inputs</strong>: one chip per open MIDI input, lit as its
+messages arrive. A device that left is amber until it's back.</li>
+<li><strong>+ Sequence</strong>, <strong>+ Looper</strong> and
+<strong>Stop all</strong> (which stops every sequence).</li>
 <li><strong>A row per sequence and per looper.</strong></li>
 </ul>
-<p>The dock grows with its rows, up to a little over half the window, then scrolls.</p>
-</div>
-</div>
-<div class="callout callout-note card">
-<div class="callout-content">
-<h2 id="sequences">Sequences</h2>
-<p>A sequence is a loop of notes that plays into rows you choose, on top of their live input.</p>
+<p>The dock grows with its rows, up to a little over half the window,
+then scrolls.</p>
+</section>
+<section id="sequences" class="callout callout-note card">
+<h2>Sequences</h2>
+<p>A sequence is a loop of notes that plays into rows you choose, on top
+of their live input.</p>
 <ul>
-<li><strong>+ Sequence</strong> asks for <strong>MIDI 2.0 (EDO pitches)</strong> or <strong>MIDI 1.0 (note numbers)</strong>, then where it plays: an existing row, a new row, or none yet. Then type its name.</li>
-<li><strong>Its row:</strong> Play/Stop, its name (click to rename), where it plays (click to choose rows), <strong>Edit</strong>, a mini-map of its notes, <strong>At Start</strong>, <strong>Rate</strong>, its length, <strong>launch</strong> (the next bar, the next beat, or at once), <strong>Repeat</strong>, and its MIDI triggers.</li>
-<li><strong>Play/Stop</strong> waits for the launch point and blinks until then. Started while the transport is stopped, it starts the transport too, on beat 1.</li>
-<li><strong>At Start</strong> sequences begin with the transport, however it's started: that's how a song's parts start together.</li>
-<li><strong>The MIDI button</strong> learns a pad or pedal to start, stop or toggle it. One pad can drive several sequences.</li>
+<li><strong>+ Sequence</strong> asks for <strong>MIDI 2.0 (EDO
+pitches)</strong> or <strong>MIDI 1.0 (note numbers)</strong>, then
+where it plays: an existing row, a new row, or none yet. Then type its
+name.</li>
+<li><strong>Its row:</strong> Play/Stop, its name (click to rename),
+where it plays (click to choose rows), <strong>Edit</strong>, a mini-map
+of its notes, <strong>At Start</strong>, <strong>Rate</strong>, its
+length, <strong>launch</strong> (the next bar, the next beat, or at
+once), <strong>Repeat</strong>, and its MIDI triggers.</li>
+<li><strong>Play/Stop</strong> waits for the launch point and blinks
+until then. Started while the transport is stopped, it starts the
+transport too, on beat 1.</li>
+<li><strong>At Start</strong> sequences begin with the transport,
+however it's started: that's how a song's parts start together.</li>
+<li><strong>The MIDI button</strong> learns a pad or pedal to start,
+stop or toggle it. One pad can drive several sequences.</li>
 </ul>
-<p>Removing one asks first; <strong>Shift-click</strong> its X to remove it at once.</p>
-</div>
-</div>
+<p>Removing one asks first; <strong>Shift-click</strong> its X to remove
+it at once.</p>
+</section>
 <details class="disclosure">
 <summary class="disclosure-title subtle">The sequence editor</summary>
+
 <div class="disclosure-content">
-<p><strong>Edit</strong> (or a click on the mini-map) opens the sequence's own window. The strip on the left sets the protocol (while it has no notes), EDO and the reference note, rate, length, launch, Repeat, the note-off offset, and channel and group. The grid has one row per pitch, with the 12-tone black keys shaded so the familiar pattern shows at any EDO.</p>
-<p>| Gesture | Where | Result | |---|---|---| | Click | empty cell | A new note | | Click and drag right | empty cell | A new note, as long as the drag | | Drag | a note | Move it (Shift locks to one direction) | | Drag | a note's right edge | Change its length | | Option-drag | a note | Copy it | | Cmd-drag up or down | a note | Velocity | | Right-click or double-click | a note | Delete it | | Shift-drag | empty area | Select a rectangle of notes | | Click, Shift-click | a note | Select it, add it to the selection | | Delete, arrows | a selection | Delete, move by a unit or a step (Shift: a beat or an octave) | | Cmd-Z, Shift-Cmd-Z | | Undo, redo |</p>
-<p>Notes sound as you add, click and move them, through the rows the sequence plays into. <strong>Space</strong> plays or stops it. The wheel scrolls, Shift-wheel scrolls sideways, and Cmd-wheel zooms.</p>
+<p><strong>Edit</strong> (or a click on the mini-map) opens the
+sequence's own window. The strip on the left has Play/Stop, then sets
+the protocol (while it has no notes), the EDO and the note step 0 sounds
+at (MIDI 2.0), rate, length, launch, Repeat, the note-off offset,
+channel and group, and the length of new notes; then
+<strong>Undo</strong> and <strong>Redo</strong>, and a reminder of the
+gestures. The grid has one row per pitch, with the 12-tone black keys
+shaded so the familiar pattern shows at any EDO.</p>
+<table>
+<thead>
+<tr>
+<th>Gesture</th>
+<th>Where</th>
+<th>Result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Click</td>
+<td>empty cell</td>
+<td>A new note</td>
+</tr>
+<tr>
+<td>Click and drag right</td>
+<td>empty cell</td>
+<td>A new note, as long as the drag</td>
+</tr>
+<tr>
+<td>Drag</td>
+<td>a note</td>
+<td>Move it (Shift locks to one direction)</td>
+</tr>
+<tr>
+<td>Drag</td>
+<td>a note's right edge</td>
+<td>Change its length</td>
+</tr>
+<tr>
+<td>Option-drag</td>
+<td>a note</td>
+<td>Copy it</td>
+</tr>
+<tr>
+<td>Cmd-drag up or down</td>
+<td>a note</td>
+<td>Velocity</td>
+</tr>
+<tr>
+<td>Right-click or double-click</td>
+<td>a note</td>
+<td>Delete it</td>
+</tr>
+<tr>
+<td>Shift-drag</td>
+<td>empty area</td>
+<td>Select a rectangle of notes</td>
+</tr>
+<tr>
+<td>Click, Shift-click</td>
+<td>a note</td>
+<td>Select it, add it to the selection</td>
+</tr>
+<tr>
+<td>Delete, arrows</td>
+<td>a selection</td>
+<td>Delete, move by a unit or a step (Shift: a beat or an octave)</td>
+</tr>
+<tr>
+<td>Cmd-A, Escape</td>
+<td></td>
+<td>Select every note, clear the selection</td>
+</tr>
+<tr>
+<td>Cmd-Z, Shift-Cmd-Z (or Cmd-Y)</td>
+<td></td>
+<td>Undo, redo</td>
+</tr>
+</tbody>
+</table>
+<p>Notes sound as you add, click and move them, through the rows the
+sequence plays into. <strong>Space</strong> plays or stops it. The wheel
+scrolls up and down; Shift-wheel, or a sideways swipe on a trackpad (or
+a tilt wheel), scrolls sideways; Cmd-wheel zooms. Cmd-Q quits and
+Shift-Cmd-S saves the set from this window too.</p>
 </div>
 </details>
-<div class="callout callout-note card">
-<div class="callout-content">
-<h2 id="loopers">Loopers</h2>
-<p>A looper records the notes you play from one input into its rows, and loops them, in time.</p>
+
+<section id="loopers" class="callout callout-note card">
+<h2>Loopers</h2>
+<p>A looper records the notes you play from one input into its rows, and
+loops them, in time.</p>
 <ul>
-<li><strong>+ Looper</strong> asks what it records (an input) and which row it plays into, then its name.</li>
-<li><strong>Its row:</strong> the record/play button, its name, <strong>Undo</strong> (the last pass), <strong>Clear</strong>, <strong>Keep</strong> (makes it a sequence, so it's saved), <strong>Input</strong>, <strong>Q</strong> (quantize), start at the next <strong>Bar</strong> or <strong>Beat</strong>, its length (fixed, or ended by a press), and <strong>Clean</strong>, which skips the short wrong note a finger catches beside the right one.</li>
-<li><strong>Click a looper's row</strong> to make it the current one: the one the footswitch drives.</li>
-<li><strong>What a looper records isn't saved</strong>: each performance starts fresh. Keep it as a sequence to save it.</li>
-<li>Its red X removes it at once, without asking (nothing recorded is lost that would have been saved).</li>
+<li><strong>+ Looper</strong> asks what it records (an input) and which
+row it plays into, then its name.</li>
+<li><strong>Its row:</strong> the record/play button, its name,
+<strong>Undo</strong> (the last pass), <strong>Clear</strong>,
+<strong>Keep</strong> (makes it a sequence, so it's saved),
+<strong>Input</strong>, <strong>Q</strong> (quantize), start at the next
+<strong>Bar</strong> or <strong>Beat</strong>, its length (fixed, or
+ended by a press), and <strong>Clean</strong>, which skips the short
+wrong note a finger catches beside the right one.</li>
+<li><strong>Click a looper's row</strong> to make it the current one:
+the one the footswitch drives.</li>
+<li><strong>What a looper records isn't saved</strong>: each performance
+starts fresh. Keep it as a sequence to save it.</li>
+<li>Its red X removes it at once, without asking (nothing recorded is
+lost that would have been saved).</li>
 </ul>
-</div>
-</div>
+</section>
 <details class="disclosure">
 <summary class="disclosure-title subtle">The looper footswitch</summary>
+
 <div class="disclosure-content">
-<p>One footswitch drives the current looper. Learn it from the looper row's MIDI button. A momentary switch (one that sends press and release) is needed for overdubs; a latching pedal gives taps only.</p>
-<p>| State | Tap | Hold | |---|---|---| | Empty | arm: recording starts at the next beat or bar | | | Armed | cancel | | | Recording | end it (rounded up to the beat or bar) and play | | | Playing | stop, at the next beat or bar | overdub while held | | Stopped | play from the start, at the next beat or bar | |</p>
-<p>A note played a little ahead of the downbeat is recorded on it. Stopping the transport stops every looper.</p>
+<p>One footswitch drives the current looper. Learn it from the looper
+row's MIDI button. A momentary switch (one that sends press and release)
+is needed for overdubs; a latching pedal gives taps only.</p>
+<table>
+<thead>
+<tr>
+<th>State</th>
+<th>Tap</th>
+<th>Hold</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Empty</td>
+<td>arm: recording starts at the next beat or bar</td>
+<td></td>
+</tr>
+<tr>
+<td>Armed</td>
+<td>cancel</td>
+<td></td>
+</tr>
+<tr>
+<td>Recording</td>
+<td>end it (rounded up to the beat or bar) and play</td>
+<td></td>
+</tr>
+<tr>
+<td>Playing</td>
+<td>stop, at the next beat or bar</td>
+<td>overdub while held</td>
+</tr>
+<tr>
+<td>Stopped</td>
+<td>play from the start, at the next beat or bar</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p>A note played a little ahead of the downbeat is recorded on it.
+Stopping the transport stops every looper.</p>
 </div>
 </details>
-<div class="callout callout-note card">
-<div class="callout-content">
-<h2 id="setlists">Setlists</h2>
-<p>A setlist puts racks in order, as songs, and moves between them without a gap.</p>
+
+<section id="setlists" class="callout callout-note card">
+<h2>The Set and Its Songs</h2>
+<p>A set puts racks in order, as songs, and moves between them without a
+gap. It always has at least one song: a new set starts with one empty
+song.</p>
 <ul>
-<li><strong>Making one:</strong> File → <strong>New setlist with this rack...</strong> (the rack becomes song 1) or <strong>New setlist...</strong> (empty).</li>
-<li><strong>The setlist row</strong> above the toolbar: the Unlikelyware logo, <strong>|◀</strong> and <strong>▶|</strong> for the previous and next song, the song's number and name (a menu of every song), "next: …" with a dot that's green once it's ready, the setlist's name, its MIDI button, and <strong>?</strong> for this page.</li>
-<li><strong>In a setlist, File's New and Open add to the set:</strong> <strong>New rack in this set...</strong> (Cmd-N) starts a copy of the current song's rack, ready to change; <strong>Add a rack to this set...</strong> (Cmd-O) adds one you have.</li>
-<li><strong>The song menu</strong> also has, for the current song: Add this rack again (a reprise), Move up, Move down, Rename in setlist..., and Remove from setlist. Removing a song never deletes its rack.</li>
-<li><strong>Setlist edits are saved at once.</strong></li>
-<li><strong>Setlist settings...</strong> in the File menu chooses whether the transport keeps running across a switch, whether a switch waits for the next bar, and whether the old song rings out or is cut.</li>
-<li><strong>Close setlist</strong> leaves the set, keeping the current rack open.</li>
+<li><strong>The set's row</strong>, at the top of the window: the
+Unlikelyware logo, <strong>|◀</strong> and <strong>▶|</strong> for the
+previous and next song, where you are ("3/12"), the song's name (a menu
+of every song), "next: …" with a dot that's green once it's ready ("end
+of the set" after the last), the set's name, its MIDI button, and
+<strong>?</strong> for this page.</li>
+<li><strong>Adding songs:</strong> File → <strong>New song (a copy of
+this one)</strong> adds a copy of the current song's rack after it, as a
+rack of its own ("So what 2"), and plays it, ready to change.
+<strong>Import a rack...</strong> copies a <code>.rack</code> you have
+into the set, after the current song.</li>
+<li><strong>The song menu</strong> lists every song (a song with unsaved
+changes says so). Choose one to go to it. For the current song it also
+has: New song (a copy of this one), Add this rack again (a reprise: the
+same rack twice, so a change to one changes both), Move up, Move down,
+Rename in setlist..., and Remove from the set.... Removing asks first;
+the song's rack goes from the set when it's saved, unless another song
+uses it. The last song can't be removed.</li>
+<li><strong>Changes to the song list are part of the set</strong>, saved
+with Cmd-S like everything else (<a href="#files">Files and
+Saving</a>).</li>
+<li><strong>Set settings...</strong> in the File menu chooses whether
+the transport keeps running across a switch (for medleys) or stops,
+whether a switch waits for the next bar or happens at once, and whether
+the old song rings out or is cut.</li>
+<li><strong>Check set</strong> in the File menu reads and prepares every
+song in turn, without playing it, and lists what it finds (a plugin
+missing, a MIDI input not connected, a trigger that clashes) under the
+song in the song menu, in amber.</li>
 </ul>
-<p><strong>Switches are instant.</strong> The next and previous songs are prepared ahead, and the old song's reverb tails and held notes ring out. A note held across a switch keeps sounding until you let go.</p>
-<p><strong>From MIDI:</strong> the setlist's MIDI button learns Next, Previous and Program Change, so a foot controller can step through the set. They work in every song.</p>
-</div>
-</div>
-<div class="callout callout-note card">
-<div class="callout-content">
-<h2 id="perform">The Perform View</h2>
-<p><strong>Perform</strong> in the toolbar, or <strong>Tab</strong>, turns the window into what you want to see on stage, and Tab brings the rack back. Switching views never changes the sound.</p>
-<p>It shows, large: the song and what's next, with big ◀ ▶ buttons; the beat, one box per pulse with the bar and beat in big digits; the count-in, very large, in amber; Start/Stop; the current looper; a large <strong>Panic</strong>; and the status bar. It hides the rows, the dock and everything that edits.</p>
-<p><strong>Keys:</strong> ← and → for the previous and next song, Space to start or stop, Tab to go back. StageHand reopens in the view it was left in.</p>
-</div>
-</div>
-<div class="callout callout-note card">
-<div class="callout-content">
-<h2 id="control-links">Control Links</h2>
-<p>A Control Link ties a hardware control (a knob, a fader, an expression pedal) to a plugin parameter, a row's level, a send, a bus return or the master. One control with several targets is a macro.</p>
+<p><strong>Switches are instant.</strong> The next and previous songs
+are prepared ahead, and the old song's reverb tails and held notes ring
+out. A note held across a switch keeps sounding until you let go.</p>
+<p><strong>From MIDI:</strong> the set's MIDI button learns Next,
+Previous and Program Change (program n goes to song n), so a foot
+controller can step through the set. They work in every song, and win
+over a song's own triggers on the same control.</p>
+</section>
+<section id="perform" class="callout callout-note card">
+<h2>The Perform View</h2>
+<p><strong>Perform</strong> in the toolbar, or <strong>Tab</strong>,
+turns the window into what you want to see on stage, and Tab brings the
+rack back. Switching views never changes the sound.</p>
+<p>It shows, large: the song and what's next, with big ◀ ▶ buttons; the
+beat, one box per pulse with the bar and beat in big digits; the
+count-in, very large, in amber; Start/Stop; the current looper; a large
+<strong>Panic</strong>; and the status bar. It hides the rows, the dock
+and everything that edits.</p>
+<p><strong>Keys:</strong> ← and → for the previous and next song, Space
+to start or stop, Tab (or the <strong>Edit (Tab)</strong> button) to go
+back. StageHand reopens in the view it was left in.</p>
+</section>
+<section id="control-links" class="callout callout-note card">
+<h2>Control Links</h2>
+<p>A Control Link ties a hardware control (a knob, a fader, an
+expression pedal) to a plugin parameter, a row's level, a send, a bus
+return or the master. One control with several targets is a macro.</p>
 <ul>
-<li><strong>Each row's Control Links button</strong> (the MIDI plug beside Editor) opens its menu: learn a link from the list of the plugin's parameters (type to filter it), or learn the row's gain or sends; then move the hardware control. The status bar says what to do at each step.</li>
-<li><strong>Bus effects</strong> have the same in their menus; <strong>the bus return and master faders</strong> take a right-click.</li>
-<li><strong>Each link</strong> has, per target, a range (either way round) and a curve, and is <strong>pick-up</strong> (it waits until the control reaches the parameter, so the sound never leaps) or <strong>jump</strong>. Choose a link in the menu to change it in the Control Link panel.</li>
-<li><strong>Scope:</strong> <strong>This song</strong> (saved in the rack) or <strong>All songs</strong> (saved in the rig: the mod wheel can drive a plugin's tremolo in every song that has that plugin).</li>
-<li>A control used by a link goes nowhere else in that song's rows, unless the link passes it on.</li>
+<li><strong>Each row's Control Links button</strong> (the MIDI plug
+beside Editor) opens its menu: learn a link from the list of the
+plugin's parameters (type to filter it), or learn the row's gain or
+sends; then move the hardware control. The status bar says what to do at
+each step.</li>
+<li><strong>Bus effects and bus returns</strong> have a Control Links
+button of their own; <strong>the bus return and master faders</strong>
+also take a right-click.</li>
+<li><strong>Each link</strong> has, per target, a range (drag B, the
+control's bottom, and T, its top, either way round; Shift for fine) and
+a curve, and is <strong>pick-up</strong> (it waits until the control
+reaches the parameter, so the sound never leaps) or
+<strong>jump</strong>. <strong>+ Add target</strong> gives one control
+more to drive. Choose a link in the menu to change it in the Control
+Link panel, which also has <strong>Learn again</strong> and
+<strong>Remove</strong>.</li>
+<li><strong>Scope:</strong> <strong>This song</strong> (saved in the
+rack) or <strong>All songs</strong> (saved in the rig: the mod wheel can
+drive a plugin's tremolo in every song that has that plugin). A row's
+links start as this song's, the buses' and master's as all songs'.</li>
+<li>A control used by a link goes nowhere else in that song's rows,
+unless the link passes it on (<strong>Pass on too</strong>).</li>
 </ul>
-<p>A level link works like a volume pedal after the fader: the fader doesn't move, and the two multiply.</p>
-</div>
-</div>
-<div class="callout callout-note card">
-<div class="callout-content">
-<h2 id="panic">Panic</h2>
-<p><strong>Panic</strong> in the toolbar (and in the Perform view) stops stuck notes in every row: a note-off for every note StageHand knows is sounding, the pedals up, and All Notes Off on every channel.</p>
+<p>A level link works like a volume pedal after the fader: the fader
+doesn't move, and the two multiply.</p>
+</section>
+<section id="panic" class="callout callout-note card">
+<h2>Panic</h2>
+<p><strong>Panic</strong> in the toolbar (and in the Perform view) stops
+stuck notes in every row: a note-off for every note StageHand knows is
+sounding, the pedals up, and All Notes Off on every channel.</p>
 <ul>
-<li><strong>The transport, the click, sequences and loopers keep running</strong>: a stuck note is no reason to lose the band's time.</li>
-<li><strong>Effect tails ring on.</strong> <strong>Press again within 2 seconds</strong> to cut the sound too (All Sound Off, and the buses' effects reset), for runaway feedback or a plugin stuck making noise.</li>
-<li><strong>Learn a MIDI control</strong> for it from the transport's MIDI button (Learn Panic). It's kept in the rig, the same in every song. There's no key for it, so a stray keypress can't cut the sound.</li>
+<li><strong>The transport, the click, sequences and loopers keep
+running</strong>: a stuck note is no reason to lose the band's
+time.</li>
+<li><strong>Effect tails ring on.</strong> <strong>Press again within 2
+seconds</strong> to cut the sound too (All Sound Off, and the buses'
+effects reset), for runaway feedback or a plugin stuck making
+noise.</li>
+<li><strong>Learn a MIDI control</strong> for it from the transport's
+MIDI button (Learn Panic). It's kept in the rig, the same in every song.
+There's no key for it, so a stray keypress can't cut the sound.</li>
 </ul>
-</div>
-</div>
-<div class="callout callout-note card">
-<div class="callout-content">
-<h2 id="dsp">DSP and Xruns</h2>
+</section>
+<section id="dsp" class="callout callout-note card">
+<h2>DSP and Xruns</h2>
 <ul>
-<li><strong>"DSP 23% · peak 41%"</strong> in the status bar is the share of each audio period StageHand spends: the average and the worst block of the last second. It turns amber from 70% and red from 90%. At 100% the audio is late, which is an xrun.</li>
-<li><strong>Each row and bus</strong> shows its own share, amber when one takes more than half the period.</li>
-<li><strong>Xruns</strong> are counted since StageHand started, red for a few seconds after a new one. Click the count to reset it (after a soundcheck, say).</li>
+<li><strong>"DSP 23% · peak 41%"</strong> in the status bar is the share
+of each audio period StageHand spends: the average and the worst block
+of the last second. It turns amber from 70% and red from 90%. At 100%
+the audio is late, which is an xrun.</li>
+<li><strong>Each row and bus</strong> shows its own share, amber when
+one takes more than half the period.</li>
+<li><strong>Xruns</strong> are counted since StageHand started, red for
+a few seconds after a new one. Click the count to reset it (after a
+soundcheck, say).</li>
 </ul>
-<p>When the load runs high: mute rows you don't need in a song (a muted plugin rests), choose a larger buffer, or use lighter plugin settings.</p>
-</div>
-</div>
-<div class="callout callout-note card">
-<div class="callout-content">
-<h2 id="shortcuts">Shortcuts</h2>
+<p>When the load runs high: mute rows you don't need in a song (a muted
+plugin rests), choose a larger buffer, or use lighter plugin
+settings.</p>
+</section>
+<section id="shortcuts" class="callout callout-note card">
+<h2>Shortcuts</h2>
 <p><strong>In the rack window:</strong></p>
-<p>| Key | Action | |---|---| | Space | Start or stop the transport | | Tab | The Perform view, and back | | Cmd-S | Save everything with changes (Save As for an untitled rack) | | Cmd-N | New rack (in a setlist: a new rack in the set) | | Cmd-O | Open a rack (in a setlist: add a rack to the set) | | Cmd-Q | Quit | | Escape | Close a menu or panel; stop MIDI learn |</p>
-<p><strong>In the Perform view:</strong> ← → previous and next song, Space start or stop, Tab back.</p>
-<p><strong>In plugin editor windows:</strong> Cmd-Q quits and Shift-Cmd-S saves the rack.</p>
-<p><strong>With the mouse:</strong> Shift for finer drags and bigger steps; double-click a fader for 0 dB; Shift-click a red X to remove without asking; right-click below the rows to add an instrument.</p>
-</div>
-</div>
-<div class="callout callout-note card">
-<div class="callout-content">
-<h2 id="troubleshooting">Troubleshooting</h2>
+<table>
+<thead>
+<tr>
+<th>Key</th>
+<th>Action</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Space</td>
+<td>Start or stop the transport</td>
+</tr>
+<tr>
+<td>Tab</td>
+<td>The Perform view, and back</td>
+</tr>
+<tr>
+<td>Cmd-S, Shift-Cmd-S</td>
+<td>Save the set (Save As for an untitled one)</td>
+</tr>
+<tr>
+<td>Cmd-N</td>
+<td>New set</td>
+</tr>
+<tr>
+<td>Cmd-O</td>
+<td>Open a set</td>
+</tr>
+<tr>
+<td>Cmd-Q</td>
+<td>Quit (asking first if the set has unsaved changes)</td>
+</tr>
+<tr>
+<td>Escape</td>
+<td>Close a menu or panel; stop MIDI learn</td>
+</tr>
+</tbody>
+</table>
+<p><strong>In the Perform view:</strong> ← → previous and next song,
+Space start or stop, Tab back.</p>
+<p><strong>In plugin editor windows:</strong> Cmd-Q quits and
+Shift-Cmd-S saves the set. Quitting from here, or with Ctrl-C in the
+terminal, doesn't ask: a saved set with changes is saved, and an
+untitled set's changes are lost.</p>
+<p><strong>In the sequence editor:</strong> see <a href="#sequences">The
+sequence editor</a>.</p>
+<p><strong>With the mouse:</strong> Shift for finer drags and bigger
+steps; double-click a fader for 0 dB; Shift-click a red X to remove
+without asking; right-click below the rows to add an instrument.</p>
+</section>
+<section id="troubleshooting" class="callout callout-note card">
+<h2>Troubleshooting</h2>
 <ul>
-<li><strong>No sound:</strong> check the row's meter moves when you play. If it doesn't, check its input menu and the light beside it, its key range and filter, and M. If the meter moves, check the output pair and the master.</li>
-<li><strong>An app's MIDI doesn't arrive:</strong> send it to <strong>From other apps (MIDI 2.0)</strong> or <strong>(MIDI 1.0)</strong>, and choose that input in the row (or All inputs). From the command line, <code>--midi all</code> opens software and app sources too.</li>
-<li><strong>The click is silent:</strong> open the ⋮ menu; it says why (no output chosen, the output isn't connected, or the transport isn't running).</li>
-<li><strong>A plugin is missing</strong> (a placeholder row): install it, and open the rack again. Its settings were kept.</li>
-<li><strong>Clicks and dropouts:</strong> watch DSP and xruns in the status bar (<a href="#dsp">DSP and Xruns</a>).</li>
+<li><strong>No sound:</strong> check the row's meter moves when you
+play. If it doesn't, check its input menu and the light beside it, its
+key range and filter, and M. If the meter moves, check the output pair
+and the master.</li>
+<li><strong>An app's MIDI doesn't arrive:</strong> send it to
+<strong>From other apps (MIDI 2.0)</strong> or <strong>(MIDI
+1.0)</strong>, and choose that input in the row (or All inputs). From
+the command line, <code>--midi all</code> opens software and app sources
+too.</li>
+<li><strong>The click is silent:</strong> open the ⋮ menu; it says why
+(no output chosen, the output isn't connected, or the transport isn't
+running).</li>
+<li><strong>A plugin is missing</strong> (a placeholder row): install
+it, and open the set again. Its settings were kept. <strong>Check
+set</strong> finds every song with a missing plugin before the
+show.</li>
+<li><strong>Clicks and dropouts:</strong> watch DSP and xruns in the
+status bar (<a href="#dsp">DSP and Xruns</a>).</li>
 <li><strong>A stuck note:</strong> <a href="#panic">Panic</a>.</li>
-<li><strong>The command line:</strong> <code>stagehand --help</code> lists every option: <code>--list-plugins</code>, <code>--list-midi</code>, <code>--list-audio</code> (macOS), <code>--tone</code> to check the audio path, and <code>--monitor</code> to see incoming MIDI.</li>
+<li><strong>The command line:</strong> <code>stagehand --help</code>
+lists every option: <code>--list-plugins</code>,
+<code>--list-midi</code>, <code>--list-audio</code> (macOS),
+<code>--tone</code> to check the audio path, <code>--monitor</code> to
+see incoming MIDI, <code>--set</code> and <code>--rack</code> to open
+one, and <code>--no-save</code>.</li>
 </ul>
-</div>
-</div>
+</section>
 </div>
 </body>
 </html>

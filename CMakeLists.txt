@@ -295,8 +295,14 @@ if(STAGEHAND_APP AND APPLE)
 endif()
 
 # --- The help page (both platforms) -----------------------------------------------
-# resources/help/help.html, exported from help.md (beside it) by Markdown Web
-# Writer, and the logo it shows, as Unlikelyware.png: copied to build/help,
+# resources/help/help.html, generated from help.md (beside it) by pandoc with
+# the Unlikelyware products' shared template (Dev-Audio/Shared/Help), from the
+# repository's root:
+#   pandoc -f commonmark_x-smart -t html5
+#     --template ../../Dev-Audio/Shared/Help/help-template.html
+#     --metadata pagetitle=help-StageHand
+#     resources/help/help.md -o resources/help/help.html
+# and the logo it shows, as Unlikelyware.png: copied to build/help,
 # beside the executable, where Help (the toolbar's "?", the File menu) looks on
 # Linux; on the Mac they also go in the bundle's Resources/help.
 if(TARGET stagehand)
