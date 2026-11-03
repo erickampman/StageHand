@@ -5,7 +5,9 @@
 //
 // At 120 BPM and 48 kHz one beat is 24000 frames; at rate 4 a unit is 6000.
 
+#include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -242,6 +244,154 @@ void testNoteOffOffset() {
         if (h.frame == 6000) at6000.push_back(&h);
     CHECK(at6000.size() == 2 && !at6000[0]->on && at6000[1]->on);   // off, then on
     CHECK(at(same.find(false, 60, 6001), 12000 + 2400));            // the second one's own offset
+}
+
+// Swing (docs/sequences.md, "Swing and slop"): every odd unit of the loop is
+// late by (2 * swing - 1) of a unit, and notes end on the swung grid. The
+// loop's length and the tempo don't change.
+void testSwing() {
+    Sequence s = midi1({{0, 1, 60, 100}, {1, 1, 61, 100}, {2, 1, 62, 100}, {3, 1, 63, 100}});
+    s.swing    = 0.75;   // half a unit: 3000 frames
+    for (const std::uint32_t block : {4800u, 1024u, 64u}) {   // a late start in a later block than its unit
+        Rig rig;
+        rig.set(s);
+        rig.engine->sendSequenceCommand(kSeq, SequenceCommand::Start);
+        rig.run(24000 * 2, block);
+        CHECK(at(rig.find(true, 60), 0));
+        CHECK(at(rig.find(true, 61), 9000));
+        CHECK(at(rig.find(true, 62), 12000));
+        CHECK(at(rig.find(true, 63), 21000));
+        CHECK(at(rig.find(false, 60), 9000));         // it ends where the late unit starts: longer
+        CHECK(at(rig.find(false, 61), 12000));        // the late unit's note is shorter
+        CHECK(at(rig.find(false, 63), 24000));        // the loop's end isn't moved
+        CHECK(at(rig.find(true, 60, 1), 24000));      // the next pass is on time
+        CHECK(at(rig.find(true, 61, 9001), 33000));
+        std::size_t heard = 0;                        // 8 on, 7 off (the last ends at 48000): none twice
+        for (const Heard& h : rig.heard) heard += h.frame < 48000 ? 1 : 0;
+        CHECK(heard == 15);
+    }
+
+    Rig sixty;   // 60%: a fifth of a unit, 1200 frames
+    s.swing = 0.6;
+    sixty.set(s);
+    sixty.engine->sendSequenceCommand(kSeq, SequenceCommand::Start);
+    sixty.run(24000);
+    CHECK(at(sixty.find(true, 61), 7200) && at(sixty.find(true, 63), 19200));
+
+    // Units are counted within the loop: in a 3-unit loop, the second pass's
+    // first unit (the fourth since the start) is on time.
+    Rig      odd;
+    Sequence three = midi1({{0, 1, 60, 100}, {1, 1, 61, 100}, {2, 1, 62, 100}}, 3);
+    three.swing    = 0.75;
+    odd.set(three);
+    odd.engine->sendSequenceCommand(kSeq, SequenceCommand::Start);
+    odd.run(24000 * 2);
+    CHECK(at(odd.find(true, 60, 1), 18000) && at(odd.find(true, 61, 9001), 27000));
+
+    // Repeat off: it still stops at its length.
+    Rig once;
+    s.swing  = 0.75;
+    s.repeat = false;
+    once.set(s);
+    once.engine->sendSequenceCommand(kSeq, SequenceCommand::Start);
+    once.run(24000 * 2);
+    CHECK(at(once.find(false, 63), 24000) && once.find(true, 60, 1) == nullptr);
+    CHECK(once.runtime->state.load() == SequenceState::Stopped);
+}
+
+// The first `units` note-ons of a run, in order, and how far each is from its
+// unit's grid line (`unitFrames` apart, from frame 0). A run can hear the next
+// unit's note too, slopped early, or in a block past the run's end.
+std::vector<std::int64_t> deviations(const Rig& rig, std::int64_t unitFrames, std::size_t units, std::size_t& count,
+                                     bool& inOrder) {
+    std::vector<std::int64_t> out;
+    inOrder = true;
+    for (const Heard& h : rig.heard) {
+        if (!h.on || out.size() == units) continue;
+        if (h.note != 40 + out.size() % 16) inOrder = false;   // each unit once, in turn
+        out.push_back(h.frame - static_cast<std::int64_t>(out.size()) * unitFrames);
+    }
+    count = out.size();
+    return out;
+}
+
+// Slop: each note-on early or late at random by up to the setting, never more
+// than a quarter of a unit; not the first after a start; new every pass; note
+// ends stay on the grid.
+void testSlop() {
+    std::vector<SequenceNote> notes;
+    for (std::uint32_t u = 0; u < 16; ++u) notes.push_back({u, 1, static_cast<std::int32_t>(40 + u), 100});
+    Sequence           s       = midi1(notes, 16);   // 4 beats; a unit is 6000 frames
+    s.slopMs                   = 10.0;               // 480 frames
+    constexpr int      kPasses = 25;
+    std::vector<std::int64_t> first;
+    for (const std::uint32_t block : {4800u, 256u}) {   // an early start in an earlier block than its unit
+        Rig rig;
+        rig.set(s);
+        rig.engine->sendSequenceCommand(kSeq, SequenceCommand::Start);
+        rig.run(96000 * kPasses, block);
+        std::size_t count   = 0;
+        bool        inOrder = false;
+        const auto  dev     = deviations(rig, 6000, 16 * kPasses, count, inOrder);
+        CHECK(count == 16 * kPasses && inOrder);
+        if (dev.empty()) continue;
+        CHECK(dev[0] == 0);   // the start lands on its launch
+        double sum = 0;
+        std::size_t moved = 0, worst = 0;
+        bool        newPass = false;
+        for (std::size_t k = 0; k < dev.size(); ++k) {
+            sum += static_cast<double>(dev[k]);
+            if (dev[k] != 0) ++moved;
+            worst = std::max(worst, static_cast<std::size_t>(std::abs(dev[k])));
+            if (k + 16 < dev.size() && dev[k] != dev[k + 16]) newPass = true;
+        }
+        CHECK(worst <= 480 && worst > 400);
+        CHECK(moved > dev.size() * 9 / 10 && newPass);
+        CHECK(std::fabs(sum / static_cast<double>(dev.size())) < 60.0);   // early as often as late
+        std::int64_t k = 0;   // note-offs aren't slopped: each at its unit's end
+        bool         ends = true;
+        for (const Heard& h : rig.heard)
+            if (!h.on && h.frame < 96000 * kPasses && h.frame != ++k * 6000) ends = false;
+        CHECK(ends && k == 16 * kPasses - 1);
+        if (first.empty()) first = dev;
+        else CHECK(first != dev);   // fresh randomness, not a fixed pattern
+    }
+
+    // Held to a quarter of a unit: at rate 16 a unit is 1500 frames, so 50 ms
+    // (2400 frames) moves a note at most 375.
+    Rig fast;
+    s.rate   = SequenceRate{16, 1};
+    s.slopMs = 50.0;
+    fast.set(s);
+    fast.engine->sendSequenceCommand(kSeq, SequenceCommand::Start);
+    fast.run(24000 * 20, 512);
+    std::size_t count = 0;
+    bool        inOrder = false;
+    std::int64_t worst = 0;
+    for (const std::int64_t d : deviations(fast, 1500, 16 * 20, count, inOrder)) worst = std::max(worst, std::abs(d));
+    CHECK(count == 16 * 20 && inOrder && worst <= 375 && worst > 300);
+
+    // With full swing too, units keep their order, and each plays once.
+    Rig both;
+    s.swing = 0.75;
+    both.set(s);
+    both.engine->sendSequenceCommand(kSeq, SequenceCommand::Start);
+    both.run(24000 * 20, 512);
+    deviations(both, 1500, 16 * 20, count, inOrder);
+    CHECK(count == 16 * 20 && inOrder);
+
+    // Repeat off: slop never pushes a note past the end.
+    Rig once;
+    s.repeat = false;
+    once.set(s);
+    once.engine->sendSequenceCommand(kSeq, SequenceCommand::Start);
+    once.run(24000 * 2, 512);
+    deviations(once, 1500, 32, count, inOrder);
+    CHECK(count == 16 && inOrder);
+    bool before = true;
+    for (const Heard& h : once.heard)
+        if (h.frame > 24000) before = false;
+    CHECK(before && once.runtime->state.load() == SequenceState::Stopped);
 }
 
 void testEdoPitches() {
@@ -687,6 +837,8 @@ int main() {
     testStops();
     testRepeatOff();
     testNoteOffOffset();
+    testSwing();
+    testSlop();
     testEdoPitches();
     testEditsWhilePlaying();
     testRouting();

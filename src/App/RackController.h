@@ -223,6 +223,8 @@ public:
     void setSequenceChannel(const std::string& id, int channel);   // 0-based
     void setSequenceGroup(const std::string& id, int group);       // 0-based
     void setSequenceNoteOffOffset(const std::string& id, double ms);
+    void setSequenceSwing(const std::string& id, double swing);   // 0.5 (straight) to 0.75
+    void setSequenceSlop(const std::string& id, double ms);       // 0 to 50
     // MIDI learn (docs/sequences.md, section 4): the next note-on or controller
     // press from any input becomes a trigger that does `action` to the
     // sequence. It replaces the sequence's trigger for that action and any

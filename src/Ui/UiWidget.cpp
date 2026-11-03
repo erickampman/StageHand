@@ -151,6 +151,16 @@ void UiWidget::sphere(float cx, float cy, float r, UiColor accent, float intensi
     NanoVG::fill();
 }
 
+void UiWidget::knob(float cx, float cy, float diameter, float value, UiColor accent) {
+    constexpr float kPi = 3.14159265f;
+    const float     r = diameter / 2, angle = 0.75f * kPi + 1.5f * kPi * std::clamp(value, 0.0f, 1.0f);
+    sphere(cx, cy, r, accent);
+    beginPath();
+    circle(cx + std::cos(angle) * r * 0.72f, cy + std::sin(angle) * r * 0.72f, std::max(2.0f, r * 0.13f));
+    fill(UiColor{244, 247, 250});
+    NanoVG::fill();
+}
+
 // KeyboardEDO's slider (its src/app/Widgets.cpp), lying down: a recessed
 // slot, lit from the rest to the value with a faint glow either side, the
 // rest marked across it when it isn't an end, and the thumb a small sphere

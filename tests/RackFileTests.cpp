@@ -60,6 +60,8 @@ Rack sampleRack() {
     arp.launch          = LaunchQuantize::Beat;
     arp.repeat          = false;
     arp.noteOffOffsetMs = -5.0;
+    arp.swing           = 0.62;
+    arp.slopMs          = 12.0;
     arp.notes           = {{0, 2, -3, 40000}, {4, 4, 10, 65535}};
     SequenceTrigger anyPad;   // defaults: toggle, any input, note 0 on channel 1
     SequenceTrigger pedal;
@@ -141,6 +143,7 @@ void testRoundTrip(const fs::path& dir) {
         CHECK(a.referenceNote == 62 && a.channel == 2 && a.group == 1 && a.length == 8);
         CHECK(a.rate.numerator == 1 && a.rate.denominator == 2 && a.launch == LaunchQuantize::Beat);
         CHECK(!a.repeat && a.noteOffOffsetMs == -5.0 && a.notes.size() == 2);
+        CHECK(a.swing == 0.62 && a.slopMs == 12.0);
         CHECK(a.triggers.size() == 2 && a.triggers[0] == SequenceTrigger{} && a.atStart);
         if (a.triggers.size() == 2)
             CHECK(a.triggers[1].action == SequenceTrigger::Action::Stop && a.triggers[1].channel == 9 &&
@@ -309,6 +312,12 @@ void testFailures(const fs::path& dir) {
     expectFailure(dir, "BadRate.rack",
                   R"({"format":"stagehand-rack","version":1,"slots":[],"sequences":[{"id":"s","rate":"0"}]})",
                   "units per beat");
+    expectFailure(dir, "BadSwing.rack",
+                  R"({"format":"stagehand-rack","version":2,"slots":[],"sequences":[{"id":"s","swing":0.4}]})",
+                  "swing must be within 0.5-0.75");
+    expectFailure(dir, "BadSlop.rack",
+                  R"({"format":"stagehand-rack","version":2,"slots":[],"sequences":[{"id":"s","slopMs":60}]})",
+                  "slopMs must be within 0-50");
     expectFailure(dir, "LongNote.rack",
                   R"({"format":"stagehand-rack","version":1,"slots":[],
                       "sequences":[{"id":"s","length":4,"notes":[[2,3,0,100]]}]})",
@@ -366,6 +375,7 @@ void testSequenceTargets(const fs::path& dir) {
     CHECK(loadRack((dir / "Old.rack").string(), old).ok);
     CHECK(old.sequences.size() == 1 && (old.sequences[0].targets == std::vector<std::string>{"a"}));
     CHECK(old.slots[0].source.kind == MidiSourceRef::Kind::None && old.slots[1].source.kind == MidiSourceRef::Kind::All);
+    CHECK(old.sequences[0].swing == 0.5 && old.sequences[0].slopMs == 0.0);   // from before swing and slop: off
 
     old.sequences[0].targets.push_back("b");   // b plays it and keeps its live input
     const std::string path = (dir / "Targets.rack").string();

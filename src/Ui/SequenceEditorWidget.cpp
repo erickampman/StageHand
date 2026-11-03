@@ -328,6 +328,25 @@ void SequenceEditorWidget::drawStrip(const Sequence& seq) {
         controller.setSequenceNoteOffOffset(id, std::round((ms + dir * step) / step) * step);
     });
 
+    // Swing and slop (docs/sequences.md, "Swing and slop"), as KeyboardEDO's
+    // arpeggiator shows them: two knobs the same size, side by side, in 1% and
+    // 1 ms steps. The rest of the strip moves down to make room.
+    char swing[16], slop[16];
+    std::snprintf(swing, sizeof swing, "%d%%", static_cast<int>(std::lround(seq.swing * 100.0)));
+    std::snprintf(slop, sizeof slop, "%g ms", seq.slopMs);
+    feelKnob(0, kStripW * 0.25f, "Swing", static_cast<float>((seq.swing - 0.5) / 0.25), 26, swing,
+             [this, id](int step) {
+                 const double value = (50 + step) / 100.0;
+                 if (const Sequence* now = controller.sequence(id); now != nullptr && now->swing != value)
+                     controller.setSequenceSwing(id, value);
+             });
+    feelKnob(1, kStripW * 0.75f, "Slop", static_cast<float>(seq.slopMs / 50.0), 51, slop, [this, id](int step) {
+        if (const Sequence* now = controller.sequence(id); now != nullptr && now->slopMs != step)
+            controller.setSequenceSlop(id, step);
+    });
+    constexpr float kFeelH = 76.0f;
+    beginShift(kFeelH);
+
     settingRow(330.0f, "Channel");
     stepper(80.0f, 330.0f, std::to_string(seq.channel + 1), [this, id, ch = seq.channel](int dir, bool) {
         controller.setSequenceChannel(id, ch + dir);
@@ -361,6 +380,33 @@ void SequenceEditorWidget::drawStrip(const Sequence& seq) {
         label(kPad, y, line, 10.5f, kDim);
         y += 15.0f;
     }
+    endShift(kFeelH);
+}
+
+void SequenceEditorWidget::feelKnob(int which, float cx, const char* caption, float value, int steps,
+                                    const std::string& text, std::function<void(int step)> set) {
+    constexpr float kTravel = 160.0f;   // a drag from end to end, as KeyboardEDO's knobs
+    label(cx, 338.0f, caption, 12.0f, kDim, ALIGN_CENTER | ALIGN_MIDDLE);
+    knob(cx, 362.0f, 34.0f, value, kPurple);
+    label(cx, 391.0f, text, 12.0f, kText, ALIGN_CENTER | ALIGN_MIDDLE);
+    const int at = static_cast<int>(std::lround(value * (steps - 1)));
+    region(
+        cx - 36.0f, 330.0f, 72.0f, 70.0f,
+        [this, which, value, steps, set](const Press& p) {
+            if (which == lastKnob && p.time - lastKnobTime < 400) {   // back to straight, or none
+                set(0);
+                lastKnob = -1;
+                return;
+            }
+            lastKnob     = which;
+            lastKnobTime = p.time;
+            drag = [value, steps, set, startY = p.y](float, float y, std::uint32_t mod) {
+                const float fine = (mod & dgl::kModifierShift) != 0 ? 0.1f : 1.0f;
+                const float turned = std::clamp(value + (startY - y) / kTravel * fine, 0.0f, 1.0f);
+                set(static_cast<int>(std::lround(turned * (steps - 1))));
+            };
+        },
+        [at, steps, set](float notches) { set(std::clamp(at + (notches > 0 ? 1 : -1), 0, steps - 1)); });
 }
 
 // --- input ---------------------------------------------------------------------------

@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <random>
 #include <vector>
 
 #include "uw/ump/MidiMessage.h"
@@ -57,6 +58,7 @@ struct SequenceRuntime {
         std::uint32_t start   = 0;     // the note's start unit, for matching after an edit
         std::int32_t  pitch   = 0;
         std::uint8_t  note    = 0;     // the note number it was sent on
+        double        unitBeat = 0.0;  // its unit's place on the straight grid
         double        onBeat  = 0.0;
         double        offBeat = 0.0;
     };
@@ -65,6 +67,13 @@ struct SequenceRuntime {
     double        stopBeat    = std::numeric_limits<double>::infinity();
     double        unitsPerBeat = 0.0;  // of the snapshot last played, to keep phase through edits
     std::uint32_t length       = 0;
+    // The next unit (counted from the anchor) whose notes haven't started.
+    // Swing and slop move a unit's notes off its grid line, sometimes into
+    // the next block, sometimes (slop) into the one before; each unit plays once.
+    double        nextUnit     = 0.0;
+    // Slop's random numbers: a hash of this and the unit, so a unit's offset
+    // holds while it's pending and is new on every pass. Drawn again at each start.
+    std::uint64_t slopSeed     = std::random_device{}();
     Sounding      sounding[kMaxSounding];
 };
 
@@ -80,6 +89,8 @@ struct CompiledSequence {
     LaunchQuantize                   launch       = LaunchQuantize::Bar;
     bool                             repeat       = true;
     double                           noteOffOffsetMs = 0.0;
+    double                           swing        = 0.5;   // 0.5-0.75
+    double                           slopMs       = 0.0;   // 0-50
     bool                             atStart      = false;
 
     struct Note {

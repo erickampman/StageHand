@@ -1473,6 +1473,14 @@ void RackController::setSequenceNoteOffOffset(const std::string& id, double ms) 
     editSequence(id, [ms](Sequence& seq) { seq.noteOffOffsetMs = std::clamp(ms, -1000.0, 1000.0); });
 }
 
+void RackController::setSequenceSwing(const std::string& id, double swing) {
+    editSequence(id, [swing](Sequence& seq) { seq.swing = std::clamp(swing, 0.5, 0.75); });
+}
+
+void RackController::setSequenceSlop(const std::string& id, double ms) {
+    editSequence(id, [ms](Sequence& seq) { seq.slopMs = std::clamp(ms, 0.0, 50.0); });
+}
+
 void RackController::renameSequence(const std::string& id, const std::string& name) {
     const std::string trimmed = nameFrom(name);
     if (trimmed.empty()) {

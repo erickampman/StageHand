@@ -125,6 +125,10 @@ protected:
     // value box (centred text in one); a section (a rounded box a step up from
     // the panel, for a group of controls; its caller writes the title).
     void  sphere(float cx, float cy, float r, UiColor accent, float intensity = 1.0f);
+    // KeyboardEDO's knob (its src/app/Widgets.cpp): the sphere, `diameter`
+    // across, with a bright dot near the rim at `value` (0-1) along a
+    // 270-degree sweep from bottom left round to bottom right. Drawing only.
+    void  knob(float cx, float cy, float diameter, float value, UiColor accent);
     void  slider(float x0, float x1, float cy, float at, float rest, float thumb, UiColor accent, bool dim);
     void  dropdown(float x, float y, float w, float h, const std::string& text, UiColor ink, float size = 13.0f);
     void  valueBox(float x, float y, float w, float h, const std::string& text, UiColor ink, float size = 13.0f);

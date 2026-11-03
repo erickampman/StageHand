@@ -519,6 +519,12 @@ void testDock() {
     controller.tick(1.2);
     CHECK(view.sequences[0].rate.denominator == 2 && view.sequences[0].launch == LaunchQuantize::Beat);
     CHECK(!view.sequences[0].repeat && view.sequences[0].length == 6);
+    controller.setSequenceSwing("arp", 0.9);   // held to 0.5-0.75 and 0-50 ms
+    controller.setSequenceSlop("arp", -3.0);
+    CHECK(controller.sequence("arp")->swing == 0.75 && controller.sequence("arp")->slopMs == 0.0);
+    controller.setSequenceSwing("arp", 0.62);
+    controller.setSequenceSlop("arp", 12.0);
+    CHECK(controller.sequence("arp")->swing == 0.62 && controller.sequence("arp")->slopMs == 12.0);
 
     // Adding (into a row, or nowhere yet), aiming, a new row for one, and removing.
     const std::string id = controller.addSequence(MidiProtocol::Midi2, "lead");

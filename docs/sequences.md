@@ -62,6 +62,8 @@ Sequence
   launch           quantize: next bar (default) | next beat | immediately
   repeat           on (default): loop | off: play once from the start, then stop
   noteOffOffsetMs  shifts every note-off from its note's end, in ms (default 0)
+  swing            0.5 (straight) to 0.75 (added 2026-11-02)
+  slopMs           0 to 50 ms (added 2026-11-02)
   notes[]          start (unit), length (units, >= 1), pitch, velocity
                      pitch: MIDI 1.0 = note number; MIDI 2.0 = EDO step
                      velocity: 7-bit (1.0) or 16-bit (2.0)
@@ -71,7 +73,8 @@ Sequence
   units, exactly your rectangles: a 2-unit note is twice as long. Finer timing
   comes from a faster rate, not from sub-unit offsets. It keeps the grid, the
   drag rules and the file format simple. Swing and per-note offsets can come
-  later as additions.
+  later as additions. (Swing and slop came 2026-11-02, as settings of the
+  whole sequence: see "Swing and slop".)
 - **Rate is units per beat,** as a ratio. At 1/2, a unit lasts two beats; 3
   and 1/3 give triplets. A beat is the tempo's beat, and BPM counts quarter
   notes (the CLAP and DAW convention): at rate 4 a unit is always a sixteenth
@@ -348,6 +351,50 @@ Implemented 2026-09-29 (milestone 4):
   sequence reveals space; shortening it asks before deleting notes past the new
   end.
 - **Undo** is per sequence, in the editor (snapshots, cheap at this size).
+
+## Swing and slop (2026-11-02)
+
+Two settings of each sequence that move notes off the straight grid without
+changing the loop's length or the tempo. They follow KeyboardEDO's
+arpeggiator (its docs/decisions.md, "Swing and slop"), at Eric's request.
+
+- **Swing** is a drum machine's: the share of a pair of units the first one
+  takes, 0.5 (straight, the default) to 0.75; 0.67 is a triplet feel. Every
+  odd unit of the loop comes (2 x swing - 1) of a unit late, at most half a
+  unit. It applies to the sequence's own units, so at rate 4 it swings
+  sixteenths and at rate 2 eighths. Units are counted within the loop, so in
+  an odd-length loop the next pass's first unit is on time.
+- **Notes end on the swung grid.** A note's end is its last unit's end, moved
+  as a start would be. So a note on a late unit is shorter, and one ending on
+  a late unit longer, as KeyboardEDO's gate is a share of the time to the next
+  step. The note-off offset then applies as before.
+- **Slop** moves each note-on early or late at random, by up to `slopMs`
+  (0-50 ms, default 0), held to a quarter of a unit so units never change
+  places (swing at most half, slop at most a quarter). Timing only, not
+  velocity. Note ends aren't slopped.
+- **Fresh each pass** (Eric's choice over a repeatable pattern): a unit's
+  offset is a hash of a seed and the unit's count since the start, so it's new
+  on every pass, and the seed is drawn again at every start. The seed comes from
+  `std::random_device` when the sequence's runtime is made.
+- **The first note after a start isn't slopped,** so a launch lands on its bar
+  or beat; slop never pushes a note past a stop or the end of a Repeat-off
+  pass, and never before the start.
+- **Playback:** the generator keeps a cursor, `SequenceRuntime::nextUnit`, the
+  next unit whose notes haven't started. A unit's notes can now start in a
+  later block than its grid line (swing, late slop) or an earlier one (early
+  slop), and the cursor makes each unit play exactly once. A rate or length
+  change moves it with the loop's phase.
+- **Saved** as `swing` and `slopMs` on each sequence (rack-format.md). A rack
+  from before has neither and plays straight; the format version stays 2.
+- **Editor:** two knobs, KeyboardEDO's (`UiWidget::knob`, the sphere and a
+  dot), side by side under Note-off, showing "62%" and "12 ms". Drag up to turn
+  up (160 px end to end; Shift ten times finer), the wheel steps 1% or 1 ms, and
+  a double-click resets. The editor window's minimum height went from 640 to
+  716 px to keep the strip's last line in view.
+- tests/SequenceTests.cpp (`testSwing`, `testSlop`) checks exact positions for
+  swing in blocks of several sizes, and slop's bounds, cap, average, the
+  unslopped start, a new pattern each pass and run, and that each unit plays
+  once, in order.
 
 ## 6. Things easily forgotten
 

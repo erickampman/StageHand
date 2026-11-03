@@ -101,6 +101,13 @@ struct Sequence {
     LaunchQuantize  launch          = LaunchQuantize::Bar;
     bool            repeat          = true;             // off: play once, then stop
     double          noteOffOffsetMs = 0.0;              // moves every note-off (+ legato, - staccato)
+    // The feel (docs/sequences.md, "Swing and slop"), as KeyboardEDO's
+    // arpeggiator. Swing: the share of a pair of units the first takes, 0.5
+    // (straight) to 0.75, so every odd unit of the loop comes late. Slop: each
+    // note-on early or late at random, by up to this many ms (0-50), never more
+    // than a quarter of a unit. Neither changes the loop's length.
+    double          swing           = 0.5;
+    double          slopMs          = 0.0;
     std::vector<SequenceNote> notes;
     std::vector<SequenceTrigger> triggers;              // MIDI controls that start or stop it
     bool            atStart         = false;            // starts on beat 1 whenever the transport starts

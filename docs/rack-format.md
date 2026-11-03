@@ -201,6 +201,8 @@ each slot's filter applies to it as to any source. They're kept separate from
     "launch": "bar",
     "repeat": true,
     "noteOffOffsetMs": 0,
+    "swing": 0.5,
+    "slopMs": 0,
     "notes": [[0, 2, 0, 50000], [4, 1, 10, 50000]]
   }
 ]
@@ -218,6 +220,8 @@ each slot's filter applies to it as to any source. They're kept separate from
 | `launch` | `"bar"` | Where Play and Stop take effect: `"bar"`, `"beat"` or `"immediate"` |
 | `repeat` | `true` | Off: plays once from its start, then stops |
 | `noteOffOffsetMs` | `0` | Moves every note-off by this much (-1000 to 1000): positive for legato, negative for staccato |
+| `swing` | `0.5` | The share of a pair of units the first takes, 0.5 (straight) to 0.75: every odd unit of the loop comes late (sequences.md, "Swing and slop") |
+| `slopMs` | `0` | Each note-on early or late at random by up to this much (0-50 ms), never more than a quarter of a unit |
 | `notes` | `[]` | `[start, length, pitch, velocity]`: start and length in units, within `length`; pitch is a note number (1.0) or an EDO step relative to `referenceNote` (2.0, may be negative); velocity 1-127 (1.0) or 1-65535 (2.0) |
 | `atStart` | `false` | Starts on beat 1 whenever the transport starts |
 | `triggers` | `[]` | MIDI controls that start or stop it; see "Triggers" |

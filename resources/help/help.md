@@ -218,7 +218,9 @@ Removing one asks first; **Shift-click** its X to remove it at once.
 <summary class="disclosure-title subtle">The sequence editor</summary>
 
 ::: disclosure-content
-**Edit** (or a click on the mini-map) opens the sequence's own window. The strip on the left has Play/Stop, then sets the protocol (while it has no notes), the EDO and the note step 0 sounds at (MIDI 2.0), rate, length, launch, Repeat, the note-off offset, channel and group, and the length of new notes; then **Undo** and **Redo**, and a reminder of the gestures. The grid has one row per pitch, with the 12-tone black keys shaded so the familiar pattern shows at any EDO.
+**Edit** (or a click on the mini-map) opens the sequence's own window. The strip on the left has Play/Stop, then sets the protocol (while it has no notes), the EDO and the note step 0 sounds at (MIDI 2.0), rate, length, launch, Repeat, the note-off offset, the **Swing** and **Slop** knobs, channel and group, and the length of new notes; then **Undo** and **Redo**, and a reminder of the gestures. The grid has one row per pitch, with the 12-tone black keys shaded so the familiar pattern shows at any EDO.
+
+**Swing** delays every second unit of the loop: it is the share of a pair of units the first one takes, from 50% (straight) to 75%, and 67% is a triplet feel. **Slop** moves each note early or late at random, by up to 50 ms but never more than a quarter of a unit, and differently on every pass; the first note after Play is never moved. Neither changes the loop's length or the tempo. Drag a knob up or down (Shift: finer), or use the wheel; a double-click sets it back to 50% or 0 ms.
 
 | Gesture | Where | Result |
 |---|---|---|

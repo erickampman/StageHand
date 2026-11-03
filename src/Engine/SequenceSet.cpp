@@ -119,6 +119,48 @@ Note compileNote(const Sequence& sequence, const SequenceNote& note) noexcept {
     return n;
 }
 
+// Swing and slop (docs/sequences.md, "Swing and slop"), as KeyboardEDO's
+// arpeggiator. Swing moves an odd unit of the loop late by (2 * swing - 1) of
+// a unit, at most half; slop moves a note-on at most a quarter. So units
+// never change places, and both work from the straight grid: the loop's
+// length and phase don't change.
+double swingBeats(const CompiledSequence& s, double unit) noexcept {
+    const auto inLoop = static_cast<std::uint64_t>(std::fmod(unit, static_cast<double>(s.length)));
+    return inLoop % 2 == 1 ? (2.0 * s.swing - 1.0) / s.unitsPerBeat : 0.0;
+}
+
+std::uint64_t splitmix(std::uint64_t x) noexcept {
+    x += 0x9E3779B97F4A7C15ull;
+    x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ull;
+    x = (x ^ (x >> 27)) * 0x94D049BB133111EBull;
+    return x ^ (x >> 31);
+}
+
+// A unit's share of the slop, -1 to 1: the same while the unit is pending, new
+// on every pass (the unit count goes on rising).
+double slopShare(std::uint64_t seed, double unit) noexcept {
+    const std::uint64_t h = splitmix(seed ^ splitmix(static_cast<std::uint64_t>(unit)));
+    return static_cast<double>(h >> 11) * 0x1.0p-52 - 1.0;
+}
+
+// Where the notes of `unit` (counted from the anchor) start: its grid line,
+// swung, then slopped. The first unit after a start isn't slopped, so it lands
+// on its launch, and slop never pushes a note past a stop.
+double onsetBeat(const CompiledSequence& s, const SequenceRuntime& rt, double unit, double beatsPerMs) noexcept {
+    const double swung = rt.anchorBeat + unit / s.unitsPerBeat + swingBeats(s, unit);
+    if (s.slopMs <= 0.0 || unit < 0.5) return swung;
+    const double most    = std::min(s.slopMs * beatsPerMs, 0.25 / s.unitsPerBeat);
+    const double slopped = swung + most * slopShare(rt.slopSeed, unit);
+    return slopped < rt.stopBeat - kEps ? slopped : swung;
+}
+
+// Where a note ends, from its unit's grid line: at its last unit's end, swung
+// like a start (not slopped). So a note on a late unit is shorter, and one
+// that ends on a late unit longer.
+double endBeat(const CompiledSequence& s, double unitBeat, double startUnit, std::uint32_t length) noexcept {
+    return unitBeat + length / s.unitsPerBeat + swingBeats(s, startUnit + length);
+}
+
 } // namespace
 
 AuditionMessages auditionMessages(const Sequence& sequence, const SequenceNote& note) noexcept {
@@ -144,6 +186,8 @@ CompiledSequence CompiledSequence::compile(const Sequence& sequence, MidiSourceH
     c.launch          = sequence.launch;
     c.repeat          = sequence.repeat;
     c.noteOffOffsetMs = sequence.noteOffOffsetMs;
+    c.swing           = std::clamp(sequence.swing, 0.5, 0.75);
+    c.slopMs          = std::clamp(sequence.slopMs, 0.0, 50.0);
     c.atStart         = sequence.atStart;
 
     for (const SequenceNote& note : sequence.notes) {
@@ -206,6 +250,7 @@ std::size_t SequenceSet::adoptFrom(const SequenceSet* previous, const Block& b, 
             const double units    = std::max(0.0, (b.beat - rt.anchorBeat) * rt.unitsPerBeat);
             const double fraction = std::fmod(units, static_cast<double>(rt.length)) / rt.length;
             rt.anchorBeat         = b.beat - fraction * s.length / s.unitsPerBeat;
+            rt.nextUnit           = std::max(0.0, std::ceil((b.beat - rt.anchorBeat) * s.unitsPerBeat - kEps));
             if (!s.repeat && rt.current == SequenceState::Playing) rt.stopBeat = rt.anchorBeat + s.length / s.unitsPerBeat;
         }
 
@@ -219,7 +264,8 @@ std::size_t SequenceSet::adoptFrom(const SequenceSet* previous, const Block& b, 
                 sounding.offBeat = b.beat;
                 continue;
             }
-            const double end = sounding.onBeat + match->length / s.unitsPerBeat + s.noteOffOffsetMs * beatsPerMs;
+            const double end = endBeat(s, sounding.unitBeat, sounding.start, match->length) +
+                               s.noteOffOffsetMs * beatsPerMs;
             sounding.offBeat = std::max({end, sounding.onBeat + beatsPerMs, b.beat});
         }
         rt.unitsPerBeat = s.unitsPerBeat;
@@ -373,6 +419,8 @@ void SequenceSet::transportStarted(const Block& b) noexcept {
         rt.anchorBeat = b.beat;
         rt.current    = SequenceState::Starting;
         rt.stopBeat   = s.repeat ? std::numeric_limits<double>::infinity() : b.beat + s.length / s.unitsPerBeat;
+        rt.nextUnit   = 0.0;
+        rt.slopSeed   = splitmix(rt.slopSeed);
         rt.state.store(rt.current, std::memory_order_relaxed);
     }
 }
@@ -393,6 +441,8 @@ void SequenceSet::apply(CompiledSequence& s, SequenceCommand command, const Bloc
                 rt.anchorBeat = boundary(s.launch, b);
                 rt.current    = SequenceState::Starting;
                 rt.stopBeat   = s.repeat ? std::numeric_limits<double>::infinity() : rt.anchorBeat + once;
+                rt.nextUnit   = 0.0;
+                rt.slopSeed   = splitmix(rt.slopSeed);
             }
             break;
         case SequenceCommand::Stop:
@@ -425,11 +475,15 @@ std::size_t SequenceSet::generate(const Block& b, SequenceEvent* out, std::size_
 
         if (rt.current == SequenceState::Starting && rt.anchorBeat < end) rt.current = SequenceState::Playing;
         if (rt.current == SequenceState::Playing || rt.current == SequenceState::Stopping) {
-            // Each whole unit that starts in this block, before any stop.
+            // Each unit whose notes start in this block, before any stop: from the
+            // first not yet played (swing and slop can move a unit's start out
+            // of its own block), but no further back than a unit before now.
             const double units0 = (b.beat - rt.anchorBeat) * s.unitsPerBeat;
-            for (double unit = std::max(0.0, std::ceil(units0 - kEps));; unit += 1.0) {
-                const double beat = rt.anchorBeat + unit / s.unitsPerBeat;
-                if (beat >= end - kEps || beat >= rt.stopBeat - kEps) break;
+            for (double unit = std::max({0.0, rt.nextUnit, std::ceil(units0 - 1.0 - kEps)});; unit += 1.0) {
+                const double grid = rt.anchorBeat + unit / s.unitsPerBeat;
+                const double beat = onsetBeat(s, rt, unit, beatsPerMs);
+                if (beat >= end - kEps || grid >= rt.stopBeat - kEps || beat >= rt.stopBeat - kEps) break;
+                rt.nextUnit       = unit + 1.0;
                 const auto inLoop = static_cast<std::uint32_t>(std::fmod(unit, static_cast<double>(s.length)));
                 const std::uint32_t at = frameOf(b, beat);
                 auto first = std::lower_bound(s.notes.begin(), s.notes.end(), inLoop,
@@ -451,8 +505,8 @@ std::size_t SequenceSet::generate(const Block& b, SequenceEvent* out, std::size_
                     if (slot == nullptr) continue;   // 64 notes sounding at once: this one is skipped
                     const std::uint8_t note = chooseNote(s, *n);
                     if (!emit(out, capacity, count, at, 1, s.source, noteOnMessage(s, note, *n))) continue;
-                    const double off = beat + n->length / s.unitsPerBeat + s.noteOffOffsetMs * beatsPerMs;
-                    *slot = SequenceRuntime::Sounding{true, n->start, n->pitch, note, beat,
+                    const double off = endBeat(s, grid, unit, n->length) + s.noteOffOffsetMs * beatsPerMs;
+                    *slot = SequenceRuntime::Sounding{true, n->start, n->pitch, note, grid, beat,
                                                       std::max(off, beat + beatsPerMs)};   // at least 1 ms
                 }
             }

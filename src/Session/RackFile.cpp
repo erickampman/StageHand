@@ -199,6 +199,10 @@ Sequence parseSequence(const Json& s) {
     seq.atStart         = s.value("atStart", false);
     seq.noteOffOffsetMs = s.value("noteOffOffsetMs", 0.0);
     if (seq.noteOffOffsetMs < -1000.0 || seq.noteOffOffsetMs > 1000.0) fail("noteOffOffsetMs must be within +-1000");
+    seq.swing  = s.value("swing", 0.5);   // added 2026-11-02; older racks play straight
+    seq.slopMs = s.value("slopMs", 0.0);
+    if (seq.swing < 0.5 || seq.swing > 0.75) fail("swing must be within 0.5-0.75");
+    if (seq.slopMs < 0.0 || seq.slopMs > 50.0) fail("slopMs must be within 0-50");
 
     const bool midi1       = seq.protocol == MidiProtocol::Midi1;
     const int  maxVelocity = midi1 ? 127 : 65535;
@@ -251,6 +255,8 @@ Json sequenceJson(const Sequence& seq) {
     s["launch"]          = launchText(seq.launch);
     s["repeat"]          = seq.repeat;
     s["noteOffOffsetMs"] = seq.noteOffOffsetMs;
+    s["swing"]           = seq.swing;
+    s["slopMs"]          = seq.slopMs;
     s["atStart"]         = seq.atStart;
     Json notes           = Json::array();
     for (const SequenceNote& n : seq.notes) notes.push_back(Json::array({n.start, n.length, n.pitch, n.velocity}));

@@ -6,6 +6,7 @@
 // (the notes) and controller intents (the settings). Internal to stagehand-ui.
 
 #include <cstdint>
+#include <functional>
 #include <string>
 
 #include "App/RackController.h"
@@ -42,6 +43,12 @@ private:
     void drawGrid(const Sequence& seq);
     void drawVelocityReadout(const Sequence& seq);
     void settingRow(float y, const char* name);
+    // A knob in the strip, centred on `cx`: its caption, the knob at `value`
+    // (0-1, in `steps` steps), its value as `text`. Dragging up turns it up
+    // (Shift: finer), the wheel steps it, a double-click resets it; `set` gets
+    // the new step. `which` tells the knobs apart for double-clicks.
+    void feelKnob(int which, float cx, const char* caption, float value, int steps, const std::string& text,
+                  std::function<void(int step)> set);
 
     // --- input
     void pressCanvas(const Press& p);
@@ -64,6 +71,9 @@ private:
     std::int64_t  lastClickUnit  = -1;
     int           lastClickPitch = 0;
     bool          clicked        = false;
+    // Double-click on a knob.
+    int           lastKnob     = -1;
+    std::uint32_t lastKnobTime = 0;
 };
 
 } // namespace stagehand

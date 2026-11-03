@@ -189,8 +189,8 @@ void RackUi::Impl::openEditor(const std::string& id) {
     e.window->setTitle(title.c_str());
     e.name = seq->name;
     e.window->setResizable(true);
-    e.window->setGeometryConstraints(px(760.0), px(640.0));
-    e.window->setSize(px(1040.0), px(660.0));
+    e.window->setGeometryConstraints(px(760.0), px(716.0));   // the strip's last line, Swing and Slop included
+    e.window->setSize(px(1040.0), px(736.0));
     setIcon(*e.window);
     e.window->show();
     editors.emplace(id, std::move(e));
