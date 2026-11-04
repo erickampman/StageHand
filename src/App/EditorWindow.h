@@ -40,6 +40,9 @@ public:
     // False once the user (or the plugin) closed it.
     bool isOpen() const noexcept { return window != 0; }
 
+    // Retitle the window (a MIDI effect bypassed, the row renamed). Nothing once it's closed.
+    void setTitle(const std::string& title);
+
     // --- EditorHost ---
     bool requestEditorResize(EditorSize size) override;
     bool requestEditorShown(bool shown) override;

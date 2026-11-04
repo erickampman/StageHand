@@ -362,6 +362,11 @@ std::unique_ptr<EditorHandle> RackUi::openParameterEditor(HostedPlugin& plugin, 
             const auto it = impl->generic.find(key);
             return it != impl->generic.end() && !it->second.window->closedByUser;
         }
+        void setTitle(const std::string& t) override {
+            if (alive.expired()) return;
+            const auto it = impl->generic.find(key);
+            if (it != impl->generic.end()) it->second.window->setTitle(t.c_str());
+        }
         ~Handle() override {
             if (!alive.expired()) impl->closeGeneric(key);
         }

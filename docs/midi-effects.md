@@ -121,6 +121,10 @@ state. `stagehand`'s rack listing prints them.
   the note effects (CLAP "note-effect"), added after the others.
 - **E**, beside the dropdown, opens the editor when the row has exactly one
   effect and it has one.
+- **An effect's editor window** is titled "<row> - <effect> (StageHand)", with
+  "(bypassed)" before "(StageHand)" while it's bypassed: the plugin can't tell,
+  so its own editor looks the same either way. The controller retitles an open
+  editor when the bypass (or the row's name) changes (`EditorHandle::setTitle`).
 - **"+ Add plugin"** and the other row-making plugin lists show note effects
   greyed, under "Other (note effects): add one from a row's MIDI FX".
 - The row's MIDI light stays on the input: what the row hears.

@@ -40,6 +40,9 @@ class EditorHandle {
 public:
     virtual ~EditorHandle() = default;
     virtual bool isOpen() const = 0;   // false once the user closed it
+    virtual void setTitle(const std::string&) {}
+
+    std::string title;   // as last set; the controller retitles when it changes
 };
 
 // Between the rack view and the Session (docs/rack-view.md, section 5): applies
@@ -574,6 +577,7 @@ private:
     // An editor for `plugin`: its own, or the generic one if it has none (null
     // if neither). editable(): would there be one?
     std::unique_ptr<EditorHandle> openAnyEditor(HostedPlugin& plugin, const std::string& title);
+    static std::string            midiEffectTitle(const std::string& row, const std::string& effect, bool bypassed);
     bool                          editable(const HostedPlugin& plugin) const;
     std::map<std::pair<std::size_t, std::size_t>, std::unique_ptr<EditorHandle>> busEditors;   // by (bus, slot)
     std::vector<std::string>                              keeping;   // loopers whose copy is on its way

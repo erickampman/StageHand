@@ -343,6 +343,13 @@ RowModel RackController::rowFor(const Session::Slot& slot, double now, double dt
         model.hasEditor = loaded.plugin && editable(*loaded.plugin);
         const auto open = editors.find(saved.id + "/" + effect.id);
         model.editorOpen = open != editors.end() && open->second->isOpen();
+        if (model.editorOpen && loaded.plugin) {   // a bypass, or the row renamed, shows in its title
+            const std::string title = midiEffectTitle(saved.name, loaded.plugin->descriptor().name, effect.bypassed);
+            if (open->second->title != title) {
+                open->second->setTitle(title);
+                open->second->title = title;
+            }
+        }
         row.midiEffects.push_back(std::move(model));
     }
 
@@ -1290,6 +1297,12 @@ void RackController::setMidiEffectBypassed(const std::string& id, const std::str
     session.setMidiEffectBypassed(id, effect, bypassed);
 }
 
+// A MIDI effect's editor window: "<row> - <effect> (StageHand)", with "(bypassed)" while the row's
+// MIDI goes around it, since the plugin itself can't tell.
+std::string RackController::midiEffectTitle(const std::string& row, const std::string& effect, bool bypassed) {
+    return row + " - " + effect + (bypassed ? " (bypassed)" : "") + " (StageHand)";
+}
+
 void RackController::openMidiEffectEditor(const std::string& id, const std::string& effect) {
     const Session::Slot* slot = session.slot(id);
     if (slot == nullptr) return;
@@ -1298,8 +1311,12 @@ void RackController::openMidiEffectEditor(const std::string& id, const std::stri
     for (std::size_t e = 0; e < slot->saved.midiEffects.size() && e < slot->midiEffects.size(); ++e) {
         const auto& plugin = slot->midiEffects[e].plugin;
         if (slot->saved.midiEffects[e].id != effect || !plugin) continue;
-        const std::string title = slot->saved.name + " - " + plugin->descriptor().name + " (StageHand)";
-        if (std::unique_ptr<EditorHandle> editor = openAnyEditor(*plugin, title)) editors[key] = std::move(editor);
+        const std::string title =
+            midiEffectTitle(slot->saved.name, plugin->descriptor().name, slot->saved.midiEffects[e].bypassed);
+        if (std::unique_ptr<EditorHandle> editor = openAnyEditor(*plugin, title)) {
+            editor->title = title;
+            editors[key]  = std::move(editor);
+        }
         return;
     }
 }

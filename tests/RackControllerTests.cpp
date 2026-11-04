@@ -32,8 +32,10 @@ public:
     explicit FakeEditor(std::shared_ptr<int> openCount) : count(std::move(openCount)) { ++*count; }
     ~FakeEditor() override { --*count; }
     bool isOpen() const override { return open; }
+    void setTitle(const std::string& t) override { retitled.push_back(t); }
 
-    bool open = true;
+    bool                     open = true;
+    std::vector<std::string> retitled;   // setTitle() calls, after opening
 
 private:
     std::shared_ptr<int> count;
@@ -272,6 +274,21 @@ void testMidiEffects() {
     const RowModel& moved = controller.view().rows[0];
     CHECK(moved.midiEffects.size() == 2 && moved.midiEffects[0].id == "retune-2" && moved.midiEffects[1].bypassed &&
           moved.midiEffects[1].editorOpen);
+
+    // The editor's title says it's bypassed, since the plugin can't tell, and follows the bypass.
+    FakeEditor* window = rig.editors.empty() ? nullptr : rig.editors.back();
+    CHECK(window != nullptr && window->title.find(" (bypassed) (StageHand)") != std::string::npos &&
+          window->retitled.empty());
+    controller.setMidiEffectBypassed("a", "retune", false);
+    controller.tick(1.15);
+    controller.tick(1.2);   // unchanged: not retitled again
+    CHECK(window != nullptr && window->retitled.size() == 1 &&
+          window->retitled[0].find("(bypassed)") == std::string::npos &&
+          window->retitled[0].find(" (StageHand)") != std::string::npos);
+    controller.setMidiEffectBypassed("a", "retune", true);
+    controller.tick(1.25);
+    CHECK(window != nullptr && window->retitled.size() == 2 && window->retitled[1] == window->title &&
+          window->title.find(" (bypassed) (StageHand)") != std::string::npos);
 
     FakeNoteEffect* effect = rig.factory.createdEffects["retune"];   // the last made: retune-2
     const int idles = effect != nullptr ? effect->idles : 0;

@@ -681,6 +681,7 @@ int runPlay(const Options& options) {
         struct Handle final : EditorHandle {
             std::unique_ptr<EditorWindow> window;
             bool isOpen() const override { return window->isOpen(); }
+            void setTitle(const std::string& t) override { window->setTitle(t); }
         };
         auto window = EditorWindow::open(plugin, loop, title, [&controllerRef] {
             if (controllerRef != nullptr) controllerRef->save();

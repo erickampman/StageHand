@@ -551,8 +551,9 @@ are none. Its <strong>Add a MIDI effect...</strong> lists the note
 effects; a new one goes after the others.</li>
 <li>For each effect the menu has <strong>Editor</strong>,
 <strong>Bypass</strong> (the row hears its input directly), <strong>Move
-up</strong>, <strong>Move down</strong> and
-<strong>Remove</strong>.</li>
+up</strong>, <strong>Move down</strong> and <strong>Remove</strong>. A
+bypassed effect's editor window says "(bypassed)" in its title, since
+the effect's own editor can't show it.</li>
 <li>With one effect, <strong>E</strong> beside the menu opens its
 editor.</li>
 <li>An effect that isn't installed shows in red. It's kept and saved
@@ -685,11 +686,20 @@ it at once.</p>
 <p><strong>Edit</strong> (or a click on the mini-map) opens the
 sequence's own window. The strip on the left has Play/Stop, then sets
 the protocol (while it has no notes), the EDO and the note step 0 sounds
-at (MIDI 2.0), rate, length, launch, Repeat, the note-off offset,
-channel and group, and the length of new notes; then
-<strong>Undo</strong> and <strong>Redo</strong>, and a reminder of the
-gestures. The grid has one row per pitch, with the 12-tone black keys
-shaded so the familiar pattern shows at any EDO.</p>
+at (MIDI 2.0), rate, length, launch, Repeat, the note-off offset, the
+<strong>Swing</strong> and <strong>Slop</strong> knobs, channel and
+group, and the length of new notes; then <strong>Undo</strong> and
+<strong>Redo</strong>, and a reminder of the gestures. The grid has one
+row per pitch, with the 12-tone black keys shaded so the familiar
+pattern shows at any EDO.</p>
+<p><strong>Swing</strong> delays every second unit of the loop: it is
+the share of a pair of units the first one takes, from 50% (straight) to
+75%, and 67% is a triplet feel. <strong>Slop</strong> moves each note
+early or late at random, by up to 50 ms but never more than a quarter of
+a unit, and differently on every pass; the first note after Play is
+never moved. Neither changes the loop's length or the tempo. Drag a knob
+up or down (Shift: finer), or use the wheel; a double-click sets it back
+to 50% or 0 ms.</p>
 <table>
 <thead>
 <tr>

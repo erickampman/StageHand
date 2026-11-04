@@ -143,7 +143,7 @@ A device that's unplugged shows in red, and the row hears it again when it's bac
 A row can run note effects (CLAP plugins that change MIDI, such as Retune) in front of its plugin. Everything the row hears goes through them, in order, then to the plugin. Their own audio isn't heard.
 
 - **The MIDI FX menu**, beside the input menu, shows the first effect's name (and "+1" for each more), or "MIDI FX" when there are none. Its **Add a MIDI effect...** lists the note effects; a new one goes after the others.
-- For each effect the menu has **Editor**, **Bypass** (the row hears its input directly), **Move up**, **Move down** and **Remove**.
+- For each effect the menu has **Editor**, **Bypass** (the row hears its input directly), **Move up**, **Move down** and **Remove**. A bypassed effect's editor window says "(bypassed)" in its title, since the effect's own editor can't show it.
 - With one effect, **E** beside the menu opens its editor.
 - An effect that isn't installed shows in red. It's kept and saved with the rack, and the row's MIDI passes it by until it's back.
 :::

@@ -202,6 +202,11 @@ bool EditorWindow::requestEditorResize(EditorSize wanted) {
     return true;
 }
 
+void EditorWindow::setTitle(const std::string& title) {
+    if (window == nullptr) return;
+    asWindow(window).title = [NSString stringWithUTF8String:title.c_str()];
+}
+
 bool EditorWindow::requestEditorShown(bool shown) {
     if (window == nullptr) return false;
     if (shown)
