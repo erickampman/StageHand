@@ -10,6 +10,7 @@
 name: CI
 
 on:
+  workflow_dispatch:
   push:
     branches: [main, rack-view]
   pull_request:
