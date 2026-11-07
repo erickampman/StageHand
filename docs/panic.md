@@ -188,6 +188,24 @@ in the engine tests (a fake plugin busy 3 ms of a 10 ms period), the
 controller's `testDspAndXruns` (the row's and the peak's percent after a
 second, the xrun count, age, red, reset).
 
+## Retuned keys
+
+Added 2026-11-07 (ReleaseUMP R2-23). A MIDI 2.0 Pitch 7.25 (registered
+per-note controller 3, as KeyboardEDO sends) retunes a key until it's reset,
+so after a Panic the key's next note would still sound retuned. The engine
+keeps, per row, a bit per group, channel and note for each key its plugin was
+given a Pitch 7.25 on, after transpose and MIDI effects, as the plugin got it
+(`SlotRuntime::retuned`, `Engine::trackRetuned()`); a Per-Note Management
+with S set clears it. A Panic (`silence()`) asks each row with retuned keys
+for resets at its frame; `runSlots()` adds them to the plugin's input after
+its MIDI effects, after the chunk's events up to that frame (the Panic's
+note-offs), as Per-Note Management with D and S set: a voice ringing out keeps
+its pitch, the key's next note starts in tune (`Engine::addRetuneResets()`).
+They go to the plugin directly, not through its MIDI effects, which would
+remap them. At most `EngineGraph::kMaxRetuneResets` (128) a chunk; the rest
+follow in the next chunks. MIDI 1.0 plugins can't be sent a Pitch 7.25, so
+they get none. Test: `testPanicRetunedKeys` in the engine tests.
+
 ## Open questions
 
 None at the moment (answered 2026-10-03, each as proposed: Panic keeps the

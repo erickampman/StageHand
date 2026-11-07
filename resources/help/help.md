@@ -316,6 +316,7 @@ A level link works like a volume pedal after the fader: the fader doesn't move, 
 ::: {.callout .callout-note .card}
 ## Panic {#panic}
 **Panic** in the toolbar (and in the Perform view) stops stuck notes in every row: a note-off for every note StageHand knows is sounding, the pedals up, and All Notes Off on every channel.
+- **Retuned keys go back in tune.** A key a MIDI 2.0 controller retuned (a per-note Pitch 7.25, as KeyboardEDO sends) is reset, so its next note sounds at its usual pitch. A note still ringing out keeps its pitch.
 - **The transport, the click, sequences and loopers keep running**: a stuck note is no reason to lose the band's time.
 - **Effect tails ring on.** **Press again within 2 seconds** to cut the sound too (All Sound Off, and the buses' effects reset), for runaway feedback or a plugin stuck making noise.
 - **Learn a MIDI control** for it from the transport's MIDI button (Learn Panic). It's kept in the rig, the same in every song. There's no key for it, so a stray keypress can't cut the sound.

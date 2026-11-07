@@ -969,6 +969,10 @@ doesn't move, and the two multiply.</p>
 stuck notes in every row: a note-off for every note StageHand knows is
 sounding, the pedals up, and All Notes Off on every channel.</p>
 <ul>
+<li><strong>Retuned keys go back in tune.</strong> A key a MIDI 2.0
+controller retuned (a per-note Pitch 7.25, as KeyboardEDO sends) is
+reset, so its next note sounds at its usual pitch. A note still ringing
+out keeps its pitch.</li>
 <li><strong>The transport, the click, sequences and loopers keep
 running</strong>: a stuck note is no reason to lose the band's
 time.</li>

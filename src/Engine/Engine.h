@@ -400,6 +400,11 @@ private:
     // the last one sent, ready for the slot's plugin (`input` if it has none).
     // `input` is the slot's events for this chunk: its MIDI goes through the
     // effects, its parameter changes to the plugin, each effect getting its own.
+    // A Panic's Per-Note Management resets for the keys the slot's plugin has
+    // retuned, at `at` in the chunk, merged into its input; and the tracking
+    // of retuned keys over what the plugin is given.
+    EventBlock           addRetuneResets(std::size_t slot, EventBlock input, std::uint32_t at) noexcept;
+    static void          trackRetuned(SlotRuntime& runtime, EventBlock input) noexcept;
     EventBlock           runMidiEffects(std::size_t slot, const TimeInfo& time, std::uint32_t chunkStart,
                                         std::uint32_t chunk, EventBlock input) noexcept;
     void                 advanceTransport(const AudioCallbackContext& ctx) noexcept;

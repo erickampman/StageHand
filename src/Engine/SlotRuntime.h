@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
@@ -117,6 +118,16 @@ struct SlotRuntime {
     std::uint64_t quietFrames = 0;       // muted at gain 0, or draining: frames of quiet output in a row
     std::uint64_t mutedFrames = 0;       // muted and at gain 0, in all
     std::uint64_t drainFrames = 0;       // draining, in all
+
+    // --- audio thread only: retuned keys (docs/panic.md, "Retuned keys") ---
+    // The keys its plugin was sent a Pitch 7.25 on (MIDI 2.0 registered
+    // per-note controller 3) with no Per-Note Management reset since: one bit
+    // per group, channel and note number, as the plugin got them. A Panic
+    // sends each a reset (from `resetAt`, a frame of the current block).
+    static constexpr std::uint32_t kNoReset = 0xFFFFFFFFu;
+    std::array<std::uint64_t, 16 * 16 * 128 / 64> retuned = {};
+    std::uint32_t retunedCount = 0;
+    std::uint32_t resetAt      = kNoReset;
 };
 
 } // namespace stagehand

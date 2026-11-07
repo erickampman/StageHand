@@ -1477,6 +1477,109 @@ void testPanic() {
 // The DSP load (docs/panic.md, section 6): each block's time over its
 // period, as an average and the worst block since the last take; each row's
 // own share in its runtime.
+// Panic and retuned keys (ReleaseUMP R2-23): a key sent a Pitch 7.25 gets a
+// Per-Note Management reset (D and S) after its note-off, at the note the
+// plugin got; a key reset since, or a MIDI 1.0 plugin, gets none; more than a
+// chunk's worth carry on into the next block.
+void testPanicRetunedKeys() {
+    auto engine = std::make_unique<Engine>();
+    auto midi2  = std::make_shared<FakePlugin>(2, NoteDialect::Midi2);
+    auto midi1  = std::make_shared<FakePlugin>(2, NoteDialect::Midi);
+    SlotConfig a           = slotFor(midi2);
+    a.midiFilter.transpose = 2;
+    SlotConfig b           = slotFor(midi1);
+    engine->commit(std::make_unique<EngineGraph>(std::vector<SlotConfig>{a, b}, std::vector<BusConfig>{}));
+
+    Nanoseconds now   = T;
+    auto        block = [&] {
+        Block blk(480, 48000.0, now);
+        engine->process(blk.ctx);
+        now += 10 * ms;
+    };
+    auto send2 = [&](std::uint32_t word0, std::uint32_t word1) {   // MIDI 2.0 from input 1
+        TimedMidiMessage m;
+        m.captureTime       = now - 5 * ms;
+        m.message.words[0]  = word0;
+        m.message.words[1]  = word1;
+        m.message.wordCount = 2;
+        engine->onMidi(1, m);
+    };
+    auto noteOn  = [&](std::uint32_t ch, std::uint32_t note) { send2(0x40900000u | (ch << 16) | (note << 8), 0x80000000u); };
+    auto pitch   = [&](std::uint32_t ch, std::uint32_t note) { send2(0x40000003u | (ch << 16) | (note << 8), note << 25); };
+    auto resetOf = [&](std::uint32_t ch, std::uint32_t note) { send2(0x40F00001u | (ch << 16) | (note << 8), 0); };
+    auto events  = [](const FakePlugin& p) {
+        std::vector<Event> all;
+        for (const FakePlugin::Call& call : p.calls) all.insert(all.end(), call.events.begin(), call.events.end());
+        return all;
+    };
+    auto isManagement = [](const MidiMessage& m) {
+        return ump::messageType(m) == ump::MessageType::Midi2ChannelVoice &&
+               ump::status(m) == ump::Status::PerNoteManagement;
+    };
+    auto resets = [&](const FakePlugin& p) {
+        std::vector<MidiMessage> got;
+        for (const Event& e : events(p))
+            if (isManagement(e.midi)) got.push_back(e.midi);
+        return got;
+    };
+    auto clear = [&] {
+        midi2->calls.clear();
+        midi1->calls.clear();
+    };
+
+    // 60 held and retuned, 64 retuned (not held), 67 retuned and then reset by the player.
+    noteOn(0, 60);
+    pitch(0, 60);
+    pitch(0, 64);
+    pitch(0, 67);
+    resetOf(0, 67);
+    block();
+    clear();
+
+    engine->panic();
+    block();
+    std::vector<Event> got = events(*midi2);
+    std::vector<MidiMessage> sent = resets(*midi2);
+    CHECK(sent.size() == 2);
+    if (sent.size() == 2) {   // at the notes the plugin got (transposed by 2), D and S set
+        CHECK(ump::noteNumber(sent[0]) == 62 && ump::noteNumber(sent[1]) == 66);
+        CHECK((sent[0].words[0] & 0xFFu) == 0x03u && (sent[1].words[0] & 0xFFu) == 0x03u);
+        CHECK(ump::group(sent[0]) == 0 && ump::channel(sent[0]) == 0);
+    }
+    std::size_t noteOff = got.size(), firstReset = got.size();   // the note-off comes first
+    for (std::size_t i = 0; i < got.size(); ++i) {
+        if (ump::isNoteOff(got[i].midi) && noteOff == got.size()) noteOff = i;
+        if (isManagement(got[i].midi) && firstReset == got.size()) firstReset = i;
+    }
+    CHECK(noteOff < firstReset && firstReset < got.size());
+    CHECK(resets(*midi1).empty());   // MIDI 1.0 can't be retuned this way
+
+    // Sent once: the next Panic (past the 2 s that would cut the sound) has none.
+    for (int i = 0; i < 250; ++i) block();
+    clear();
+    engine->panic();
+    block();
+    CHECK(resets(*midi2).empty());
+
+    // 200 keys (on channels 1 to 2): the first 128 in this block, the rest in the next.
+    for (std::uint32_t k = 0; k < 200; ++k) pitch(k / 100, k % 100);
+    block();
+    clear();
+    engine->panic();
+    block();
+    CHECK(resets(*midi2).size() == EngineGraph::kMaxRetuneResets);
+    block();
+    sent = resets(*midi2);
+    CHECK(sent.size() == 200);
+    std::vector<int> seen(16 * 128, 0);
+    for (const MidiMessage& m : sent) ++seen[ump::channel(m) * 128 + ump::noteNumber(m)];
+    bool each = true;
+    for (std::uint32_t k = 0; k < 200; ++k) each = each && seen[(k / 100) * 128 + k % 100 + 2] == 1;
+    CHECK(each);
+    block();
+    CHECK(resets(*midi2).size() == 200);   // and no more
+}
+
 void testDspLoad() {
     auto engine = std::make_unique<Engine>();
     auto heavy  = std::make_shared<FakePlugin>();
@@ -1697,6 +1800,7 @@ int main() {
     testBuses();
     testTransport();
     testPanic();
+    testPanicRetunedKeys();
     testDspLoad();
     testControlLinks();
     testMidiEffects();

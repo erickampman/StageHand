@@ -99,6 +99,9 @@ public:
     bool contains(const HostedPlugin* plugin) const noexcept;
 
     static constexpr std::uint32_t kMaxBusEffectEvents = 256;   // a bus effect's events a block
+    // Per-Note Management resets a Panic sends a plugin per chunk, for keys
+    // retuned with a Pitch 7.25; any more go in the chunks after.
+    static constexpr std::uint32_t kMaxRetuneResets = 128;
 
 private:
     friend class Engine;
@@ -125,6 +128,7 @@ private:
         std::vector<EffectState> effects;        // one per SlotConfig::midiEffects
         std::vector<Event>  chain[2];            // a chunk's effect outputs, in turn; fixed capacity
         std::vector<Event>  merged;              // a stage's input: MIDI and its own parameter changes
+        std::vector<Event>  withResets;          // the plugin's input with a Panic's resets for retuned keys
         std::uint32_t       audioChannels = 0;   // of the plugin's main output port
         std::vector<Event>  events;              // one block's events; fixed capacity
         std::uint32_t       eventCount    = 0;

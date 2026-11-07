@@ -970,6 +970,8 @@ void Engine::silence(const AudioCallbackContext& ctx, std::uint32_t offset) noex
                 for (const std::uint8_t controller : kPedalsUp) send(controller);
             }
         }
+        for (const SlotConfig& config : currentGraph->configs)   // after its note-offs, past its MIDI effects
+            if (config.plugin && config.runtime->retunedCount != 0) config.runtime->resetAt = offset;
         if (cut) {
             for (const SlotConfig& config : currentGraph->configs) {
                 if (config.plugin) config.plugin->reset();
@@ -1362,7 +1364,8 @@ void Engine::runSlots(const AudioCallbackContext& ctx) noexcept {
                 SlotRuntime& runtime = *config.runtime;
                 if (config.draining && runtime.suspended)   // muted as well, and gone quiet: done too
                     runtime.drained.store(true, std::memory_order_relaxed);
-                if (runtime.suspended && state.cursor == first) continue;   // nothing for it: not run, silent
+                const bool resets = runtime.resetAt != SlotRuntime::kNoReset && runtime.resetAt < chunkStart + chunk;
+                if (runtime.suspended && state.cursor == first && !resets) continue;   // nothing for it: not run, silent
                 auto stopRow = [&] {
                     for (const auto& effect : config.midiEffects) effect->stopProcessing();
                     config.plugin->stopProcessing();
@@ -1375,6 +1378,9 @@ void Engine::runSlots(const AudioCallbackContext& ctx) noexcept {
                 const Nanoseconds start = nowNanoseconds();
                 pc.eventsIn             = runMidiEffects(i, pc.time, chunkStart, chunk,
                                                          EventBlock{state.events.data() + first, state.cursor - first});
+                if (resets)
+                    pc.eventsIn = addRetuneResets(i, pc.eventsIn, runtime.resetAt > chunkStart ? runtime.resetAt - chunkStart : 0);
+                if ((state.pluginDialects & NoteDialect::Midi2) != 0) trackRetuned(runtime, pc.eventsIn);
                 pc.eventsOut            = &feedback;
                 feedback.plugin         = config.plugin.get();
                 config.plugin->process(pc);
@@ -1448,6 +1454,10 @@ void Engine::runSlots(const AudioCallbackContext& ctx) noexcept {
             runBuses(ctx, chunkStart, chunk);
         }
 
+        for (const SlotConfig& config : currentGraph->configs)   // resets still to send: from the next block's start
+            if (config.runtime->resetAt != SlotRuntime::kNoReset)
+                config.runtime->resetAt = config.runtime->retunedCount != 0 ? 0 : SlotRuntime::kNoReset;
+
         // Each row's and bus's share of the period.
         const double toShare = ctx.frameCount == 0 ? 0.0 : ctx.time.sampleRate / (ctx.frameCount * 1e9);
         for (std::size_t i = 0; i < currentGraph->configs.size(); ++i)
@@ -1478,6 +1488,83 @@ void Engine::runSlots(const AudioCallbackContext& ctx) noexcept {
         for (std::uint32_t f = 0; f < ctx.frameCount; ++f) peak = std::max(peak, std::fabs(ctx.output.channels[c][f]));
         outputLevels.add(c, peak);
     }
+}
+
+namespace {
+
+// Pitch 7.25 is MIDI 2.0's registered per-note controller 3.
+bool isPitch725(const MidiMessage& m) noexcept {
+    return ump::messageType(m) == ump::MessageType::Midi2ChannelVoice &&
+           ump::status(m) == ump::Status::RegisteredPerNoteController && (m.words[0] & 0xFFu) == 3;
+}
+
+// A Per-Note Management message with its S flag: the key's controllers to their defaults.
+bool isPerNoteReset(const MidiMessage& m) noexcept {
+    return ump::messageType(m) == ump::MessageType::Midi2ChannelVoice &&
+           ump::status(m) == ump::Status::PerNoteManagement && (m.words[0] & 0x01u) != 0;
+}
+
+std::uint32_t retunedKey(const MidiMessage& m) noexcept {
+    return (std::uint32_t{ump::group(m)} * 16 + ump::channel(m)) * 128 + ump::noteNumber(m);
+}
+
+} // namespace
+
+void Engine::trackRetuned(SlotRuntime& runtime, EventBlock input) noexcept {
+    for (std::uint32_t k = 0; k < input.count; ++k) {
+        const Event& e = input.events[k];
+        if (e.type != EventType::Midi) continue;
+        const bool on = isPitch725(e.midi);
+        if (!on && !isPerNoteReset(e.midi)) continue;
+        const std::uint32_t key  = retunedKey(e.midi);
+        std::uint64_t&      word = runtime.retuned[key / 64];
+        const std::uint64_t bit  = std::uint64_t{1} << (key % 64);
+        if (on == ((word & bit) != 0)) continue;   // no change
+        word ^= bit;
+        on ? ++runtime.retunedCount : --runtime.retunedCount;
+    }
+}
+
+// The resets go after the chunk's events up to `at` (the Panic's note-offs),
+// with D and S set: a voice still ringing out keeps its pitch, and the key's
+// next note starts in tune. They're marked sent here; trackRetuned() sees
+// them again and changes nothing.
+EventBlock Engine::addRetuneResets(std::size_t slot, EventBlock input, std::uint32_t at) noexcept {
+    const SlotConfig&       config  = currentGraph->configs[slot];
+    EngineGraph::SlotState& state   = currentGraph->states[slot];
+    SlotRuntime&            runtime = *config.runtime;
+    std::vector<Event>&     out     = state.withResets;
+    if (out.size() < std::size_t{input.count} + EngineGraph::kMaxRetuneResets) {   // not MIDI 2.0: nothing was retuned
+        runtime.resetAt = SlotRuntime::kNoReset;
+        return input;
+    }
+    std::uint32_t n = 0, k = 0;
+    while (k < input.count && input.events[k].sampleOffset <= at) out[n++] = input.events[k++];
+    std::uint32_t sent = 0;
+    for (std::uint32_t w = 0; w < runtime.retuned.size() && sent < EngineGraph::kMaxRetuneResets; ++w) {
+        while (runtime.retuned[w] != 0 && sent < EngineGraph::kMaxRetuneResets) {
+            const std::uint64_t word = runtime.retuned[w];
+            const unsigned      bit  = static_cast<unsigned>(__builtin_ctzll(word));
+            runtime.retuned[w]       = word & (word - 1);
+            --runtime.retunedCount;
+            const std::uint32_t key   = w * 64 + bit;
+            const std::uint32_t note  = key % 128;
+            const std::uint32_t chan  = (key / 128) % 16;
+            const std::uint32_t group = key / (128 * 16);
+            Event& e       = out[n++];
+            e              = Event{};
+            e.sampleOffset = at;
+            e.type         = EventType::Midi;
+            e.portIndex    = config.notePort;
+            e.midi.words[0]  = 0x40000000u | (group << 24) | ((0xF0u | chan) << 16) | (note << 8) | 0x03u;   // D, S
+            e.midi.wordCount = 2;
+            ++sent;
+        }
+    }
+    while (k < input.count) out[n++] = input.events[k++];
+    if (runtime.retunedCount == 0) runtime.resetAt = SlotRuntime::kNoReset;
+    else runtime.resetAt = 0;   // the rest from the next chunk on
+    return EventBlock{out.data(), n};
 }
 
 EventBlock Engine::runMidiEffects(std::size_t slot, const TimeInfo& time, std::uint32_t chunkStart,

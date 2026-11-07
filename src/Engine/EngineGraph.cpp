@@ -87,6 +87,8 @@ EngineGraph::EngineGraph(std::vector<SlotConfig> slotConfigs, std::vector<BusCon
             for (std::vector<Event>& buffer : state.chain) buffer.resize(maxEventsPerSlotBlock);
             state.merged.resize(std::size_t{maxEventsPerSlotBlock} + kMaxBusEffectEvents);
         }
+        if ((state.pluginDialects & NoteDialect::Midi2) != 0)   // only MIDI 2.0 carries a Pitch 7.25
+            state.withResets.resize(std::size_t{maxEventsPerSlotBlock} + kMaxBusEffectEvents + kMaxRetuneResets);
         if (const int main = mainAudioOutput(layout); main >= 0)
             state.audioChannels = layout.audioOutputs[static_cast<std::size_t>(main)].channelCount;
 
