@@ -30,7 +30,7 @@
 - [x] Take the uw-core pin with Pitch 7.25 transpose (value moves with the key)
 - [x] MIDI controllers to plugin parameters (knobs, faders, expression pedal), learned per rack or global (Control Links, learned from a hardware control)
 - [x] Control Links made and edited graphically, not only learned from a hardware control: pick a controller and a parameter on screen, edit or delete an existing link, per rack or global. Before the 0.9.0 preview
-- [ ] Velocity curves per row, or fixed velocity
+- [ ] Velocity curves per row, or fixed velocity. After the 0.9.0 preview (a known gap in the README)
 - [x] MIDI effects per row: plugin note/MIDI output (uw-core), the chain in the engine, Retune → StruckSynth test (docs/midi-effects.md)
 - [x] MIDI effects in the rack file and the row's input side: MIDI FX menu, editors, bypass (docs/midi-effects.md, section 3)
 - [ ] MIDI out: program changes at song switch, MIDI clock, click as MIDI notes
@@ -44,5 +44,5 @@
 - [ ] Reorganize the MIDI plugins UI: how a row shows and edits its MIDI effects (the MIDI FX menu, E, the generic editor)
 - [ ] Backing tracks: an audio file per song, in time with the transport
 - [ ] Song notes in the Perform view
-- [ ] Undo for rack edits
+- [ ] Undo for rack edits. After the 0.9.0 preview (a known gap in the README)
 - [x] Sequence editor: horizontal scrolling by a trackpad's sideways swipe too, not only Shift+wheel, as Umpire's grid

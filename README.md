@@ -44,6 +44,13 @@ The design records: [architecture](docs/architecture.md), [domain model](docs/do
 [rig](docs/rig.md), [MIDI effects](docs/midi-effects.md), [sequences](docs/sequences.md),
 [looper](docs/looper.md), [controls](docs/controls.md) and the [macOS port](docs/macos.md).
 
+## Known gaps
+
+- No undo for rack edits. Save the set before big changes; File ▸ Open brings back the saved
+  version.
+- No velocity curves per row, and no fixed velocity: each plugin gets the velocity as played.
+  Use the plugin's own velocity settings where it has them.
+
 ## Installing
 
 **macOS:** drag `StageHand.app` into Applications. The 0.9 previews aren't notarized, so the first
