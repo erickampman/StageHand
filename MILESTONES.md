@@ -29,7 +29,7 @@
 - [ ] Panic clears retuned keys: track keys sent Pitch 7.25, send Per-Note Management Reset to those only
 - [x] Take the uw-core pin with Pitch 7.25 transpose (value moves with the key)
 - [x] MIDI controllers to plugin parameters (knobs, faders, expression pedal), learned per rack or global (Control Links, learned from a hardware control)
-- [ ] Control Links made and edited graphically, not only learned from a hardware control: pick a controller and a parameter on screen, edit or delete an existing link, per rack or global. Before the 0.9.0 preview
+- [x] Control Links made and edited graphically, not only learned from a hardware control: pick a controller and a parameter on screen, edit or delete an existing link, per rack or global. Before the 0.9.0 preview
 - [ ] Velocity curves per row, or fixed velocity
 - [x] MIDI effects per row: plugin note/MIDI output (uw-core), the chain in the engine, Retune → StruckSynth test (docs/midi-effects.md)
 - [x] MIDI effects in the rack file and the row's input side: MIDI FX menu, editors, bypass (docs/midi-effects.md, section 3)

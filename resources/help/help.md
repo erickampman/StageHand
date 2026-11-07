@@ -79,7 +79,7 @@ Menus and panels open inside the window. A click outside one, or Escape, closes 
 ## Files and Saving {#files}
 **The set is the only document.** It holds its songs' racks and its rig inside it, so it never depends on files elsewhere. One set is open at a time.
 
-The **File** menu, titled with the set's path ("Untitled set" until it's saved), has **New set** (Cmd-N), **Open...** (Cmd-O), **Save** (Cmd-S), **Save As...**, then **New song (a copy of this one)**, **Import a rack...**, **Check set**, **Set settings...** and **Help** ([The Set and Its Songs](#setlists)).
+The **File** menu, titled with the set's path ("Untitled set" until it's saved), has **New set** (Cmd-N), **Open...** (Cmd-O), **Save** (Cmd-S), **Save As...**, then **New song (a copy of this one)**, **Import a rack...**, **Check set**, **Set settings...**, **Control Links...** (Cmd-L) and **Help** ([The Set and Its Songs](#setlists)).
 - **Cmd-S saves the whole set**: the song list, the rig, and every song's rack with changes, the current one's and those you switched away from. An untitled set asks for a name (Save As) instead. Shift-Cmd-S saves too.
 - **Switching songs never saves.** A song you leave keeps its changes in memory until the set is saved; the toolbar counts the songs unsaved.
 - **Save As** adds `.setlist` if you leave it out, and asks before replacing an existing set. The new package becomes the set's file.
@@ -298,11 +298,17 @@ It shows, large: the song and what's next, with big ◀ ▶ buttons; the beat, o
 ::: {.callout .callout-note .card}
 ## Control Links {#control-links}
 A Control Link ties a hardware control (a knob, a fader, an expression pedal) to a plugin parameter, a row's level, a send, a bus return or the master. One control with several targets is a macro.
-- **Each row's Control Links button** (the MIDI plug beside Editor) opens its menu: learn a link from the list of the plugin's parameters (type to filter it), or learn the row's gain or sends; then move the hardware control. The status bar says what to do at each step.
+- **Each row's Control Links button** (the MIDI plug beside Editor) opens its menu, with three ways to make one:
+  - **Learn a Control Link from the editor...**: the plugin's window opens; touch a knob or slider there, then move the hardware control.
+  - **Learn a Control Link from the list...**: pick the parameter from the plugin's list (type to filter it), or **Learn the row's gain** or a send; then move the hardware control.
+  - **Make a Control Link, choosing its controller...**: pick the parameter (or the gain or a send), then the controller from a list (CC 1 Mod wheel, CC 11 Expression and so on), with no hardware needed. It starts on All inputs, channel 1; change those in the Control Link panel, which opens on it. A controller already in use is marked with what uses it.
+
+  The status bar says what to do at each step.
 - **Bus effects and bus returns** have a Control Links button of their own; **the bus return and master faders** also take a right-click.
-- **Each link** has, per target, a range (drag B, the control's bottom, and T, its top, either way round; Shift for fine) and a curve, and is **pick-up** (it waits until the control reaches the parameter, so the sound never leaps) or **jump**. **+ Add target** gives one control more to drive. Choose a link in the menu to change it in the Control Link panel, which also has **Learn again** and **Remove**.
+- **All Control Links** (Cmd-L, the File menu, or the bottom of any Control Links menu) lists every link, this song's then all songs', with what each drives and whether it's waiting for pick-up, not connected or overridden. Click one to open it (**Done** comes back to the list), the red X removes it, and **+ New Control Link** makes one for anything: choose what it drives, then move the control or choose it from a list.
+- **The Control Link panel:** **Listens to** shows the link's input, group, channel and controller as menus, to change any of them on screen (**Learn again** changes them by moving a control). Per target, a range (drag B, the control's bottom, and T, its top, either way round; Shift for fine) and a curve. Each link is **pick-up** (it waits until the control reaches the parameter, so the sound never leaps) or **jump**. **+ Add target** gives one control more to drive; **Remove** takes the link away.
 - **Scope:** **This song** (saved in the rack) or **All songs** (saved in the rig: the mod wheel can drive a plugin's tremolo in every song that has that plugin). A row's links start as this song's, the buses' and master's as all songs'.
-- A control used by a link goes nowhere else in that song's rows, unless the link passes it on (**Pass on too**).
+- A control used by a link goes nowhere else in that song's rows, unless the link passes it on (**Pass on too**). A control that a trigger uses (the transport's, a sequence's, the setlist's, the looper switch, Panic) can't be a link's too.
 
 A level link works like a volume pedal after the fader: the fader doesn't move, and the two multiply.
 :::
@@ -336,6 +342,7 @@ When the load runs high: mute rows you don't need in a song (a muted plugin rest
 | Cmd-N | New set |
 | Cmd-O | Open a set |
 | Cmd-Q | Quit (asking first if the set has unsaved changes) |
+| Cmd-L | All Control Links |
 | Escape | Close a menu or panel; stop MIDI learn |
 
 **In the Perform view:** ← → previous and next song, Space start or stop, Tab back.
@@ -355,5 +362,7 @@ When the load runs high: mute rows you don't need in a song (a muted plugin rest
 - **A plugin is missing** (a placeholder row): install it, and open the set again. Its settings were kept. **Check set** finds every song with a missing plugin before the show.
 - **Clicks and dropouts:** watch DSP and xruns in the status bar ([DSP and Xruns](#dsp)).
 - **A stuck note:** [Panic](#panic).
+- **A Control Link does nothing:** open it from **All Control Links** (Cmd-L). "Not connected" means its input isn't there: choose another under **Listens to**. "Waiting for pick-up" means the control hasn't reached the parameter yet: move it through the parameter's value, or set the link to **Jump**. "Off: this song has its own" means a This song link on the same control wins in this song.
+- **Learning from the editor doesn't notice the knob:** a few plugins don't tell the host when a control is touched. Use **Learn a Control Link from the list...** instead.
 - **The command line:** `stagehand --help` lists every option: `--list-plugins`, `--list-midi`, `--list-audio` (macOS), `--tone` to check the audio path, `--monitor` to see incoming MIDI, `--set` and `--rack` to open one, and `--no-save`.
 :::

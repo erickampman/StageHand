@@ -214,6 +214,20 @@ bool Engine::takeLearned(Learned& out) noexcept {
     return true;
 }
 
+void Engine::armTouch(bool on) noexcept {
+    touchArmed.store(on, std::memory_order_release);
+    if (!on)
+        for (Touched dropped; touches.pop(dropped);) {}
+}
+
+bool Engine::takeTouched(Touched& touched) noexcept {
+    return touchArmed.load(std::memory_order_acquire) && touches.pop(touched);
+}
+
+void Engine::parameterTouched(const HostedPlugin* plugin, std::uint32_t param) noexcept {
+    if (touchArmed.load(std::memory_order_relaxed)) touches.push(Touched{plugin, param});   // full: dropped
+}
+
 std::uint32_t Engine::sourceActivity(MidiSourceHandle source) const noexcept {
     for (const SourceCount& c : sourceCounts)
         if (c.source.load(std::memory_order_acquire) == source) return c.count.load(std::memory_order_relaxed);
@@ -887,6 +901,7 @@ void Engine::routeMidi(const AudioCallbackContext& ctx) noexcept {
         event.value    = request.value;
         appendParameter(request.plugin, event);
         parameterChanged(request.plugin, request.param, request.value);
+        parameterTouched(request.plugin, request.param);   // the generic editor's
     }
     applyMutes();
     sendHeldPedals();
@@ -1554,6 +1569,11 @@ EventBlock Engine::runMidiEffects(std::size_t slot, const TimeInfo& time, std::u
 void Engine::ChainSink::push(const Event& event) noexcept {
     if (event.type == EventType::ParamValue) {
         engine->parameterChanged(plugin, event.param.id, event.value);
+        engine->parameterTouched(plugin, event.param.id);
+        return;
+    }
+    if (event.type == EventType::ParamGestureBegin) {
+        engine->parameterTouched(plugin, event.param.id);
         return;
     }
     if (event.type != EventType::Midi || dialects == 0) return;

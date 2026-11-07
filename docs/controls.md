@@ -258,6 +258,49 @@ controller (the model's control, rows, scale, live value and waiting; Learn
 again and its refusal; a target added, reset, refused; the scope's new
 index; a gain refused for all songs). Learn from the editor is milestone 4.
 
+**Milestones 4 and 5, implemented (2026-11-06): made and edited on screen, and
+learned from the editor.** Before the 0.9.0 preview, a link no longer needs
+the hardware to be made or changed, and every link can be seen in one place.
+- **Learn from the editor** (milestone 4, as sections 8 and 16 planned): the
+  row's or bus effect's menu, "Learn a Control Link from the editor...". Its
+  editor opens (the generic one if it has none) and the status bar says
+  "touch a knob or slider in Keys's editor"; the first parameter touched
+  there that can be linked is the target (one that can't is said once and
+  skipped), then the hardware control is learned as from the list. The
+  engine passes touches audio -> main only while armed
+  (`Engine::armTouch()`, `takeTouched()`, a queue of 32): a plugin's
+  `ParamGestureBegin`, a `ParamValue` it sends itself (some plugins never
+  send gestures), from a row, a MIDI effect or a bus effect, and the generic
+  editor's own changes. Esc, Stop learning or any other learn disarms it.
+- **Made, choosing the controller** (milestone 5): "Make a Control Link,
+  choosing its controller..." in each menu: what it drives (a parameter, or
+  the row's gain or sends), then the controller from a list, filtered as you
+  type: CC 1 to 119 with their usual names, without bank select, data entry,
+  the (N)RPN numbers and the channel mode messages; one already in use is
+  marked amber with what uses it (a trigger, or another link in that scope).
+  It starts on All inputs, group 1, channel 1, with the parameter's whole
+  range, and the dialog opens on it. `RackController::makeControlLink()`
+  refuses what learning refuses; on a control a link in that scope has, it
+  becomes another target, as learning does.
+- **Listens to**, in the dialog: the input, group, channel and controller as
+  dropdowns. `setControlLinkControl()` is what Learn again does once the
+  control has moved, with its refusals (a trigger's control, another link's
+  in the same scope); Learn again now goes through it.
+- **All Control Links** (Cmd/Ctrl-L, the File menu, the last line of every
+  Control Links menu): a panel listing every link, this song's then all
+  songs', with its control, its targets and their ranges, and its state
+  (pick-up or jump, passed on; not connected, overridden, or waiting for
+  pick-up in amber). A line opens the dialog, whose Done comes back to the
+  list; a red X removes the link (asking first); "+ New Control Link" offers
+  every target there is (as + Add target does), then "Move it now (learn)"
+  or "Choose it from a list...". The wheel scrolls it.
+- Tests: the controller (`testMadeControlLinks`: made, a macro, refused for
+  a parameter that can't be linked, a row's gain for all songs and a
+  trigger's control; `controlUse()`; the control changed and refused; learned
+  from the editor through a gesture, a plugin's own value and the generic
+  editor's, a parameter that can't be linked skipped, and disarmed by Esc and
+  by another learn).
+
 ## Open questions
 
 None at the moment. Answered 2026-10-03:

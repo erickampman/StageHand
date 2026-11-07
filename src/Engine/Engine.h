@@ -205,6 +205,17 @@ public:
     // True once per capture, with what was captured; learning is then over.
     bool takeLearned(Learned& learned) noexcept;
 
+    // Learn from a plugin's editor (docs/controls.md, milestone 4). Main
+    // thread. While armed, each parameter a plugin reports touched (its
+    // gesture begins, or it changes a value itself, from its editor or the
+    // generic one) is passed on, oldest first. Disarming drops what's left.
+    struct Touched {
+        const HostedPlugin* plugin = nullptr;
+        std::uint32_t       param  = 0;
+    };
+    void armTouch(bool on) noexcept;
+    bool takeTouched(Touched& touched) noexcept;
+
     // The setlist's triggers (published with the sequences, TransportControl::
     // setlist) fired: the audio thread can't switch racks, so it passes each
     // on. Main thread; true once per request, oldest first.
@@ -375,6 +386,7 @@ private:
     SlotRuntime* findRuntime(const SlotRuntime* key) const noexcept;   // a row's or bus's, in the current graph
     // A plugin's own parameter change (its GUI, a preset): pick-up waits for the control again.
     void parameterChanged(const HostedPlugin* plugin, std::uint32_t param, double value) noexcept;
+    void parameterTouched(const HostedPlugin* plugin, std::uint32_t param) noexcept;   // armTouch()
     bool deliver(std::size_t slot, const MidiMessage& original, const MidiMessage* upconverted,
                  std::size_t upconvertedCount, std::uint32_t offset, int noteOverride,
                  std::uint8_t* deliveredNote) noexcept;
@@ -513,10 +525,17 @@ private:
         Engine*             engine;
         const HostedPlugin* plugin = nullptr;   // the one processing
         void push(const Event& event) noexcept override {
-            if (event.type == EventType::ParamValue) engine->parameterChanged(plugin, event.param.id, event.value);
+            if (event.type == EventType::ParamValue) {
+                engine->parameterChanged(plugin, event.param.id, event.value);
+                engine->parameterTouched(plugin, event.param.id);
+            } else if (event.type == EventType::ParamGestureBegin) {
+                engine->parameterTouched(plugin, event.param.id);
+            }
         }
     };
     ParamFeedback feedback{this};
+    std::atomic<bool>             touchArmed{false};
+    SpscQueue<Touched, 32>        touches;   // audio -> main (armTouch())
     // A MIDI effect's output (runMidiEffects()): its notes and MIDI, translated
     // for the next stage's note port as deliver() does, into that stage's
     // buffer at their offsets; its parameter changes, as ParamFeedback's.

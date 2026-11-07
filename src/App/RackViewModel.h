@@ -347,6 +347,9 @@ struct RackViewModel {
     std::vector<ControlLinkModel> controlLinks;
     bool                          controlLinkLearning = false;
     ControlLinkTarget             controlLinkLearnTarget;   // while learning a new one: what it will drive
+    // Learning from an editor, before a parameter is touched: whose ("Keys",
+    // "Bus A effect 1"); "" otherwise. controlLinkLearning is set too.
+    std::string                   controlLinkTouching;
 
     bool operator==(const RackViewModel&) const = default;
 };

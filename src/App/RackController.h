@@ -308,6 +308,28 @@ public:
     // level: -60 to 0 dB), as learnControlLink() makes one; a target it has
     // already is reset to that.
     void addControlLinkTarget(ControlScope scope, std::size_t index, ControlLinkTarget target);
+    // Made on screen, no hardware needed (docs/controls.md, milestone 5): a
+    // link on `control` (its source, group, channel and number; its other
+    // fields are ignored) that drives `target`, as learnControlLink() makes
+    // one once that control moves; a link in `scope` on that control takes it
+    // as another target. Refused, with a notice, as learning refuses. Its
+    // index in `scope`, or none.
+    std::optional<std::size_t> makeControlLink(const ControlLinkSetup& control, ControlLinkTarget target,
+                                               ControlScope scope);
+    // Link `index`'s control, chosen on screen: as Learn again sets it, and
+    // refused as Learn again refuses (a notice). False if refused.
+    bool setControlLinkControl(ControlScope scope, std::size_t index, const ControlLinkSetup& control);
+    // What already answers a control, for marking it in a list: a trigger
+    // ("the transport's", "Panic's"...), or "another Control Link" in
+    // `scope` (link `except` aside); "" if nothing does.
+    std::string controlUse(const ControlLinkSetup& control, ControlScope scope,
+                           std::optional<std::size_t> except = std::nullopt) const;
+    // Learn from the editor (docs/controls.md, milestone 4): `place` is a
+    // row's plugin (`row`) or a bus effect (`bus`, `effect`); its editor
+    // opens (the generic one if it has none), and the first parameter touched
+    // there becomes the target; then the next controller moved drives it, as
+    // learnControlLink(). cancelLearn() stops it.
+    void learnControlLinkFromEditor(ControlLinkTarget place, ControlScope scope);
     // Leading and trailing spaces go; an empty name is refused (with a notice);
     // at most kMaxNameBytes. The id stays: rows keep playing it.
     void renameSequence(const std::string& id, const std::string& name);
@@ -538,7 +560,11 @@ private:
     // plugin); false if it can't be in that scope.
     bool           targetFor(ControlScope scope, ControlLinkTarget& target, std::vector<ControlLinkTarget>& out) const;
     void           addLinkTarget(ControlLinkSetup link, ControlScope scope);   // merged with one on its control
-    ControlLinkTarget linkTarget;    // learning: what the control will drive
+    ControlLinkTarget linkTarget;    // learning: what the control will drive (from the editor: the place)
+    void              takeTouches();  // learning from the editor: the parameter touched there
+    std::string       placeText(const ControlLinkTarget& place) const;   // "Keys", "Bus A effect 1"
+    bool              touchArmed = false;              // engine.armTouch(true) is in force
+    std::optional<std::uint32_t> touchRefused;         // a parameter touched that can't be linked (said once)
     ControlScope      linkScope = ControlScope::Song;
     std::optional<std::size_t> linkRelearn;   // learning again: link (in linkScope) whose control it is
     // A target as learnControlLink() starts it: the parameter's whole range and

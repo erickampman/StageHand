@@ -62,15 +62,17 @@ public:
 
 protected:
     void draw() override;
-    bool overlayOpen() const override { return !filterId.empty() || linkOpen.has_value(); }
+    bool overlayOpen() const override { return !filterId.empty() || linkOpen.has_value() || linksList; }
     void drawOverlays() override {
         drawFilterPanel();
+        drawLinksList();
         drawLinkPanel();
     }
     void dismissOverlays() override {
         filterId.clear();
         linkOpen.reset();
         linkPending.reset();
+        linksList = false;
     }
     void wheelUnclaimed(float x, float y, float notches, std::uint32_t mod) override;
     bool onKeyboard(const KeyboardEvent& ev) override;
@@ -167,6 +169,29 @@ private:
     void openAddTargetMenu(const ControlLinkModel& link, float x, float y);
     void startRangeDrag(const ControlLinkSetup& link, std::size_t target, const ControlLinkTargetModel& shown,
                         float barX0, float barX1, const Press& p);
+    // Made on screen (docs/controls.md, milestone 5): a controller number
+    // from a list (named, filtered as you type; one already in use marked,
+    // with what uses it), for `control`'s input, group and channel.
+    void openControllerMenu(const ControlLinkSetup& control, ControlScope scope, std::optional<std::size_t> except,
+                            const std::string& title, float x, float y, bool overPanel,
+                            std::function<void(std::uint8_t)> chosen);
+    // A new link driving `target`: its controller from that list (All
+    // inputs, channel 1 to start with), then the dialog opens on it.
+    void makeLinkFor(ControlLinkTarget target, ControlScope scope, float x, float y, bool overPanel);
+    // The scope a link starts in: a row's are this song's; a bus effect's, a
+    // return's and the master's, all songs'.
+    static ControlScope startScope(const ControlLinkTarget& target);
+    // Every place's targets as menu items (a row's parameter from its list,
+    // gain, sends; a bus effect's parameter; a return; the master), each
+    // calling `chosen`; `levels`: a row's gain and sends too.
+    void targetItems(std::vector<MenuItem>& items, bool levels, float x, float y, bool overPanel,
+                     std::function<void(ControlLinkTarget)> chosen);
+    // The Control Links list (Cmd/Ctrl-L, File menu, each Control Links
+    // menu): every link, this song's then all songs', each opening the
+    // dialog; + New Control Link. The dialog's Done comes back to it.
+    void openLinksList();
+    void drawLinksList();
+    void openNewLinkMenu(float x, float y);
 
     // --- actions
     // The red X: Remove / Cancel, right-aligned to `right` (the X's right edge).
@@ -232,6 +257,8 @@ private:
         std::size_t  index = 0;
     };
     std::optional<OpenLink>         linkOpen;           // the Control Link dialog's
+    bool                            linksList   = false;   // the Control Links list is open
+    float                           linksScroll = 0;
     std::optional<ControlLinkSetup> linkPending;        // its last edit, shown until the model has it
     double                          linkPendingUntil = 0;
     double                          linkMissingSince = -1;   // not in the model (yet: a scope just changed)

@@ -2300,6 +2300,167 @@ void testControlLinks() {
     fs::remove_all(dir);
 }
 
+// Made on screen (no hardware), its control changed on screen, and learned
+// from the editor (docs/controls.md, milestones 4 and 5).
+void testMadeControlLinks() {
+    using Kind = ControlLinkTarget::Kind;
+    Rig rig;
+    rig.session->addOpenSource(MidiSourceRef{MidiSourceRef::Kind::Virtual, "MIDI 2.0 In"}, 7);
+    Rack rack;
+    rack.name  = "Song";
+    rack.slots = {slot("keys", "synth", "/clap/Synth.clap")};
+    Session::LoadReport report;
+    rig.session->load(rack, 48000.0, report);
+    RackController::Config config = rig.config();
+    config.rig                    = true;
+    RackController       controller(*rig.session, *rig.engine, rig.midi, rig.factory, config);
+    const RackViewModel& view  = controller.view();
+    auto*                synth = rig.factory.created.at("synth");
+    synth->params = {ParameterInfo{7, nullptr, "Cutoff", 0.0, 1.0, 0.5}, ParameterInfo{8, nullptr, "Hidden", 0.0, 1.0, 0.5, false}};
+    double now  = 0.0;
+    auto   tick = [&] { controller.tick(now += 0.05); };
+    auto   send = [&](std::uint32_t word) {
+        TimedMidiMessage m;
+        m.captureTime       = 1'000'000'000 - 1'000'000;
+        m.message.words[0]  = word;
+        m.message.wordCount = 1;
+        rig.engine->onMidi(7, m);
+        runBlock(*rig.engine);
+        tick();
+    };
+    auto touch = [&](EventType type, std::uint32_t param) {
+        Event e;
+        e.type     = type;
+        e.param.id = param;
+        e.value    = 0.5;
+        synth->emit.push_back(e);
+        runBlock(*rig.engine);
+        tick();
+    };
+    tick();
+    controller.takeNotices();
+    const std::vector<ControlLinkSetup>& links = rig.session->controlLinks(ControlScope::Song);
+
+    // CC 11 from any input, channel 1, chosen from the list, driving Cutoff:
+    // as a learned link would be, over the parameter's whole range.
+    ControlLinkSetup control;
+    control.number = 11;
+    ControlLinkTarget cutoff;
+    cutoff.row   = "keys";
+    cutoff.param = 7;
+    CHECK(controller.makeControlLink(control, cutoff, ControlScope::Song) == std::optional<std::size_t>{0});
+    std::vector<std::string> notices = controller.takeNotices();
+    CHECK(notices.size() == 1 && notices[0].find("CC 11") != std::string::npos &&
+          notices[0].find("keys: Cutoff") != std::string::npos);
+    CHECK(links.size() == 1 && links[0].source.kind == MidiSourceRef::Kind::All && links[0].number == 11 &&
+          links[0].targets.size() == 1 && links[0].targets[0].paramName == "Cutoff" && links[0].targets[0].bottom == 0.0 &&
+          links[0].targets[0].top == 1.0 && links[0].pickUp);
+    tick();
+    CHECK(view.controlLinks.size() == 1 && !view.controlLinkLearning);
+    // The same control again: another target, a macro.
+    ControlLinkTarget gain;
+    gain.kind = Kind::Gain;
+    gain.row  = "keys";
+    CHECK(controller.makeControlLink(control, gain, ControlScope::Song) == std::optional<std::size_t>{0});
+    CHECK(links.size() == 1 && links[0].targets.size() == 2 && links[0].targets[1].bottom == -60.0);
+    // Refused: a parameter that can't be linked; a row's gain for all songs.
+    ControlLinkTarget hidden = cutoff;
+    hidden.param             = 8;
+    control.number           = 12;
+    CHECK(!controller.makeControlLink(control, hidden, ControlScope::Song));
+    CHECK(!controller.makeControlLink(control, gain, ControlScope::AllSongs));
+    CHECK(controller.takeNotices().size() == 3 && links.size() == 1);
+
+    // What uses a control, for the list: another link in the same scope (not
+    // the one being edited, not the other scope's), or a trigger.
+    control.number = 11;
+    CHECK(controller.controlUse(control, ControlScope::Song) == "another Control Link");
+    CHECK(controller.controlUse(control, ControlScope::Song, 0).empty());
+    CHECK(controller.controlUse(control, ControlScope::AllSongs).empty());
+    TransportSettings transport;
+    SequenceTrigger   start;
+    start.action  = SequenceTrigger::Action::Start;
+    start.control = SequenceTrigger::Control::Controller;
+    start.number  = 80;
+    transport.triggers = {start};
+    rig.session->setTransportSettings(transport);
+    ControlLinkSetup cc80;
+    cc80.number = 80;
+    CHECK(controller.controlUse(cc80, ControlScope::Song) == "the transport's");
+    CHECK(!controller.makeControlLink(cc80, cutoff, ControlScope::Song));
+    notices = controller.takeNotices();
+    CHECK(notices.size() == 1 && notices[0].find("already the transport's") != std::string::npos && links.size() == 1);
+
+    // Its control changed on screen: channel 2, CC 12; the targets stay.
+    ControlLinkSetup moved = control;
+    moved.channel          = 1;
+    moved.number           = 12;
+    CHECK(controller.setControlLinkControl(ControlScope::Song, 0, moved));
+    CHECK(links.size() == 1 && links[0].channel == 1 && links[0].number == 12 && links[0].targets.size() == 2);
+    CHECK(controller.takeNotices().size() == 1);
+    // Refused: another link's control, a trigger's.
+    control.number = 13;
+    CHECK(controller.makeControlLink(control, cutoff, ControlScope::Song) == std::optional<std::size_t>{1});
+    CHECK(!controller.setControlLinkControl(ControlScope::Song, 1, moved));
+    CHECK(!controller.setControlLinkControl(ControlScope::Song, 1, cc80));
+    CHECK(controller.takeNotices().size() == 3 && links.size() == 2 && links[1].number == 13);
+    controller.removeControlLink(ControlScope::Song, 1);
+
+    // Learn from the editor: the generic one opens (the synth has none of its
+    // own); a parameter that can't be linked is said once and skipped; the
+    // first that can is the target; then the hardware control is learned.
+    ControlLinkTarget place;
+    place.row = "keys";
+    controller.learnControlLinkFromEditor(place, ControlScope::Song);
+    tick();
+    CHECK(view.controlLinkLearning && view.controlLinkTouching == "keys" && *rig.editorsOpen == 1);
+    touch(EventType::ParamGestureBegin, 8);
+    touch(EventType::ParamGestureBegin, 8);
+    CHECK(controller.takeNotices().size() == 1 && view.controlLinkTouching == "keys");
+    touch(EventType::ParamGestureBegin, 7);
+    notices = controller.takeNotices();
+    CHECK(notices.size() == 1 && notices[0].find("Cutoff") != std::string::npos);
+    CHECK(view.controlLinkTouching.empty() && view.controlLinkLearning);
+    send(0x20B04E7Fu);   // CC 78
+    CHECK(!view.controlLinkLearning && links.size() == 2 && links[1].number == 78 && links[1].targets.size() == 1 &&
+          links[1].targets[0].param == 7 && links[1].targets[0].row == "keys");
+    controller.takeNotices();
+    // A value the plugin changes itself counts as a touch too, and so does the generic editor's.
+    controller.learnControlLinkFromEditor(place, ControlScope::Song);
+    tick();
+    CHECK(rig.engine->setParameter(synth, 7, 0.4));
+    runBlock(*rig.engine);
+    tick();
+    CHECK(view.controlLinkTouching.empty() && view.controlLinkLearning);
+    controller.cancelLearn();
+    controller.learnControlLinkFromEditor(place, ControlScope::Song);
+    tick();
+    touch(EventType::ParamValue, 7);
+    CHECK(view.controlLinkTouching.empty() && view.controlLinkLearning);
+    controller.takeNotices();
+    // Esc while waiting for the touch: nothing is armed after it.
+    controller.cancelLearn();
+    controller.learnControlLinkFromEditor(place, ControlScope::Song);
+    tick();
+    controller.cancelLearn();
+    tick();
+    CHECK(!view.controlLinkLearning && view.controlLinkTouching.empty());
+    touch(EventType::ParamGestureBegin, 7);
+    CHECK(!view.controlLinkLearning && controller.takeNotices().empty());
+    // Another learn replaces it: a touch then does nothing.
+    controller.learnControlLinkFromEditor(place, ControlScope::Song);
+    tick();
+    controller.learnControlLink(gain, ControlScope::Song);
+    tick();
+    CHECK(view.controlLinkTouching.empty() && view.controlLinkLearning);
+    touch(EventType::ParamGestureBegin, 7);
+    CHECK(view.controlLinkLearning && controller.takeNotices().empty());
+    controller.cancelLearn();
+
+    runBlock(*rig.engine);
+    rig.engine->collect();
+}
+
 } // namespace
 
 int main() {
@@ -2334,5 +2495,6 @@ int main() {
     testPanic();
     testDspAndXruns();
     testControlLinks();
+    testMadeControlLinks();
     return test::finish("RackController");
 }

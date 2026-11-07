@@ -424,8 +424,9 @@ set" until it's saved), has <strong>New set</strong> (Cmd-N),
 <strong>Open...</strong> (Cmd-O), <strong>Save</strong> (Cmd-S),
 <strong>Save As...</strong>, then <strong>New song (a copy of this
 one)</strong>, <strong>Import a rack...</strong>, <strong>Check
-set</strong>, <strong>Set settings...</strong> and <strong>Help</strong>
-(<a href="#setlists">The Set and Its Songs</a>).</p>
+set</strong>, <strong>Set settings...</strong>, <strong>Control
+Links...</strong> (Cmd-L) and <strong>Help</strong> (<a
+href="#setlists">The Set and Its Songs</a>).</p>
 <ul>
 <li><strong>Cmd-S saves the whole set</strong>: the song list, the rig,
 and every song's rack with changes, the current one's and those you
@@ -913,28 +914,51 @@ back. StageHand reopens in the view it was left in.</p>
 expression pedal) to a plugin parameter, a row's level, a send, a bus
 return or the master. One control with several targets is a macro.</p>
 <ul>
-<li><strong>Each row's Control Links button</strong> (the MIDI plug
-beside Editor) opens its menu: learn a link from the list of the
-plugin's parameters (type to filter it), or learn the row's gain or
-sends; then move the hardware control. The status bar says what to do at
-each step.</li>
-<li><strong>Bus effects and bus returns</strong> have a Control Links
+<li><p><strong>Each row's Control Links button</strong> (the MIDI plug
+beside Editor) opens its menu, with three ways to make one:</p>
+<ul>
+<li><strong>Learn a Control Link from the editor...</strong>: the
+plugin's window opens; touch a knob or slider there, then move the
+hardware control.</li>
+<li><strong>Learn a Control Link from the list...</strong>: pick the
+parameter from the plugin's list (type to filter it), or <strong>Learn
+the row's gain</strong> or a send; then move the hardware control.</li>
+<li><strong>Make a Control Link, choosing its controller...</strong>:
+pick the parameter (or the gain or a send), then the controller from a
+list (CC 1 Mod wheel, CC 11 Expression and so on), with no hardware
+needed. It starts on All inputs, channel 1; change those in the Control
+Link panel, which opens on it. A controller already in use is marked
+with what uses it.</li>
+</ul>
+<p>The status bar says what to do at each step.</p></li>
+<li><p><strong>Bus effects and bus returns</strong> have a Control Links
 button of their own; <strong>the bus return and master faders</strong>
-also take a right-click.</li>
-<li><strong>Each link</strong> has, per target, a range (drag B, the
+also take a right-click.</p></li>
+<li><p><strong>All Control Links</strong> (Cmd-L, the File menu, or the
+bottom of any Control Links menu) lists every link, this song's then all
+songs', with what each drives and whether it's waiting for pick-up, not
+connected or overridden. Click one to open it (<strong>Done</strong>
+comes back to the list), the red X removes it, and <strong>+ New Control
+Link</strong> makes one for anything: choose what it drives, then move
+the control or choose it from a list.</p></li>
+<li><p><strong>The Control Link panel:</strong> <strong>Listens
+to</strong> shows the link's input, group, channel and controller as
+menus, to change any of them on screen (<strong>Learn again</strong>
+changes them by moving a control). Per target, a range (drag B, the
 control's bottom, and T, its top, either way round; Shift for fine) and
-a curve, and is <strong>pick-up</strong> (it waits until the control
-reaches the parameter, so the sound never leaps) or
+a curve. Each link is <strong>pick-up</strong> (it waits until the
+control reaches the parameter, so the sound never leaps) or
 <strong>jump</strong>. <strong>+ Add target</strong> gives one control
-more to drive. Choose a link in the menu to change it in the Control
-Link panel, which also has <strong>Learn again</strong> and
-<strong>Remove</strong>.</li>
-<li><strong>Scope:</strong> <strong>This song</strong> (saved in the
+more to drive; <strong>Remove</strong> takes the link away.</p></li>
+<li><p><strong>Scope:</strong> <strong>This song</strong> (saved in the
 rack) or <strong>All songs</strong> (saved in the rig: the mod wheel can
 drive a plugin's tremolo in every song that has that plugin). A row's
-links start as this song's, the buses' and master's as all songs'.</li>
-<li>A control used by a link goes nowhere else in that song's rows,
-unless the link passes it on (<strong>Pass on too</strong>).</li>
+links start as this song's, the buses' and master's as all
+songs'.</p></li>
+<li><p>A control used by a link goes nowhere else in that song's rows,
+unless the link passes it on (<strong>Pass on too</strong>). A control
+that a trigger uses (the transport's, a sequence's, the setlist's, the
+looper switch, Panic) can't be a link's too.</p></li>
 </ul>
 <p>A level link works like a volume pedal after the fader: the fader
 doesn't move, and the two multiply.</p>
@@ -1010,6 +1034,10 @@ settings.</p>
 <td>Quit (asking first if the set has unsaved changes)</td>
 </tr>
 <tr>
+<td>Cmd-L</td>
+<td>All Control Links</td>
+</tr>
+<tr>
 <td>Escape</td>
 <td>Close a menu or panel; stop MIDI learn</td>
 </tr>
@@ -1049,6 +1077,16 @@ show.</li>
 <li><strong>Clicks and dropouts:</strong> watch DSP and xruns in the
 status bar (<a href="#dsp">DSP and Xruns</a>).</li>
 <li><strong>A stuck note:</strong> <a href="#panic">Panic</a>.</li>
+<li><strong>A Control Link does nothing:</strong> open it from
+<strong>All Control Links</strong> (Cmd-L). "Not connected" means its
+input isn't there: choose another under <strong>Listens to</strong>.
+"Waiting for pick-up" means the control hasn't reached the parameter
+yet: move it through the parameter's value, or set the link to
+<strong>Jump</strong>. "Off: this song has its own" means a This song
+link on the same control wins in this song.</li>
+<li><strong>Learning from the editor doesn't notice the knob:</strong> a
+few plugins don't tell the host when a control is touched. Use
+<strong>Learn a Control Link from the list...</strong> instead.</li>
 <li><strong>The command line:</strong> <code>stagehand --help</code>
 lists every option: <code>--list-plugins</code>,
 <code>--list-midi</code>, <code>--list-audio</code> (macOS),
