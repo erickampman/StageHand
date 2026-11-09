@@ -1145,8 +1145,19 @@ void RackWidget::drawStatus() {
         x += w + 18.0f;
         return w;
     };
-    std::snprintf(text, sizeof text, "%.0f Hz   %u frames", s.sampleRate, s.bufferSize);
-    at(text, kDim);
+    // The rate and the buffer each open their menu (R2-20).
+    if (s.nextRate > 0.0)   // chosen, and applied at the next launch: in sight until then
+        std::snprintf(text, sizeof text, "%.0f Hz (%.0f Hz next launch)", s.sampleRate, s.nextRate);
+    else
+        std::snprintf(text, sizeof text, "%.0f Hz", s.sampleRate);
+    const float rateX = x;
+    const float rateW = at(text, s.nextRate > 0.0 ? kAmber : kDim);
+    region(rateX - 4.0f, y, rateW + 8.0f, kStatusH, [this, rateX, y](const Press&) { openSampleRateMenu(rateX, y); });
+    x -= 18.0f - 10.0f;   // the two read as one
+    std::snprintf(text, sizeof text, "%u frames", s.bufferSize);
+    const float bufferX = x;
+    const float bufferW = at(text, kDim);
+    region(bufferX - 4.0f, y, bufferW + 8.0f, kStatusH, [this, bufferX, y](const Press&) { openBufferMenu(bufferX, y); });
     std::snprintf(text, sizeof text, "DSP %d%% \xC2\xB7 peak %d%%", s.dspPercent, s.dspPeakPercent);
     at(text, s.dspPeakPercent >= 90 ? kRed : s.dspPeakPercent >= 70 ? kAmber : kDim);
     std::string xruns = "xruns " + std::to_string(s.xruns);
@@ -1207,6 +1218,49 @@ void RackWidget::drawStatus() {
     else
         label(tx, y + kStatusH / 2, s.noSaveReason, 12.0f, kAmber);
     restore();
+}
+
+// The status bar's sample rate menu (R2-20): saved for this machine, used
+// from the next launch (the plugins run at the rate they were started at).
+void RackWidget::openSampleRateMenu(float x, float y) {
+    const RackController::AudioChoices choices = controller.audioChoices();
+    const double                       now     = controller.view().status.sampleRate;
+    char                               text[64];
+    Menu                               m;
+    m.w     = 250.0f;
+    m.x     = x;
+    m.y     = y - 4.0f;
+    m.title = "Sample rate, from the next launch";
+    if (choices.sampleRates.empty()) {
+        m.items.push_back(MenuItem{"Set by PipeWire", nullptr});
+    } else {
+        std::snprintf(text, sizeof text, "The device's own (now %.0f Hz)", now);
+        m.items.push_back(MenuItem{text, [this] { controller.chooseSampleRate(0.0); }, choices.chosenRate <= 0.0});
+        for (const double rate : choices.sampleRates) {
+            std::snprintf(text, sizeof text, "%.0f Hz", rate);
+            m.items.push_back(MenuItem{text, [this, rate] { controller.chooseSampleRate(rate); }, choices.chosenRate == rate});
+        }
+    }
+    openMenu(std::move(m));
+}
+
+// The buffer menu: now on macOS; from the next launch on Linux (PipeWire's
+// quantum is set as StageHand's client opens).
+void RackWidget::openBufferMenu(float x, float y) {
+    const RackController::AudioChoices choices = controller.audioChoices();
+    const std::uint32_t                now     = controller.view().status.bufferSize;
+    Menu                               m;
+    m.w     = 220.0f;
+    m.x     = x;
+    m.y     = y - 4.0f;
+    m.title = choices.bufferLive ? "Buffer size" : "Buffer size, from the next launch";
+    for (const std::uint32_t frames : choices.bufferSizes) {
+        const bool checked = choices.bufferLive ? frames == now : frames == choices.chosenBuffer;
+        m.items.push_back(MenuItem{std::to_string(frames) + " frames",
+                                   [this, frames] { controller.chooseBufferSize(frames); }, checked});
+    }
+    if (m.items.empty()) m.items.push_back(MenuItem{"Not available", nullptr});
+    openMenu(std::move(m));
 }
 
 // --- the rig (docs/rig.md) ------------------------------------------------------------------

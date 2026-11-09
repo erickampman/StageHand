@@ -214,6 +214,31 @@ void testAudioDeviceChoice(const fs::path& dir) {
     CHECK(defaultAudioDevicePath() == appStateDir() + "/audio.json");
 }
 
+// The rate and buffer chosen in the status bar (R2-20), in the same file: saving
+// one part keeps the other.
+void testAudioSettings(const fs::path& dir) {
+    const std::string path = (dir / "state/stagehand/audio-settings.json").string();
+    CHECK(loadAudioSettings(path) == AudioSettings{});   // none yet
+    const AudioDeviceChoice interface{"Babyface Pro (12345)", "AppleUSBAudioEngine:RME:Babyface:12345:1"};
+    CHECK(saveAudioDeviceChoice(path, interface));
+    CHECK((saveAudioSettings(path, AudioSettings{48000.0, 128})));
+    CHECK((loadAudioSettings(path) == AudioSettings{48000.0, 128}));
+    AudioDeviceChoice c;
+    CHECK(loadAudioDeviceChoice(path, c) && c == interface);   // the device kept
+    CHECK(saveAudioDeviceChoice(path, AudioDeviceChoice{"MacBook Pro Speakers", ""}));
+    CHECK((loadAudioSettings(path) == AudioSettings{48000.0, 128}));   // the settings kept
+    CHECK(loadAudioDeviceChoice(path, c) && c.name == "MacBook Pro Speakers" && c.uid.empty());   // no stale UID
+    CHECK((saveAudioSettings(path, AudioSettings{0.0, 256})));   // the device's own rate again
+    CHECK((loadAudioSettings(path) == AudioSettings{0.0, 256}));
+    CHECK(loadAudioDeviceChoice(path, c) && c.name == "MacBook Pro Speakers");
+    writeText(dir / "state/stagehand/audio-settings.json", R"({"sampleRate": -1, "bufferSize": "big"})");
+    CHECK(loadAudioSettings(path) == AudioSettings{});   // nonsense: not chosen
+    writeText(dir / "state/stagehand/audio-settings.json", "not json");
+    CHECK(loadAudioSettings(path) == AudioSettings{});
+    CHECK((saveAudioSettings(path, AudioSettings{44100.0, 0})));   // over a broken file
+    CHECK((loadAudioSettings(path) == AudioSettings{44100.0, 0}));
+}
+
 } // namespace
 
 int main() {
@@ -225,6 +250,7 @@ int main() {
     testLastPosition(dir);
     testWindowSize(dir);
     testAudioDeviceChoice(dir);
+    testAudioSettings(dir);
     testAppPaths();
     fs::remove_all(dir);
     return test::finish("SetlistFile");

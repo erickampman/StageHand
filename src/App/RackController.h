@@ -57,6 +57,15 @@ public:
         std::uint32_t outputs    = 2;   // output channels the backend registered
     };
 
+    // The status bar's sample rate and buffer menus (R2-20).
+    struct AudioChoices {
+        std::vector<double>        sampleRates;   // offered; empty: not StageHand's to set (PipeWire's, on Linux)
+        std::vector<std::uint32_t> bufferSizes;   // offered, in frames
+        double                     chosenRate   = 0.0;   // saved; 0 = the device's own rate
+        std::uint32_t              chosenBuffer = 0;     // saved; 0 = none chosen
+        bool                       bufferLive   = false; // a buffer change applies now, not at the next launch
+    };
+
     struct Config {
         // Opens an editor window for a plugin. Null result: no editor (the
         // opener reports why).
@@ -67,6 +76,12 @@ public:
         std::function<std::unique_ptr<EditorHandle>(HostedPlugin&, const std::string& title)> openGenericEditor;
         std::function<AudioStatus()> audioStatus;
         std::function<void()>        quit;   // e.g. MainLoop::requestQuit
+
+        // The rate and buffer menus: what they offer, and choosing (saved for
+        // this machine; the result is what to tell the user). Null: no menus.
+        std::function<AudioChoices()>                 audioChoices;
+        std::function<std::string(double)>            chooseSampleRate;
+        std::function<std::string(std::uint32_t)>     chooseBufferSize;
 
         // StageHand's own virtual inputs (not listed by MidiInput::enumerate()).
         std::vector<std::pair<std::string, MidiProtocol>> virtualInputs;
@@ -137,6 +152,12 @@ public:
     void clearOutputClip();
     // The xrun count shown starts again from 0 (after a soundcheck, say).
     void resetXruns();
+    // The status bar's rate and buffer menus (R2-20): what they offer, and a
+    // choice (saved for this machine, and said in the status bar). A rate
+    // applies from the next launch; a buffer now where the backend can.
+    AudioChoices audioChoices() const { return config.audioChoices ? config.audioChoices() : AudioChoices{}; }
+    void         chooseSampleRate(double hertz);
+    void         chooseBufferSize(std::uint32_t frames);
 
     // --- the rig (docs/rig.md): its edits mark it modified (Ctrl-S saves it
     // with the rack). Without a rig, they do nothing.
@@ -615,6 +636,7 @@ private:
     std::uint64_t                                         xrunsBase = 0;     // the backend's count at the last reset
     std::uint64_t                                         xrunsSeen = 0;     // the backend's count, as of the last tick
     double                                                xrunAt    = -1.0;  // when the last was seen (tick time)
+    double                                                chosenRate = -1.0; // saved for the next launch; -1: not read yet
     static constexpr double                               kXrunRecentSeconds = 5.0;
     std::vector<MidiSourceInfo>                           enumerated;
     std::uint64_t                                         midiChanges = 0;   // MidiInput::changes() as last handled

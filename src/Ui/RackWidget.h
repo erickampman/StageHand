@@ -132,6 +132,8 @@ private:
     void drawRowPlugin(const RowModel& row, float y);
     void drawRowOutput(const RowModel& row, float y);
     void drawStatus();
+    void openSampleRateMenu(float x, float y);
+    void openBufferMenu(float x, float y);
     void drawDock();
     void drawSequenceRow(const SequenceRowModel& seq, float y);
     // A looper's row (docs/looper.md), under the sequences: its button (the

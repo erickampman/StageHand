@@ -70,7 +70,7 @@ Started with no arguments, StageHand reopens the last set at the song it was on,
 
 **Below the toolbar:** the rack's rows, then the rig's two buses, then the **Sources** dock (inputs, sequences and loopers), and the status bar at the bottom.
 
-**The status bar** shows the sample rate and buffer size, the DSP load, xruns, the MIDI protocol (and "MIDI dropped" in amber if any MIDI was lost), where the set saves (or the latest notice), and the master fader and level.
+**The status bar** shows the sample rate and buffer size (click either to change it: [DSP and Xruns](#dsp)), the DSP load, xruns, the MIDI protocol (and "MIDI dropped" in amber if any MIDI was lost), where the set saves (or the latest notice), and the master fader and level.
 
 Menus and panels open inside the window. A click outside one, or Escape, closes it.
 :::
@@ -329,6 +329,10 @@ A level link works like a volume pedal after the fader: the fader doesn't move, 
 - **Xruns** are counted since StageHand started, red for a few seconds after a new one. Click the count to reset it (after a soundcheck, say).
 
 When the load runs high: mute rows you don't need in a song (a muted plugin rests), choose a larger buffer, or use lighter plugin settings.
+
+**Buffer size and sample rate:** click either in the status bar for a menu. StageHand remembers the choice on this computer, for every set.
+- **Buffer size** ("128 frames"): smaller plays with less delay but needs more DSP headroom. On a Mac it changes at once; on Linux it applies the next time StageHand starts (`--quantum` overrides it).
+- **Sample rate** ("48000 Hz"): applies the next time StageHand starts, since the plugins run at the rate they were started at. Until then the status bar shows it in amber, for example "48000 Hz (88200 Hz next launch)". "The device's own" keeps whatever rate the output device is set to. On Linux, PipeWire sets the rate.
 :::
 
 ::: {.callout .callout-note .card}

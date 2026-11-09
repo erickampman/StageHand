@@ -254,6 +254,9 @@ void RackController::tick(double now) {
         status.sampleRate       = audio.sampleRate;
         status.bufferSize       = audio.bufferSize;
         status.outputs          = audio.outputs;
+        // A rate chosen for the next launch stays in sight until then.
+        if (chosenRate < 0.0) chosenRate = config.audioChoices ? config.audioChoices().chosenRate : 0.0;
+        status.nextRate = chosenRate > 0.0 && chosenRate != audio.sampleRate ? chosenRate : 0.0;
         if (audio.xruns != xrunsSeen) {   // a new one (or more): when, and where, in the log
             if (audio.xruns > xrunsSeen) logXrun();
             xrunsSeen = audio.xruns;
@@ -1242,6 +1245,17 @@ void RackController::clearClip(const std::string& id) {
 void RackController::resetXruns() {
     xrunsBase = xrunsSeen;
     xrunAt    = -1.0;
+}
+
+void RackController::chooseSampleRate(double hertz) {
+    if (!config.chooseSampleRate) return;
+    chosenRate = hertz;
+    if (std::string said = config.chooseSampleRate(hertz); !said.empty()) notice(std::move(said));
+}
+
+void RackController::chooseBufferSize(std::uint32_t frames) {
+    if (!config.chooseBufferSize) return;
+    if (std::string said = config.chooseBufferSize(frames); !said.empty()) notice(std::move(said));
 }
 
 // "xrun: song 4 (So what), bar 17" on stderr, so a gig's xruns can be found in the log.

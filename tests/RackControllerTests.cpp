@@ -2111,6 +2111,72 @@ void testDspAndXruns() {
     rig.engine->collect();
 }
 
+// The status bar's rate and buffer menus (R2-20): what they offer comes from
+// the app, and a choice goes to it, with its answer said in the status bar.
+void testAudioMenus() {
+    Rig                    rig;
+    RackController::Config config = rig.config();
+    {
+        RackController none(*rig.session, *rig.engine, rig.midi, rig.factory, config);
+        CHECK(none.audioChoices().sampleRates.empty() && none.audioChoices().bufferSizes.empty());
+        none.chooseSampleRate(96000.0);   // no app behind it: nothing happens
+        none.chooseBufferSize(128);
+        CHECK(none.takeNotices().empty());
+    }
+    double        rate   = -1.0;
+    std::uint32_t buffer = 0;
+    config.audioChoices  = [] {
+        RackController::AudioChoices c;
+        c.sampleRates = {44100.0, 48000.0};
+        c.bufferSizes = {64, 128, 256};
+        c.chosenRate  = 48000.0;
+        c.bufferLive  = true;
+        return c;
+    };
+    config.chooseSampleRate = [&rate](double hz) { rate = hz; return std::string("rate said"); };
+    config.chooseBufferSize = [&buffer](std::uint32_t frames) { buffer = frames; return std::string{}; };
+    RackController controller(*rig.session, *rig.engine, rig.midi, rig.factory, config);
+    const RackController::AudioChoices choices = controller.audioChoices();
+    CHECK(choices.sampleRates.size() == 2 && choices.bufferSizes.size() == 3 && choices.chosenRate == 48000.0 &&
+          choices.bufferLive);
+    controller.chooseSampleRate(44100.0);
+    CHECK(rate == 44100.0);
+    std::vector<std::string> said = controller.takeNotices();
+    CHECK(said.size() == 1 && said[0] == "rate said");
+    controller.chooseSampleRate(0.0);   // the device's own
+    CHECK(rate == 0.0);
+    controller.takeNotices();
+    controller.chooseBufferSize(128);   // an empty answer: nothing to say
+    CHECK(buffer == 128 && controller.takeNotices().empty());
+}
+
+// A rate chosen for the next launch stays in the status bar until then.
+void testNextRateShown() {
+    Rig                    rig;
+    RackController::Config config = rig.config();
+    config.audioStatus  = [] { return RackController::AudioStatus{48000.0, 256, 0, 2}; };
+    config.audioChoices = [] {
+        RackController::AudioChoices c;
+        c.sampleRates = {48000.0, 96000.0};
+        c.chosenRate  = 96000.0;   // saved by an earlier run, not yet in effect
+        return c;
+    };
+    config.chooseSampleRate = [](double) { return std::string("said"); };
+    RackController       controller(*rig.session, *rig.engine, rig.midi, rig.factory, config);
+    const RackViewModel& view = controller.view();
+    controller.tick(0.05);
+    CHECK(view.status.nextRate == 96000.0);
+    controller.chooseSampleRate(48000.0);   // the rate it runs at: nothing pending
+    controller.tick(0.1);
+    CHECK(view.status.nextRate == 0.0);
+    controller.chooseSampleRate(0.0);   // the device's own: nothing pending
+    controller.tick(0.15);
+    CHECK(view.status.nextRate == 0.0);
+    controller.chooseSampleRate(96000.0);
+    controller.tick(0.2);
+    CHECK(view.status.nextRate == 96000.0);
+}
+
 // Control links (docs/controls.md, milestone 2): learned for a row's
 // parameter, then its gain on the same control (a macro); a key, a control a
 // trigger uses, and a row's gain for all songs refused; moved to all songs
@@ -2494,6 +2560,8 @@ int main() {
     testHotplug();
     testPanic();
     testDspAndXruns();
+    testAudioMenus();
+    testNextRateShown();
     testControlLinks();
     testMadeControlLinks();
     return test::finish("RackController");

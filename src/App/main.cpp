@@ -134,6 +134,7 @@ void printUsage() {
         "                       of its name (--list-audio). Default: the system's\n"
         "                       output when StageHand starts, not followed afterwards.\n"
         "                       On macOS --quantum sets this app's buffer on the device.\n"
+        "                       It overrides the buffer size chosen in the status bar.\n"
         "\n"
         "MIDI (playing, --monitor). Every hardware MIDI input is opened by default, plus\n"
         "two virtual inputs other apps can connect to: 'MIDI 2.0 In' and 'MIDI 1.0 In'.\n"
@@ -618,10 +619,17 @@ int runPlay(const Options& options) {
     if (!options.device.empty()) std::puts("--device is macOS's: on Linux, PipeWire routes the outputs.");
     JackBackend backend(kAppName, options.autoConnect);
 #endif
+    // The rate and buffer chosen in the status bar (R2-20); --quantum wins over
+    // the saved buffer. The rate is macOS's to ask for (PipeWire's on Linux).
+    const std::string audioPath     = defaultAudioDevicePath();
+    AudioSettings     audioSettings = loadAudioSettings(audioPath);
     AudioConfig requested;
     requested.outputChannels    = options.channels;
     requested.auxOutputChannels = 2;   // the click, connected only where the rack says
-    requested.bufferSize        = options.quantum;
+    requested.bufferSize        = options.quantum != 0 ? options.quantum : audioSettings.bufferSize;
+#ifdef __APPLE__
+    requested.sampleRate = audioSettings.sampleRate;
+#endif
     AudioConfig negotiated;
     if (!backend.open(requested, negotiated)) return 1;
     std::printf("%s: %.0f Hz, %u-frame buffer, %u out\n", backend.name(), negotiated.sampleRate,
@@ -695,6 +703,54 @@ int runPlay(const Options& options) {
         const AudioConfig audio = backend.config();
         return RackController::AudioStatus{audio.sampleRate, audio.bufferSize, backend.xrunCount(),
                                            audio.outputChannels};
+    };
+    // The status bar's rate and buffer menus (R2-20).
+    config.audioChoices = [&backend, &audioSettings] {
+        RackController::AudioChoices choices;
+        choices.chosenRate   = audioSettings.sampleRate;
+        choices.chosenBuffer = audioSettings.bufferSize;
+        std::uint32_t lowest = 32, highest = 2048;
+#ifdef __APPLE__
+        choices.sampleRates = backend.sampleRates();
+        choices.bufferLive  = true;
+        if (std::uint32_t lo = 0, hi = 0; backend.bufferSizeRange(lo, hi)) {
+            lowest  = std::max(lo, 16u);
+            highest = std::min(hi, 4096u);
+        }
+#endif
+        for (std::uint32_t frames = 16; frames <= 4096; frames *= 2)
+            if (frames >= lowest && frames <= highest) choices.bufferSizes.push_back(frames);
+        return choices;
+    };
+    config.chooseSampleRate = [&backend, &audioSettings, &audioPath](double hertz) -> std::string {
+        audioSettings.sampleRate = hertz;
+        if (!saveAudioSettings(audioPath, audioSettings)) return "Couldn't save the sample rate";
+        const double now = backend.config().sampleRate;
+        char         text[160];
+        if (hertz <= 0.0)
+            std::snprintf(text, sizeof text, "From the next launch, the device's own rate (now %.0f Hz)", now);
+        else if (hertz == now)
+            std::snprintf(text, sizeof text, "%.0f Hz, as now, from now on", hertz);
+        else
+            std::snprintf(text, sizeof text, "%.0f Hz from the next launch: quit and reopen StageHand", hertz);
+        return text;
+    };
+    config.chooseBufferSize = [&backend, &audioSettings, &audioPath](std::uint32_t frames) -> std::string {
+        audioSettings.bufferSize = frames;
+        const bool saved = saveAudioSettings(audioPath, audioSettings);
+        char       text[160];
+#ifdef __APPLE__
+        const std::uint32_t now = backend.setBufferSize(frames);
+        if (now == frames)
+            std::snprintf(text, sizeof text, "Buffer: %u frames%s", now, saved ? "" : " (couldn't save it for next time)");
+        else
+            std::snprintf(text, sizeof text, "The device took %u frames, not %u", now, frames);
+#else
+        (void)backend;
+        if (!saved) return "Couldn't save the buffer size";
+        std::snprintf(text, sizeof text, "Buffer: %u frames from the next launch (--quantum wins over it)", frames);
+#endif
+        return text;
     };
     config.quit               = [&loop] { loop.requestQuit(); };
     config.virtualInputs      = kVirtualInputs;

@@ -125,6 +125,7 @@ struct SourceChoice {
 struct StatusModel {
     double        sampleRate    = 0.0;
     std::uint32_t bufferSize    = 0;
+    double        nextRate      = 0.0; // chosen for the next launch and not the rate now; 0: none (R2-20)
     std::uint64_t xruns         = 0;   // since StageHand started, or the count was reset
     int           xrunSecondsAgo = -1; // since the last one; -1: none counted
     bool          xrunRecent    = false;   // in the last few seconds: shown red

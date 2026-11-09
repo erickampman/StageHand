@@ -153,9 +153,11 @@ rack asks instead of needing `--overwrite`.
 
 | Option | Meaning |
 |---|---|
-| `--quantum N` | Force a PipeWire buffer size of N frames (4-8192) while StageHand runs, released when it exits. It affects all audio on the system |
+| `--quantum N` | Force a PipeWire buffer size of N frames (4-8192) while StageHand runs, released when it exits. It affects all audio on the system. On macOS, this app's buffer on the device. Overrides the buffer size chosen in the status bar |
 | `--channels N` | Output channels to register (default 2) |
 | `--no-connect` | Don't connect to the system playback ports |
+
+The buffer size and sample rate can also be chosen from the status bar (help page, "DSP and Xruns"). Both are kept per machine in `audio.json` in StageHand's state folder, beside the output device, as `bufferSize` (frames) and `sampleRate` (Hz; macOS only, from the next launch). `--quantum` wins over the saved buffer size for that run.
 
 ## MIDI options (playing, --monitor)
 
