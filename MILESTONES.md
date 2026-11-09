@@ -48,3 +48,4 @@
 - [x] Sequence editor: horizontal scrolling by a trackpad's sideways swipe too, not only Shift+wheel, as Umpire's grid
 - [x] Buffer size and sample rate menus in the status bar, kept per machine in audio.json: the buffer applies at once on macOS (next launch on Linux), the rate at the next launch, shown in amber until then (ReleaseUMP R2-20; checked by hand on the Mac 2026-11-09)
 - [ ] Buffer size menu checked on Linux (applies at the next launch through node.force-quantum)
+- [ ] Control Links for a row's MIDI effects (EDOSpread12's EDO, Retune's Steps): a link target, Learn from its editor, and the dialog. After the 0.9.0 preview (EDOSpread12 M4, 2026-11-09)
