@@ -800,6 +800,9 @@ int runPlay(const Options& options) {
     });
     if (ui)
         loop.addTimer(16, [&] {   // the rack window's events
+            // Not inside AppKit's resize or menu loop: idle() takes events off
+            // the queue (pugl's puglUpdate), and those are AppKit's then.
+            if (MainLoop::systemTracking()) return;
             ui->idle();
             if (ui->closed()) loop.requestQuit();   // closing it quits, like Ctrl-Q
         });

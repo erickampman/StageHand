@@ -20,7 +20,7 @@
 - [x] App bundle: `StageHand.app`, `Info.plist`, `.rack` as a package type
 - [ ] Signing, notarization, Developer ID entitlement for plugin loading
 - [x] Icon (`resources/StageHand.icon`, compiled by actool)
-- [ ] Open-documents event (rack/setlist double-clicked in Finder)
+- [x] Open-documents event (rack/setlist double-clicked in Finder). Setlist checked by hand on 2026-11-09
 - [ ] DPF portal file dialog on Linux (replaces zenity/kdialog)
 
 ## M3: Performance features

@@ -85,6 +85,10 @@ void MainLoop::requestQuit() noexcept {
     [[maybe_unused]] const ssize_t n = ::write(wakeWrite, &byte, 1);
 }
 
+bool MainLoop::systemTracking() noexcept {
+    return false;
+}
+
 void MainLoop::run() {
     std::vector<pollfd>  fds;
     std::vector<TimerId> due;

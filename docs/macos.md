@@ -458,7 +458,11 @@ console only and says so. The click isn't routed on macOS yet
 - `App/MainLoopMac.mm`: `MainLoop` on macOS, AppKit's loop driving
   (`nextEventMatchingMask:` in `run()`); the timers are `CFRunLoopTimer`s and
   the fds `CFFileDescriptor`s, both in the run loop's common modes, so they
-  run while AppKit runs its own loop (a live resize, a menu). `requestQuit()`
+  run while AppKit runs its own loop (a live resize, a menu). The rack
+  window's timer skips its `idle()` then (`MainLoop::systemTracking()`):
+  pugl's `puglUpdate` takes events off the queue, and taking the resize
+  loop's drag and mouse-up events started a second resize inside the first
+  and crashed AppKit (2026-11-09). `requestQuit()`
   stays async-signal-safe: it writes the self-pipe, whose `CFFileDescriptor`
   posts an application-defined event to wake `nextEventMatchingMask:`.
 - `main.cpp`: the editor window by platform; `STAGEHAND_RACK_WINDOW`

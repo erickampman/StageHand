@@ -52,6 +52,14 @@ public:
     // to the wake-up pipe.
     void requestQuit() noexcept;
 
+    // True while the system runs a loop of its own on this thread: on macOS,
+    // AppKit tracking a window resize, a title-bar drag or a menu (the run
+    // loop is in a mode other than the default one). Timers still fire then,
+    // but nothing may take events off the queue: those events belong to
+    // AppKit's loop, and dispatching them ourselves can start a second resize
+    // inside the first, which crashes AppKit. Always false on Linux.
+    static bool systemTracking() noexcept;
+
 private:
 #ifdef __APPLE__
     struct Timer {

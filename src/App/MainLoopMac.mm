@@ -151,6 +151,14 @@ void MainLoop::requestQuit() noexcept {
     [[maybe_unused]] const ssize_t n = ::write(wakeWrite, &byte, 1);
 }
 
+bool MainLoop::systemTracking() noexcept {
+    // run() and pugl wait in the default mode; AppKit's tracking loops use
+    // NSEventTrackingRunLoopMode (or a modal mode). Outside any run loop the
+    // mode is nil, which is not tracking.
+    NSRunLoopMode const mode = [[NSRunLoop currentRunLoop] currentMode];
+    return mode != nil && ![mode isEqualToString:NSDefaultRunLoopMode];
+}
+
 void MainLoop::run() {
     @autoreleasepool {
         [NSApplication sharedApplication];
