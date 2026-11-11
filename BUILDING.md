@@ -153,8 +153,7 @@ open build/StageHand.app
 Launched that way, its output goes nowhere; Cmd-Q, or Quit in the Dock, quits and saves as Ctrl-C
 does.
 
-To keep it in Applications (and after deleting the clone), copy the app there. An app you built
-yourself has no quarantine flag, so it opens without the steps a downloaded one needs:
+To keep it in Applications (and after deleting the clone), copy the app there:
 
 ```bash
 rm -rf /Applications/StageHand.app
