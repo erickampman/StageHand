@@ -33,10 +33,10 @@
 #include "Session/SetFile.h"
 #include "Session/SetlistFile.h"
 #include "Session/WindowState.h"
+#include "Session/AudioDeviceState.h"   // the buffer (and on macOS the rate and device), every platform
 
 #ifdef __APPLE__
 #include "uw/audio/CoreAudioBackend.h"
-#include "Session/AudioDeviceState.h"
 #else
 #include "uw/audio/JackBackend.h"
 #include "Core/UwNames.h"
