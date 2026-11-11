@@ -237,7 +237,10 @@ lock-free on arm64.
   on other Macs without a Gatekeeper override. With the hardened runtime,
   loading other developers' plugins needs the
   `com.apple.security.cs.disable-library-validation` entitlement, or every
-  CLAP plugin signed by someone else fails to load.
+  CLAP plugin signed by someone else fails to load. It's in
+  `cmake/StageHand.entitlements`, which the release signing passes to
+  `codesign` (ReleaseUMP R4-16); the build's own ad-hoc signature doesn't
+  need it.
 
 ## Milestones (proposed)
 
