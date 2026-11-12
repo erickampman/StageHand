@@ -56,13 +56,15 @@ The design records: [architecture](docs/architecture.md), [domain model](docs/do
 **macOS:** drag `StageHand.app` into Applications. The first time you open it, macOS asks whether to
 open an app downloaded from the internet: click Open.
 
-**Linux:** unpack the download anywhere you'll keep it, such as `~/.local/lib/stagehand`, and keep
-`stagehand` and its `help` folder together (Help looks for `help/` beside the executable). To run
-it as plain `stagehand`, link it into a directory on your `PATH`:
+**Linux:** the download is an install tree (`bin/`, `share/`). Unpack it into `~/.local`; that puts
+`stagehand` on your `PATH` and StageHand, with its icon, in your desktop's app list:
 
 ```bash
-ln -sf ~/.local/lib/stagehand/stagehand ~/.local/bin/stagehand
+tar -xzf StageHand-0.9.0-linux-x86_64.tar.gz -C ~/.local --strip-components=1
 ```
+
+For every user, unpack into `/usr/local` with `sudo` instead. If `~/.local/bin` didn't exist before,
+log out and back in once so it's on your `PATH`.
 
 StageHand plays through JACK, and on a desktop without a JACK server it restarts itself under
 PipeWire's `pw-jack`. Neither library is on a fresh Ubuntu desktop, and without them StageHand
@@ -73,7 +75,7 @@ sudo apt install libjack-jackd2-0 pipewire-jack
 ```
 
 Plugins go in the CLAP folder, where StageHand looks for them: `~/.clap` on Linux,
-`~/Library/Audio/Plug-Ins/CLAP` on macOS. What each platform needs is in the downloads repo's
+`~/Library/Audio/Plug-Ins/CLAP` on macOS. What each platform needs, and how to uninstall, is in the downloads repo's
 [install notes](https://github.com/erickampman/unlikelyware#installing).
 
 ## Building from source
