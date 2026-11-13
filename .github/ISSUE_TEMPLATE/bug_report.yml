@@ -1,0 +1,67 @@
+name: Bug report
+description: Something doesn't work, sounds wrong, or crashes
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Check the README first: known problems are listed there.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The app's version, from the download's file name
+      placeholder: "0.9.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - macOS (Apple Silicon)
+        - Linux (x86-64)
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: os-version
+    attributes:
+      label: OS version
+      placeholder: "macOS 26.1, Ubuntu 24.04, Fedora 43, ..."
+    validations:
+      required: true
+  - type: input
+    id: setup
+    attributes:
+      label: Audio and MIDI setup
+      description: Audio backend and interface, MIDI devices, and the plugins involved (with versions)
+      placeholder: "CoreAudio, Focusrite Scarlett 2i2; KeyboardEDO into StageHand; Surge XT 1.3"
+  - type: dropdown
+    id: source
+    attributes:
+      label: Where the build came from
+      options:
+        - Downloaded release
+        - Built from source
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open the app
+        2. ...
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Host logs, crash reports, a saved project or preset, screenshots or recordings. Drag files in.

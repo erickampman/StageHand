@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Downloads and install notes
+    url: https://github.com/erickampman/unlikelyware#installing
+    about: Where to get the builds, what you need, and how to install them
