@@ -40,9 +40,12 @@ rack or one plugin, and lists plugins and MIDI sources.
 ## How it works
 
 The design records: [architecture](docs/architecture.md), [domain model](docs/domain-model.md),
-[rack format](docs/rack-format.md), [setlists](docs/setlists.md), [documents](docs/documents.md),
-[rig](docs/rig.md), [MIDI effects](docs/midi-effects.md), [sequences](docs/sequences.md),
-[looper](docs/looper.md), [controls](docs/controls.md) and the [macOS port](docs/macos.md).
+[rack format](docs/rack-format.md), [rack view](docs/rack-view.md), [setlists](docs/setlists.md),
+[documents](docs/documents.md), [rig](docs/rig.md), [MIDI effects](docs/midi-effects.md),
+[sequences](docs/sequences.md), [looper](docs/looper.md), [controls](docs/controls.md),
+[count-in and the Perform view](docs/perform.md), [panic, CPU load and xruns](docs/panic.md),
+[the generic editor](docs/generic-editor.md), [the look](docs/look.md) and the
+[macOS port](docs/macos.md).
 
 ## Known gaps
 
