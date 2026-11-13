@@ -99,7 +99,7 @@ lock-free on arm64.
     (xdg-desktop-portal, over D-Bus: `libdbus-1-dev` at build, else DPF's
     own plainer browser). To check when it's built: choosing a folder (a
     rack bundle on Linux), the setlist filter (`*.setlist`), and a suggested
-    name when saving. DPF is the private fork (`external/dpf`, a submodule
+    name when saving. DPF is the author's fork (`external/dpf`, a submodule
     since 2026-10-22), so what's missing is patched in the fork.
 11. **Plugin editors in a plain window.** The plugin draws into an `NSView`
     the host gives it; the host's window only holds it. First try a DGL

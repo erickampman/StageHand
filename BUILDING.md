@@ -11,7 +11,7 @@ own submodule. Its tests run in uw-core. DPF's DGL, for the UI, is the DPF fork 
 a submodule at `external/dpf`), which pins the pugl fork (`erickampman/pugl`) as its own submodule:
 one copy, with every local patch, shared by StageHand, Umpire and the plugins
 (`external/dpf/README.fork.md`). nlohmann/json is vendored (`external/nlohmann`). Everything else
-is a system library. While the repos are private, cloning needs access to uw-core, DPF and pugl.
+is a system library.
 
 | Platform | What builds today |
 |---|---|

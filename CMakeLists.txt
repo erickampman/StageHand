@@ -64,7 +64,7 @@ add_subdirectory(${STAGEHAND_UW_CORE_DIR} uw-core)
 add_library(nlohmann-json INTERFACE)
 target_include_directories(nlohmann-json SYSTEM INTERFACE external)
 
-# --- DPF's DGL (pugl + NanoVG over OpenGL): StageHand's own UI. The private DPF fork, a submodule
+# --- DPF's DGL (pugl + NanoVG over OpenGL): StageHand's own UI. The author's DPF fork, a submodule
 # (external/dpf/README.fork.md; Umpire's docs/decisions.md, "DPF fork"); only the DGL library,
 # no plugin wrappers.
 if(STAGEHAND_APP)
