@@ -12,6 +12,10 @@
 #include "App/RackController.h"
 #include "Ui/UiWidget.h"
 
+#ifndef __APPLE__
+#include "uw/base/HelpServer.h"
+#endif
+
 namespace stagehand {
 
 class RackWidget final : public UiWidget {
@@ -237,6 +241,9 @@ private:
     void keepChangesThen(std::function<void()> then, bool quitting);
     void openFileMenu(float x, float y);
     void openHelp();   // help/help.html beside the app, in the default browser
+#ifndef __APPLE__
+    uw::HelpServer helpServer;   // openHelp()'s, for as long as the window is open
+#endif
     void openSwitchMenu(float x, float y);   // File > Setlist settings...
     void openTransportMenu(float x, float y);
     void openMetronomeMenu(float x, float y);

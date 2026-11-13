@@ -2037,7 +2037,8 @@ void RackWidget::openFileMenu(float x, float y) {
 // help/help.html, which the build puts beside the executable on Linux (and
 // `cmake --install` in share/stagehand/help, beside bin) and in the bundle's
 // Resources on the Mac, with the logo it shows, opened in the default browser
-// as the brand opens unlikelyware.com. A missing page is said in the status bar.
+// as the brand opens unlikelyware.com (on Linux, over loopback HTTP: a snap
+// browser can't read the file). A missing page is said in the status bar.
 void RackWidget::openHelp() {
     namespace fs = std::filesystem;
     std::error_code ec;
@@ -2055,8 +2056,19 @@ void RackWidget::openHelp() {
         showNotice("The help page isn't installed (help/help.html beside the app)", ui::nowSeconds());
         return;
     }
-    if (!openInBrowser(fs::weakly_canonical(page, ec).string()))
-        showNotice("Couldn't open the help page in a browser", ui::nowSeconds());
+#ifdef __APPLE__
+    const std::string target = fs::weakly_canonical(page, ec).string();
+#else
+    // Served over loopback (uw-core's HelpServer): a snap or Flatpak browser
+    // can't read the installed file in ~/.local or /usr/local.
+    const fs::path    dir    = fs::weakly_canonical(page, ec).parent_path();
+    const std::string target = helpServer.serve(uw::HelpServer::readDirectory(dir.string(), "help.html"));
+    if (target.empty()) {
+        showNotice("Couldn't serve the help page to a browser", ui::nowSeconds());
+        return;
+    }
+#endif
+    if (!openInBrowser(target)) showNotice("Couldn't open the help page in a browser", ui::nowSeconds());
 }
 
 // How a song switch behaves (docs/setlists.md, section 5): one choice ticked
