@@ -2,11 +2,6 @@
 # milestone 1). Linux builds everything, the app included; macOS builds the
 # libraries, the tests and the app's MIDI modes (milestone 3). The suites use
 # fakes: no audio, MIDI or display needed.
-#
-# external/uw-core and external/dpf (the DPF fork, with the pugl fork inside
-# it) are private repos, which the workflow's own token can't read: the
-# SUBMODULES_TOKEN secret (a token with read access to uw-core, DPF and pugl)
-# is used when set.
 name: CI
 
 on:
@@ -20,15 +15,6 @@ jobs:
     runs-on: ubuntu-24.04   # alsa-lib 1.2.11 (1.2.10+ needed)
     steps:
       - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.SUBMODULES_TOKEN || github.token }}
-      # fetch_deps.sh's own `git submodule` clones don't get checkout's token.
-      - name: Credentials for the private submodules
-        env:
-          SUBMODULES_TOKEN: ${{ secrets.SUBMODULES_TOKEN }}
-        run: |
-          git config --global url."https://x-access-token:${SUBMODULES_TOKEN}@github.com/erickampman/".insteadOf \
-            "https://github.com/erickampman/"
       - name: Fetch pinned dependency submodules
         run: tools/fetch_deps.sh
       - name: Install build dependencies
@@ -57,15 +43,6 @@ jobs:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.SUBMODULES_TOKEN || github.token }}
-      # fetch_deps.sh's own `git submodule` clones don't get checkout's token.
-      - name: Credentials for the private submodules
-        env:
-          SUBMODULES_TOKEN: ${{ secrets.SUBMODULES_TOKEN }}
-        run: |
-          git config --global url."https://x-access-token:${SUBMODULES_TOKEN}@github.com/erickampman/".insteadOf \
-            "https://github.com/erickampman/"
       - name: Fetch pinned dependency submodules
         run: tools/fetch_deps.sh
       - name: Install build dependencies
