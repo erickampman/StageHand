@@ -14,8 +14,8 @@ loopers.
 | Version | 0.9.0 (preview) |
 | License | MIT |
 
-**Downloads:** ready-built apps will be in the
-[Unlikelyware downloads](https://github.com/erickampman/unlikelyware) with the 0.9 preview. This repo
+**Downloads:** ready-built apps are in the
+[Unlikelyware downloads](https://github.com/erickampman/unlikelyware). This repo
 has the source only.
 
 ## What makes it different
