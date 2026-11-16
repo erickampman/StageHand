@@ -5,6 +5,11 @@ All notable changes to StageHand. Versions follow the git tags; the format is
 
 ## [Unreleased]
 
+### Fixed
+
+- macOS: a sequence editor, or a plugin's generic editor, can be opened again after its window is
+  closed (#33).
+
 ## [0.9.0] - 2026-11-14
 
 First public preview.

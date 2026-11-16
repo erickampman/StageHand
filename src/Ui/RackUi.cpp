@@ -65,6 +65,15 @@ public:
     bool                  closedByUser = false;
     std::function<bool()> allowClose;
 
+    // Closed by the user, on either platform. DPF calls onClose() on Linux
+    // only: on macOS pugl's windowShouldClose: closes the NSWindow whatever
+    // onClose() would say, so DGL skips it and just closes (hides) the window
+    // (issue 33: closedByUser stayed false, and the editor could never be
+    // opened again). Hidden is the sign there: DGL's isVisible() changes only
+    // with show() and hide(), not when a window is minimized, and a sequence
+    // or generic editor is hidden by nothing else while it's tracked.
+    bool closed() const noexcept { return closedByUser || !isVisible(); }
+
 protected:
     bool onClose() override {
         if (allowClose && !allowClose()) return false;
@@ -173,8 +182,12 @@ void RackUi::Impl::openEditor(const std::string& id) {
     const Sequence* seq = controller.sequence(id);
     if (seq == nullptr) return;
     if (const auto it = editors.find(id); it != editors.end()) {
-        it->second.window->focus();
-        return;
+        if (!it->second.window->closed()) {
+            it->second.window->focus();
+            return;
+        }
+        closeEditor(it->second);   // closed, and idle() hasn't torn it down yet
+        editors.erase(it);
     }
     Editor e;
     e.window = std::make_unique<TrackedWindow>(app);
@@ -311,7 +324,7 @@ void RackUi::idle() {
     // Editors the user closed, or whose sequence is gone, are torn down here,
     // outside DGL's event handling.
     for (auto it = impl->editors.begin(); it != impl->editors.end();) {
-        if (it->second.window->closedByUser || impl->controller.sequence(it->first) == nullptr) {
+        if (it->second.window->closed() || impl->controller.sequence(it->first) == nullptr) {
             impl->closeEditor(it->second);
             it = impl->editors.erase(it);
         } else {
@@ -360,7 +373,7 @@ std::unique_ptr<EditorHandle> RackUi::openParameterEditor(HostedPlugin& plugin, 
         bool isOpen() const override {
             if (alive.expired()) return false;
             const auto it = impl->generic.find(key);
-            return it != impl->generic.end() && !it->second.window->closedByUser;
+            return it != impl->generic.end() && !it->second.window->closed();
         }
         void setTitle(const std::string& t) override {
             if (alive.expired()) return;
