@@ -109,9 +109,11 @@ protocol.
 - It's a policy switch, not a correctness requirement: because each message
   keeps its protocol, mixed 1.0/2.0 works without it.
 
-**Default inputs: every hardware MIDI source** (ALSA ports flagged
-`SND_SEQ_PORT_TYPE_HARDWARE`; software ports like `Midi Through` are left out),
-as a live host should. MainStage listens to all inputs unless told otherwise,
+**Default inputs: every MIDI source but loop-backs** (hardware, software and
+app ports alike; only `Midi Through` is left out), as a live host should.
+Until 2026-11-16 it was hardware only (ALSA's `SND_SEQ_PORT_TYPE_HARDWARE`,
+CoreMIDI devices not on the IAC or network drivers), so a row on All inputs
+didn't hear an app's port until something picked it by name (issue #1). MainStage listens to all inputs unless told otherwise,
 and a keyboard that silently isn't listened to is a gig-killer. `--midi`
 narrows the set, and each slot's MidiFilter chooses among what's open. Not yet
 handled: a device plugged in after startup (needs ALSA's announce port).

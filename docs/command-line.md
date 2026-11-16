@@ -84,8 +84,8 @@ plugins.
 
 `stagehand` with no `--set`, `--rack` or `--plugin` (and, with no arguments
 at all, no last set to reopen) starts a new, untitled set with one empty
-song named "Song", with the defaults: 120 BPM, 4/4, every hardware MIDI
-input plus the virtual inputs, stereo out, and an empty rig. Build it in the
+song named "Song", with the defaults: 120 BPM, 4/4, every MIDI input
+plus the virtual inputs, stereo out, and an empty rig. Build it in the
 window as usual.
 
 An untitled set is saved with **File > Save As** (or Ctrl-S), which names
@@ -115,7 +115,7 @@ Save As in the window never replaces something that isn't a set (an older
 
 `stagehand` with no `--setlist`, `--rack`, `--plugin` or `--save-rack` (and,
 with no arguments at all, no last setlist or rack to reopen) starts a new, empty rack named "Untitled" with the defaults:
-120 BPM, 4/4, every hardware MIDI input plus the virtual inputs, and stereo
+120 BPM, 4/4, every MIDI input plus the virtual inputs, and stereo
 out. Build it in the window as usual.
 
 An untitled rack is saved with **File > Save As** (or Ctrl-S), which names
@@ -161,8 +161,10 @@ The buffer size and sample rate can also be chosen from the status bar (help pag
 
 ## MIDI options (playing, --monitor)
 
-By default StageHand opens every hardware MIDI input, plus two virtual inputs
-that other apps can connect to:
+By default StageHand opens every MIDI input: hardware, and software and app
+sources too (another app's port, a virtual keyboard, the IAC bus on macOS).
+Only loop-backs (`Midi Through` on Linux) are left out. Plus two virtual
+inputs that other apps can connect to:
 
 | Virtual input | ALSA client | Receives |
 |---|---|---|
@@ -173,7 +175,7 @@ The inputs opened, and where each landed, are printed at startup.
 
 | Option | Meaning |
 |---|---|
-| `--midi ID` | Open only this source instead of every hardware input. Repeatable. ID is from `--list-midi`, a client:port like `14:0`, or `all` (hardware plus software and app sources) |
+| `--midi ID` | Open only this source instead of every input. Repeatable. ID is from `--list-midi`, a client:port like `14:0`, or `all` (every source, `Midi Through` included) |
 | `--midi-protocol 1\|2` | MIDI 2.0 protocol preference (default 2). With 1, every source is received as MIDI 1.0 |
 
 Rack sources and sequence triggers name devices by their `--list-midi` id,
@@ -188,7 +190,7 @@ StageHand follows the ALSA sequencer's announcements (added 2026-10-02), so
 plugging and unplugging needs no restart:
 
 - **A device plugged in while it runs** is opened as the ones there at start
-  are: hardware by default, everything with `--midi all`, nothing new when
+  are: every input but loop-backs by default, everything with `--midi all`, nothing new when
   `--midi` named the inputs. Rows on All inputs hear it; anything naming it
   that showed "(not connected)" (a row's input, a looper, a sequence or
   transport trigger, the setlist's triggers, the looper switch) connects.

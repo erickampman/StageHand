@@ -45,6 +45,13 @@ public:
     std::string title;   // as last set; the controller retitles when it changes
 };
 
+// Whether StageHand opens this source without --midi naming it (issue #1):
+// hardware, software and app sources alike, so a row on All inputs hears an
+// app's port as it hears a keyboard. Left out: loop-backs (Linux's Midi
+// Through), which only echo what's sent to them; `everything` (--midi all)
+// takes them too.
+bool opensByDefault(const MidiSourceInfo& info, bool everything);
+
 // Between the rack view and the Session (docs/rack-view.md, section 5): applies
 // the view's intents, owns the editor windows and saving, and rebuilds the
 // RackViewModel each tick. Main thread only. No DGL, X11 or JACK types.
@@ -97,16 +104,16 @@ public:
         // (docs/documents.md, "Reopening"); empty = not remembered (tests).
         std::string lastPositionPath;
 
-        // MIDI devices that appear while running (hotplug): opened, as the
-        // hardware inputs are at start (all inputs listen to them), unless
-        // --midi chose the inputs. `openNewSoftware` (--midi all): app and
-        // software sources too.
+        // MIDI devices that appear while running (hotplug): opened as the
+        // inputs are at start, by opensByDefault() (all inputs listen to
+        // them), unless --midi chose the inputs. `openLoopbacks` (--midi
+        // all): loop-backs like Midi Through too.
         // From a block's start to its sound at the outputs (AudioBackend::
         // outputLatencySeconds()): the beat display draws what's heard.
         double outputLatencySeconds = 0.0;
 
         bool openNewInputs   = true;
-        bool openNewSoftware = false;
+        bool openLoopbacks   = false;
 
         // Whether the untitled set the controller starts with has a rig (an
         // empty one). False: no rig at all (tests), so no buses, and sends go

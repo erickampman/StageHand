@@ -1927,7 +1927,8 @@ void testCheckSetlist() {
 
 // MIDI devices coming and going (hotplug): a device a row names appears and
 // is opened and heard; one that leaves shows as disconnected, and comes back
-// as the same input; a new software source isn't opened (hardware only).
+// as the same input; a new software source is opened too (issue #1), but
+// not a loop-back like Midi Through.
 void testHotplug() {
     Rig                 rig;
     Session::LoadReport report;
@@ -1955,11 +1956,16 @@ void testHotplug() {
     rig.midi.sources.push_back(MidiSourceInfo{"Unplugged:Port", "Port", false, true, MidiProtocol::Midi1});
     rig.midi.sources.push_back(MidiSourceInfo{"VMPK:Out", "Out", true, false, MidiProtocol::Midi1});
     rig.midi.present.insert("VMPK:Out");
+    rig.midi.sources.push_back(MidiSourceInfo{"Midi Through:Midi Through Port-0", "Midi Through Port-0", false, false,
+                                              MidiProtocol::Midi1});
+    rig.midi.present.insert("Midi Through:Midi Through Port-0");
     ++rig.midi.changeCount;
     tick();
     CHECK(noticed("MIDI device 'Unplugged:Port' connected"));
     CHECK(row("e") && row("e")->sourceConnected && rig.session->slot("e")->source == 100);
-    CHECK(!rig.session->sourceOpen(MidiSourceRef{MidiSourceRef::Kind::Device, "VMPK:Out"}));   // software: not opened
+    CHECK(rig.session->sourceOpen(MidiSourceRef{MidiSourceRef::Kind::Device, "VMPK:Out"}));   // software: opened too
+    CHECK(!rig.session->sourceOpen(
+        MidiSourceRef{MidiSourceRef::Kind::Device, "Midi Through:Midi Through Port-0"}));   // loop-back: not opened
     bool chip = false;
     for (const InputChipModel& c : view.inputs) chip = chip || (c.label.find("Port") != std::string::npos && c.connected);
     CHECK(chip);

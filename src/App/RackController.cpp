@@ -1096,11 +1096,17 @@ void RackController::buildControlLinks() {
 
 // --- sources -----------------------------------------------------------------------
 
+bool opensByDefault(const MidiSourceInfo& info, bool everything) {
+    if (everything) return true;
+    // ALSA's kernel loop-back: whatever is sent to it comes straight back out.
+    return info.id.rfind("Midi Through:", 0) != 0;
+}
+
 void RackController::midiChanged() {
     if (config.openNewInputs)
         for (const MidiSourceInfo& info : midi.enumerate()) {
             const MidiSourceRef ref{MidiSourceRef::Kind::Device, info.id};
-            if ((!info.isHardware && !config.openNewSoftware) || session.sourceOpen(ref)) continue;
+            if (!opensByDefault(info, config.openLoopbacks) || session.sourceOpen(ref)) continue;
             const MidiSourceHandle handle = midi.open(info.id);
             if (handle == kInvalidMidiSource) continue;
             session.addOpenSource(ref, handle);

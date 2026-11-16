@@ -136,11 +136,12 @@ void printUsage() {
         "                       On macOS --quantum sets this app's buffer on the device.\n"
         "                       It overrides the buffer size chosen in the status bar.\n"
         "\n"
-        "MIDI (playing, --monitor). Every hardware MIDI input is opened by default, plus\n"
-        "two virtual inputs other apps can connect to: 'MIDI 2.0 In' and 'MIDI 1.0 In'.\n"
+        "MIDI (playing, --monitor). Every MIDI input (hardware, software and app; not\n"
+        "Midi Through) is opened by default, plus two virtual inputs other apps can\n"
+        "connect to: 'MIDI 2.0 In' and 'MIDI 1.0 In'.\n"
         "  --midi ID            open only this source instead; repeatable. ID is from\n"
-        "                       --list-midi, a client:port like 14:0, or 'all' (hardware\n"
-        "                       plus software and app sources)\n"
+        "                       --list-midi, a client:port like 14:0, or 'all' (every\n"
+        "                       source, Midi Through included)\n"
         "  --midi-protocol 1|2  MIDI 2.0 protocol preference (default 2). With 1, every\n"
         "                       source is received as MIDI 1.0\n"
         "\n"
@@ -300,17 +301,17 @@ std::map<MidiSourceHandle, std::string> openMidiInputs(PlatformMidiInput& input,
         std::printf("  %-30s virtual, %s\n", name.c_str(), input.describe(handle).c_str());
     }
 
-    // No --midi: every hardware input, as a live host should (MainStage listens to
-    // all inputs unless told otherwise). --midi narrows it; 'all' adds software
-    // and app sources too.
+    // No --midi: every input, hardware, software and app (opensByDefault()), as
+    // a live host should (MainStage listens to all inputs unless told
+    // otherwise). --midi narrows it; 'all' adds loop-backs like Midi Through.
     std::vector<std::string> ids = options.midiSources;
     const bool allSources = ids.size() == 1 && ids.front() == "all";
     if (ids.empty() || allSources) {
         ids.clear();
         for (const MidiSourceInfo& source : input.enumerate())
-            if (allSources || source.isHardware) ids.push_back(source.id);
+            if (opensByDefault(source, allSources)) ids.push_back(source.id);
         if (ids.empty() && !allSources)
-            std::puts("  (no hardware MIDI inputs found; plug one in and restart, or use the virtual inputs)");
+            std::puts("  (no MIDI inputs found; plug one in, or use the virtual inputs)");
     }
     for (const std::string& id : ids) {
         const MidiSourceHandle handle = input.open(id);
@@ -760,11 +761,11 @@ int runPlay(const Options& options) {
     config.clickRouting       = &backend;
     config.outputLatencySeconds = backend.outputLatencySeconds();   // started and connected by now
     config.lastPositionPath   = defaultLastPositionPath();
-    // Devices plugged in later are opened as at start: hardware, or everything
-    // with --midi all; not when --midi named the inputs.
+    // Devices plugged in later are opened as at start (opensByDefault()); not
+    // when --midi named the inputs.
     const bool allMidi     = options.midiSources.size() == 1 && options.midiSources.front() == "all";
     config.openNewInputs   = options.midiSources.empty() || allMidi;
-    config.openNewSoftware = allMidi;
+    config.openLoopbacks   = allMidi;
     RackController controller(session, *engine, *input, factory, std::move(config));
     // A set: --set from its first song, or (no arguments) the last one at its
     // song. It replaces the untitled one started above.

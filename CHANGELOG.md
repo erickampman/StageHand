@@ -5,6 +5,15 @@ All notable changes to StageHand. Versions follow the git tags; the format is
 
 ## [Unreleased]
 
+### Changed
+
+- All inputs hears software and app MIDI sources too (another app's port, a
+  virtual keyboard, the IAC bus), not only hardware: StageHand now opens every
+  source at start and on hotplug, except loop-backs like Linux's Midi Through
+  (`--midi all` still takes those). Before, an app's source was heard only
+  after a row picked it by name
+  ([#1](https://github.com/erickampman/unlikelyware/issues/1)).
+
 ### Fixed
 
 - macOS: closing the rack window with unsaved changes asks first, as Cmd-Q does, and closing it
