@@ -21,6 +21,7 @@
 #include "Ui/Monitor.h"
 #include "Ui/ParameterEditorWidget.h"
 #ifdef __APPLE__
+#include "Ui/CloseGuard.h"
 #include "Ui/FileChooser.h"
 #endif
 #include "Ui/RackWidget.h"
@@ -59,14 +60,30 @@ void setIcon([[maybe_unused]] const dgl::Window& window) {
 // open windows, so with an editor still open, closing the rack window alone
 // wouldn't make it "quitting": the flag is what RackUi::closed() checks.
 // `allowClose`, if set, can keep the window open (and ask something instead).
+//
+// DPF calls onClose() on Linux only: on macOS pugl's windowShouldClose:
+// closes the NSWindow whatever onClose() would say, so DGL skips it. There the
+// close button asks through ui::guardWindowClose() instead (docs/macos.md,
+// milestone 6, "Closing the rack window"), the same question either way.
 class TrackedWindow final : public dgl::Window {
 public:
-    explicit TrackedWindow(dgl::Application& app) : Window(app) {}
+    explicit TrackedWindow(dgl::Application& app) : Window(app) {
+#ifdef __APPLE__
+        ui::guardWindowClose(getNativeWindowHandle(), [this] { return userClosing(); });
+#endif
+    }
+#ifdef __APPLE__
+    ~TrackedWindow() override { ui::guardWindowClose(getNativeWindowHandle(), nullptr); }
+#endif
     bool                  closedByUser = false;
     std::function<bool()> allowClose;
 
 protected:
-    bool onClose() override {
+    bool onClose() override { return userClosing(); }
+
+private:
+    // The close button: true lets the window close.
+    bool userClosing() {
         if (allowClose && !allowClose()) return false;
         closedByUser = true;
         return true;

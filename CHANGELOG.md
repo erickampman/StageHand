@@ -5,6 +5,11 @@ All notable changes to StageHand. Versions follow the git tags; the format is
 
 ## [Unreleased]
 
+### Fixed
+
+- macOS: closing the rack window with unsaved changes asks first, as Cmd-Q does, and closing it
+  quits StageHand even with a sequence or plugin editor window still open.
+
 ## [0.9.0] - 2026-11-14
 
 First public preview.

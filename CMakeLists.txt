@@ -171,8 +171,9 @@ if(STAGEHAND_APP)
         PUBLIC  stagehand-app
         PRIVATE dgl-opengl dgl-opengl-definitions stagehand-warnings)
     if(APPLE)
-        target_sources(stagehand-ui PRIVATE src/Ui/MonitorMac.cpp src/Ui/FileChooser.cpp)
-        target_link_libraries(stagehand-ui PRIVATE "-framework CoreGraphics")
+        target_sources(stagehand-ui PRIVATE src/Ui/MonitorMac.cpp src/Ui/FileChooser.cpp src/Ui/CloseGuardMac.mm)
+        set_source_files_properties(src/Ui/CloseGuardMac.mm PROPERTIES COMPILE_OPTIONS -fobjc-arc)
+        target_link_libraries(stagehand-ui PRIVATE "-framework CoreGraphics" "-framework AppKit")
         target_link_libraries(dgl-opengl PRIVATE "-framework UniformTypeIdentifiers")   # the browser's filter
     else()
         # The windows' icon (_NET_WM_ICON), embedded: tools/render-linux-icons.sh made them.

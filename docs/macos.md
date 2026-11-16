@@ -620,6 +620,39 @@ after the build, since the linker signs only the executable and not the
 Resources added after it. Checked: `codesign -vv` is valid, and the icon
 Finder gets for `StageHand.app` is the compiled one.
 
+**Milestone 6, closing the rack window (2026-11-16).** DPF never calls
+`Window::onClose()` on macOS: `Window::PrivateData::onPuglClose()` skips it
+there (`#ifndef DISTRHO_OS_MAC`), because pugl's `windowShouldClose:`
+(`PuglWindowDelegate`, `src/mac.m`) always answers YES and the window closes
+whatever `onClose()` says. So the rack window's close button never asked
+about unsaved changes, and `TrackedWindow::closedByUser` stayed false: with a
+sequence or plugin editor still open, DGL's Application wasn't quitting and
+StageHand ran on with no rack window to get back to (issue 33 was the
+sequence editor's side of it).
+- **`Ui/CloseGuardMac.mm`** (`ui::guardWindowClose()`): a window delegate of
+  StageHand's own (`StageHandCloseGuard`) in front of pugl's. It answers
+  `windowShouldClose:` by asking StageHand first; no keeps the window open,
+  yes passes it on to pugl's delegate, which closes it as before. Every
+  other delegate message is forwarded to pugl's, so its resize, move and
+  focus handling is untouched. The window keeps the guard (an associated
+  object; `NSWindow.delegate` is weak) and the guard keeps pugl's delegate.
+- **`TrackedWindow`** puts the guard on every DGL window it makes (the rack
+  window, the sequence and generic editors), asking what `onClose()` asks on
+  Linux: `allowClose`, then `closedByUser`. So closing the rack window with
+  unsaved changes asks as Cmd-Q does (`RackUi::quitAsInWindow()`), and once
+  it closes `RackUi::closed()` is true and StageHand quits, editor windows
+  open or not. Its destructor takes the question away before the window goes.
+- **In StageHand, not the forks:** the other way was to have pugl's
+  `windowShouldClose:` return what DGL's `onPuglClose()` decides (patches to
+  both `erickampman/pugl` and `erickampman/DPF`, and a pin in each). That
+  changes every consumer's windows on macOS; the guard changes only
+  StageHand's, and leaves the forks' patch lists as they are.
+- **To check on a Mac:** the close button with unsaved changes asks ("Keep
+  the changes ...?") and the window stays while it asks; with a sequence
+  editor and a plugin editor open, closing the rack window quits StageHand;
+  closing an editor window still closes just that editor, and it opens
+  again. Built and run on Linux only so far (the Linux path is unchanged).
+
 ## Review (2026-10-03)
 
 The first draft, read again against the code and Apple's APIs:
