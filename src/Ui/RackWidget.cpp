@@ -6,6 +6,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <sstream>
+#include <fstream>
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
 #endif
@@ -555,7 +557,7 @@ void RackWidget::drawSetlistRow() {
         next = "next: " + to.name;
     }
     const std::string name = set.name;
-    // Help, a "?" at the right end: the help page in the browser (openHelp).
+    // Help, a "?" at the right end: the help page in its own window (openHelp).
     const float helpX = width() - kPad - 28.0f;
     button(helpX, y, 28.0f, h, "?", false, true, kAccent);
     region(helpX, y, 28.0f, h, [this](const Press&) { openHelp(); });
@@ -719,7 +721,7 @@ void RackWidget::drawToolbar() {
     restore();
     drawTransport(kTransportX);
 
-    // Help, a "?" at the right end: the help page in the browser (openHelp).
+    // Help, a "?" at the right end: the help page in its own window (openHelp).
     const float helpX = top ? width() - kPad - 28.0f : width() - kPad + 8.0f;
     if (top) {
         button(helpX, 8.0f, 28.0f, 28.0f, "?", false, true, kAccent);
@@ -2033,42 +2035,44 @@ void RackWidget::openFileMenu(float x, float y) {
     openMenu(std::move(m));
 }
 
-// The help page, as KeyboardEDO's (its docs/decisions.md, "Identity and help"):
-// help/help.html, which the build puts beside the executable on Linux (and
-// `cmake --install` in share/stagehand/help, beside bin) and in the bundle's
-// Resources on the Mac, with the logo it shows, opened in the default browser
-// as the brand opens unlikelyware.com (on Linux, over loopback HTTP: a snap
-// browser can't read the file). A missing page is said in the status bar.
+// The help page: help/help.md, which the build puts beside the executable on
+// Linux (and `cmake --install` in share/stagehand/help, beside bin) and in the
+// bundle's Resources on the Mac, with the logo it shows, in a window of
+// StageHand's own (uw-core's HelpWindow): no browser and no server. A missing
+// page is said in the status bar.
 void RackWidget::openHelp() {
     namespace fs = std::filesystem;
-    std::error_code ec;
+    if (helpPage.empty()) {
+        std::error_code ec;
 #ifdef __APPLE__
-    char     buffer[4096];
-    uint32_t size = sizeof buffer;
-    const fs::path self = _NSGetExecutablePath(buffer, &size) == 0 ? fs::path(buffer) : fs::path();
-    const fs::path page = fs::weakly_canonical(self, ec).parent_path() / "../Resources/help/help.html";
+        char     buffer[4096];
+        uint32_t size = sizeof buffer;
+        const fs::path self = _NSGetExecutablePath(buffer, &size) == 0 ? fs::path(buffer) : fs::path();
+        const fs::path page = fs::weakly_canonical(self, ec).parent_path() / "../Resources/help/help.md";
 #else
-    const fs::path self = fs::read_symlink("/proc/self/exe", ec);
-    fs::path       page = self.parent_path() / "help/help.html";
-    if (!fs::exists(page, ec)) page = self.parent_path() / "../share/stagehand/help/help.html";
+        const fs::path self = fs::read_symlink("/proc/self/exe", ec);
+        fs::path       page = self.parent_path() / "help/help.md";
+        if (!fs::exists(page, ec)) page = self.parent_path() / "../share/stagehand/help/help.md";
 #endif
-    if (self.empty() || !fs::exists(page, ec)) {
-        showNotice("The help page isn't installed (help/help.html beside the app)", ui::nowSeconds());
-        return;
+        auto read = [](const fs::path& path) {
+            std::ifstream      in(path, std::ios::binary);
+            std::ostringstream out;
+            out << in.rdbuf();
+            return out.str();
+        };
+        if (!self.empty() && fs::exists(page, ec)) {
+            helpPage = read(page);
+            helpLogo = read(page.parent_path() / "Unlikelyware.png");
+        }
+        if (helpPage.empty()) {
+            showNotice("The help page isn't installed (help/help.md beside the app)", ui::nowSeconds());
+            return;
+        }
     }
-#ifdef __APPLE__
-    const std::string target = fs::weakly_canonical(page, ec).string();
-#else
-    // Served over loopback (uw-core's HelpServer): a snap or Flatpak browser
-    // can't read the installed file in ~/.local or /usr/local.
-    const fs::path    dir    = fs::weakly_canonical(page, ec).parent_path();
-    const std::string target = helpServer.serve(uw::HelpServer::readDirectory(dir.string(), "help.html"));
-    if (target.empty()) {
-        showNotice("Couldn't serve the help page to a browser", ui::nowSeconds());
-        return;
-    }
-#endif
-    if (!openInBrowser(target)) showNotice("Couldn't open the help page in a browser", ui::nowSeconds());
+    helpWindow.open(*this, "StageHand Help", reinterpret_cast<const uchar*>(helpPage.data()),
+                    static_cast<uint>(helpPage.size()),
+                    {{"Unlikelyware.png", reinterpret_cast<const uchar*>(helpLogo.data()),
+                      static_cast<uint>(helpLogo.size())}});
 }
 
 // How a song switch behaves (docs/setlists.md, section 5): one choice ticked

@@ -296,19 +296,21 @@ if(STAGEHAND_APP AND APPLE)
 endif()
 
 # --- The help page (both platforms) -----------------------------------------------
-# resources/help/help.html, generated from help.md (beside it) by pandoc with
-# the Unlikelyware products' shared template (Dev-Audio/Shared/Help), from the
-# repository's root:
+# resources/help/help.md, which Help (the toolbar's "?", the File menu) shows in
+# a window of StageHand's own (uw-core's HelpWindow), and the logo it shows, as
+# Unlikelyware.png: copied to build/help, beside the executable, where Help
+# looks on Linux; on the Mac they also go in the bundle's Resources/help.
+# (resources/help/help.html, for the web, is generated from help.md by pandoc
+# with the Unlikelyware products' shared template (Dev-Audio/Shared/Help), from
+# the repository's root:
 #   pandoc -f commonmark_x-smart -t html5
 #     --template ../../Dev-Audio/Shared/Help/help-template.html
 #     --metadata pagetitle=help-StageHand
 #     resources/help/help.md -o resources/help/help.html
-# and the logo it shows, as Unlikelyware.png: copied to build/help,
-# beside the executable, where Help (the toolbar's "?", the File menu) looks on
-# Linux; on the Mac they also go in the bundle's Resources/help.
+# It isn't installed.)
 if(TARGET stagehand)
-    set(help_files "${CMAKE_BINARY_DIR}/help/help.html" "${CMAKE_BINARY_DIR}/help/Unlikelyware.png")
-    configure_file(resources/help/help.html "${CMAKE_BINARY_DIR}/help/help.html" COPYONLY)
+    set(help_files "${CMAKE_BINARY_DIR}/help/help.md" "${CMAKE_BINARY_DIR}/help/Unlikelyware.png")
+    configure_file(resources/help/help.md "${CMAKE_BINARY_DIR}/help/help.md" COPYONLY)
     configure_file(resources/brand/Unlikelyware-logo-144.png "${CMAKE_BINARY_DIR}/help/Unlikelyware.png" COPYONLY)
     if(APPLE)
         target_sources(stagehand PRIVATE ${help_files})

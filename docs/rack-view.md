@@ -334,15 +334,17 @@ plugin editor windows) and Ctrl-Q.
 
 - **Help (2026-10-19):** a "?" button at the toolbar's right end, after
   File (with a setlist open, at the setlist row's right end, after its MIDI
-  button: docs/look.md), and the File menu's last item open the help page, `help/help.html`,
-  in the default browser (`open` on macOS, `xdg-open` on Linux), as
-  KeyboardEDO's Help does. The build copies it, with the logo it shows as
-  `Unlikelyware.png`, to `build/help` beside the executable (Linux) and into
-  `StageHand.app/Contents/Resources/help` (macOS). It is exported from
-  `resources/help/help.md` by the author in Markdown Web Writer. If the page
-  is missing from the install, Help says so in the status bar. The Perform
-  view has no Help: a stray click there shouldn't put a browser over the
-  stage, and Edit (Tab) is one key away.
+  button: docs/look.md), and the File menu's last item open the help page.
+  Since 2026-11-17 it is `help/help.md`, shown in a window of StageHand's own
+  (uw-core's HelpWindow, drawn with NanoVG): no browser and no server. Until
+  then it was `help/help.html` in the default browser, served over loopback
+  HTTP on Linux (uw-core's HelpServer, now gone). The build copies help.md,
+  with the logo it shows as `Unlikelyware.png`, to `build/help` beside the
+  executable (Linux) and into `StageHand.app/Contents/Resources/help`
+  (macOS). help.html, made from help.md for the web, isn't installed. If the
+  page is missing from the install, Help says so in the status bar. The
+  Perform view has no Help: a stray click there shouldn't put a window over
+  the stage, and Edit (Tab) is one key away.
 
 ## Review decisions (2026-09-28)
 

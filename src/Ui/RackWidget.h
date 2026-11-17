@@ -12,9 +12,7 @@
 #include "App/RackController.h"
 #include "Ui/UiWidget.h"
 
-#ifndef __APPLE__
-#include "uw/base/HelpServer.h"
-#endif
+#include "uw/dgl/HelpWindow.hpp"   // uw-core: the help page in a window of its own
 
 namespace stagehand {
 
@@ -240,10 +238,9 @@ private:
     // choice for quitting, and it tells the controller not to save at quit.
     void keepChangesThen(std::function<void()> then, bool quitting);
     void openFileMenu(float x, float y);
-    void openHelp();   // help/help.html beside the app, in the default browser
-#ifndef __APPLE__
-    uw::HelpServer helpServer;   // openHelp()'s, for as long as the window is open
-#endif
+    void openHelp();   // help/help.md beside the app, in a window of its own
+    std::string helpPage, helpLogo;   // openHelp()'s files, read on its first call
+    DGL_NAMESPACE::uwhelp::HelpOpener helpWindow;   // for as long as the rack window is open
     void openSwitchMenu(float x, float y);   // File > Setlist settings...
     void openTransportMenu(float x, float y);
     void openMetronomeMenu(float x, float y);
