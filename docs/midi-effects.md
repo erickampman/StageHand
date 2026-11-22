@@ -30,7 +30,25 @@ any other MIDI 2.0 message. Note expressions (Retune's planned CLAP-dialect
 path, its docs/design.md) would map to MIDI 2.0 per-note messages; not needed while
 Retune sends MIDI 2.0 to a host that takes it.
 
-## 2. The chain in the engine (built)
+## 2. The chain in the engine (built; uw-core's since 2026-11-22)
+
+Since 2026-11-22 the chain is uw-core's `uw::NoteEffectChain`
+(uw::note-effects), built from this section's code for Umpire's plugin
+(its MILESTONES.md, NE) and now run by StageHand's engine too: each slot
+with MIDI effects has one, prepared with its graph (`SlotState::midiChain`).
+`Engine::runMidiEffects` hands it the chunk's events and each effect's
+parameter changes, follows the effects' parameter changes through
+`ChainFeedback` (as `ParamFeedback`), counts its full buffers in
+`slotEventsFull` and what no note port takes in `unsupportedDialect`, and
+merges its output with the row's own parameter changes for the plugin.
+What follows is unchanged.
+Checked by the author on the Mac (2026-11-22): Retune into StruckSynth
+retuned with no stuck notes; two effects in series and reordered; bypass
+(one and all, and the editor's title); an effect's own editor changing it
+while playing; its changes reaching a control link; a bypassed effect
+taking a change from the generic editor; Panic; a sequence through
+effects. Not checked yet: held notes across a song switch, and a rack
+whose effect isn't installed.
 
 `SlotConfig::midiEffects`: the row's MIDI effects, in order, before its plugin.
 Per block (per chunk, when a block is split):
@@ -43,7 +61,7 @@ Per block (per chunk, when a block is split):
   treat it the way it treated the note-on (Retune latches each note's output
   key for this).
 - **Each effect's output is the next one's input**, and the last one's is the
-  plugin's, in the same chunk at the same offsets. The engine's `ChainSink`
+  plugin's, in the same chunk at the same offsets. The chain (was `ChainSink`)
   translates each message for the next note port the way `deliver()` does: its
   own protocol if that port takes it, otherwise downconverted, or upconverted
   with a converter state kept per effect output stream. Output out of time

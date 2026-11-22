@@ -123,7 +123,7 @@ add_library(stagehand-engine STATIC
     src/Engine/Looper.cpp
     src/Engine/ControlLink.cpp)
 target_link_libraries(stagehand-engine
-    PUBLIC  stagehand-core
+    PUBLIC  stagehand-core uw::note-effects
     PRIVATE stagehand-warnings)
 
 # --- stagehand-session: racks (files) and running them (no platform deps) -------

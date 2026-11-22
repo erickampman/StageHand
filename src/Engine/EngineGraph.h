@@ -8,6 +8,7 @@
 #include "Core/MidiFilter.h"
 #include "Engine/SlotRuntime.h"
 #include "uw/plugin/HostedPlugin.h"
+#include "uw/plugin/NoteEffectChain.h"
 #include "uw/plugin/PortLayout.h"
 #include "uw/ump/Ump.h"
 #include "Core/UwNames.h"
@@ -106,14 +107,9 @@ public:
 private:
     friend class Engine;
 
-    // Audio-thread working state for one of a slot's MIDI effects.
+    // Audio-thread working state for one of a slot's MIDI effects: its
+    // parameter changes (the chain itself is uw-core's NoteEffectChain).
     struct EffectState {
-        NoteDialectMask     dialects      = 0;   // of its note port 0 (0 = no MIDI in)
-        std::uint32_t       audioChannels = 0;   // of its main output: written, never heard
-        std::vector<float>  audio;               // audioChannels * kMaxPluginBlockFrames
-        std::vector<float*> channels;
-        // Its output stream, upconverted for a next stage that takes only MIDI 2.0.
-        ump::UpconvertState upconvert;
         std::vector<Event>  params;              // one block's parameter changes for it; fixed capacity
         std::uint32_t       paramCount  = 0;
         std::uint32_t       paramCursor = 0;     // next to hand out (block splitting)
@@ -126,8 +122,12 @@ private:
         NoteDialectMask     dialects      = 0;
         NoteDialectMask     pluginDialects = 0;  // of the plugin's own note port
         std::vector<EffectState> effects;        // one per SlotConfig::midiEffects
-        std::vector<Event>  chain[2];            // a chunk's effect outputs, in turn; fixed capacity
-        std::vector<Event>  merged;              // a stage's input: MIDI and its own parameter changes
+        // The MIDI effects in series before the plugin (uw::NoteEffectChain,
+        // docs/midi-effects.md), and each one's chunk of parameter changes.
+        // Null with no effects.
+        std::unique_ptr<NoteEffectChain> midiChain;
+        std::vector<EventBlock>  effectParams;
+        std::vector<Event>  merged;              // the plugin's input: the chain's MIDI and its own parameter changes
         std::vector<Event>  withResets;          // the plugin's input with a Panic's resets for retuned keys
         std::uint32_t       audioChannels = 0;   // of the plugin's main output port
         std::vector<Event>  events;              // one block's events; fixed capacity

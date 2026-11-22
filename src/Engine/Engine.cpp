@@ -64,20 +64,6 @@ bool sameNote(const MidiMessage& a, const MidiMessage& b) noexcept {
            ump::noteNumber(a) == ump::noteNumber(b);
 }
 
-// Can a note port with `dialects` take `m` unchanged?
-bool dialectAccepts(NoteDialectMask dialects, const MidiMessage& m) noexcept {
-    switch (ump::messageType(m)) {
-        case ump::MessageType::Midi1ChannelVoice:
-            return (dialects & (NoteDialect::Midi | NoteDialect::MidiMpe)) != 0;
-        case ump::MessageType::Midi2ChannelVoice:
-            return (dialects & NoteDialect::Midi2) != 0;
-        case ump::MessageType::System:
-            return (dialects & (NoteDialect::Midi | NoteDialect::MidiMpe | NoteDialect::Midi2)) != 0;
-        default:
-            return false;   // SysEx needs reassembly first (architecture.md section 1)
-    }
-}
-
 // destination += source * gain, where the gain is per sample (`gains`) or one
 // constant (`gains` null). A null destination only measures. Returns the peak
 // absolute value of source * gain.
@@ -1572,129 +1558,44 @@ EventBlock Engine::runMidiEffects(std::size_t slot, const TimeInfo& time, std::u
     const SlotConfig&       config = currentGraph->configs[slot];
     EngineGraph::SlotState& state  = currentGraph->states[slot];
     const std::size_t       count  = config.midiEffects.size();
-    if (count == 0) return input;
+    if (count == 0 || !state.midiChain) return input;
 
-    // Two time-sorted lists into state.merged: `a`'s events that `keepA` takes
-    // and `b`'s that `keepB` takes, `a`'s first at the same offset.
-    auto merge = [&](EventBlock a, auto keepA, EventBlock b, auto keepB) {
-        Event* const        out = state.merged.data();
-        const std::uint32_t cap = static_cast<std::uint32_t>(state.merged.size());
-        std::uint32_t       n = 0, i = 0, j = 0;
-        auto put = [&](const Event& e) {
-            if (n < cap) out[n++] = e;
-            else slotEventsFull.fetch_add(1, std::memory_order_relaxed);
-        };
-        while (i < a.count || j < b.count) {
-            if (i < a.count && !keepA(a.events[i])) { ++i; continue; }
-            if (j < b.count && !keepB(b.events[j])) { ++j; continue; }
-            if (j == b.count || (i < a.count && a.events[i].sampleOffset <= b.events[j].sampleOffset)) put(a.events[i++]);
-            else put(b.events[j++]);
-        }
-        return EventBlock{out, n};
-    };
-    auto midi    = [](const Event& e) { return e.type == EventType::Midi; };
-    auto notMidi = [](const Event& e) { return e.type != EventType::Midi; };
-    auto all     = [](const Event&) { return true; };
-
-    const EventBlock slotEvents   = input;   // its parameter changes are the plugin's
-    EventBlock       previous     = input;   // MIDI only is taken from it while it's the slot's
-    bool             previousSlot = true;
-    std::size_t      written      = 0;       // chain buffers used: the next one's input is the other
+    // Each effect's parameter changes in this chunk, rebased to the chunk start.
     for (std::size_t e = 0; e < count; ++e) {
-        EngineGraph::EffectState& effect = state.effects[e];
-
-        // This chunk's parameter changes for this effect, rebased to the chunk start.
-        const std::uint32_t firstParam = effect.paramCursor;
+        EngineGraph::EffectState& effect     = state.effects[e];
+        const std::uint32_t       firstParam = effect.paramCursor;
         while (effect.paramCursor < effect.paramCount &&
                effect.params[effect.paramCursor].sampleOffset < chunkStart + chunk)
             effect.params[effect.paramCursor++].sampleOffset -= chunkStart;
-        const EventBlock params{effect.params.data() + firstParam, effect.paramCursor - firstParam};
+        state.effectParams[e] = EventBlock{effect.params.data() + firstParam, effect.paramCursor - firstParam};
+    }
 
-        ProcessContext pc;
-        pc.frameCount = chunk;
-        pc.time       = time;
-        pc.audioOut   = AudioBuffer{effect.channels.data(), effect.audioChannels, chunk};
-        if (config.bypassed(e)) {   // its own parameter changes only; the MIDI goes around it
-            pc.eventsIn     = params;
-            pc.eventsOut    = &feedback;
-            feedback.plugin = config.midiEffects[e].get();
-            config.midiEffects[e]->process(pc);
+    // uw-core's chain (docs/midi-effects.md): the row's MIDI through each
+    // effect not bypassed, in the protocol each note port takes, the last
+    // one's output for the plugin's port.
+    NoteEffectChain& chain = *state.midiChain;
+    const EventBlock out   = chain.run(chunk, time, input, state.effectParams.data(), &chainFeedback);
+    feedback.plugin        = nullptr;
+    if (const std::uint64_t n = chain.takeDropped(); n > 0) slotEventsFull.fetch_add(n, std::memory_order_relaxed);
+    if (const std::uint64_t n = chain.takeUnsupported(); n > 0) unsupportedDialect.fetch_add(n, std::memory_order_relaxed);
+    if (out.events == input.events) return input;   // every effect bypassed: the row's own events, as they were
+
+    // The plugin: the chain's MIDI, and the row's parameter changes, the MIDI
+    // first at the same offset.
+    Event* const        merged = state.merged.data();
+    const std::uint32_t cap    = static_cast<std::uint32_t>(state.merged.size());
+    std::uint32_t       n = 0, i = 0, j = 0;
+    while (i < out.count || j < input.count) {
+        if (j < input.count && input.events[j].type == EventType::Midi) {
+            ++j;
             continue;
         }
-
-        std::size_t next = e + 1;   // where its output goes: the next effect not bypassed, or the plugin
-        while (next < count && config.bypassed(next)) ++next;
-        const bool          last = next == count;
-        std::vector<Event>& out  = state.chain[written++ % 2];
-        pc.eventsIn = previousSlot ? merge(previous, midi, params, all) : merge(previous, all, params, all);
-
-        chainSink.plugin    = config.midiEffects[e].get();
-        chainSink.events    = out.data();
-        chainSink.capacity  = static_cast<std::uint32_t>(out.size());
-        chainSink.count     = 0;
-        chainSink.frames    = chunk;
-        chainSink.dialects  = last ? state.pluginDialects : state.effects[next].dialects;
-        chainSink.port      = last ? config.notePort : 0;
-        chainSink.upconvert = &effect.upconvert;
-        pc.eventsOut        = &chainSink;
-        config.midiEffects[e]->process(pc);
-
-        // CLAP asks a plugin for its output in time order; keep it so if one
-        // doesn't (an insertion sort: nothing to do when it's in order).
-        Event* const events = out.data();
-        for (std::uint32_t k = 1; k < chainSink.count; ++k)
-            for (std::uint32_t j = k; j > 0 && events[j].sampleOffset < events[j - 1].sampleOffset; --j)
-                std::swap(events[j], events[j - 1]);
-        previous     = EventBlock{events, chainSink.count};
-        previousSlot = false;
+        const bool   fromChain = j == input.count || (i < out.count && out.events[i].sampleOffset <= input.events[j].sampleOffset);
+        const Event& e         = fromChain ? out.events[i++] : input.events[j++];
+        if (n < cap) merged[n++] = e;
+        else slotEventsFull.fetch_add(1, std::memory_order_relaxed);
     }
-    chainSink.plugin = nullptr;
-    if (previousSlot) return input;   // every effect bypassed: the row's own events, as they were
-    return merge(previous, all, slotEvents, notMidi);   // the plugin: the chain's MIDI, the row's parameter changes
-}
-
-void Engine::ChainSink::push(const Event& event) noexcept {
-    if (event.type == EventType::ParamValue) {
-        engine->parameterChanged(plugin, event.param.id, event.value);
-        engine->parameterTouched(plugin, event.param.id);
-        return;
-    }
-    if (event.type == EventType::ParamGestureBegin) {
-        engine->parameterTouched(plugin, event.param.id);
-        return;
-    }
-    if (event.type != EventType::Midi || dialects == 0) return;
-    const std::uint32_t    offset = std::min(event.sampleOffset, frames > 0 ? frames - 1 : 0u);
-    const MidiMessage&     m      = event.midi;
-    const ump::MessageType type   = ump::messageType(m);
-    if (dialectAccepts(dialects, m)) {   // its own protocol: unchanged
-        add(m, offset);
-        return;
-    }
-    MidiMessage translated[ump::kMaxTranslatedMessages];
-    std::size_t n = 0;   // nothing is normal for an upconversion: bank select, RPN selection
-    if (type == ump::MessageType::Midi2ChannelVoice && acceptsMidi1(dialects)) {
-        n = ump::downconvert(m, translated, ump::kMaxTranslatedMessages);
-    } else if (type == ump::MessageType::Midi1ChannelVoice && (dialects & NoteDialect::Midi2) != 0) {
-        n = ump::upconvert(m, *upconvert, translated, ump::kMaxTranslatedMessages);
-    } else {
-        engine->unsupportedDialect.fetch_add(1, std::memory_order_relaxed);
-        return;
-    }
-    for (std::size_t j = 0; j < n; ++j) add(translated[j], offset);
-}
-
-void Engine::ChainSink::add(const MidiMessage& message, std::uint32_t offset) noexcept {
-    if (count == capacity) {
-        engine->slotEventsFull.fetch_add(1, std::memory_order_relaxed);
-        return;
-    }
-    Event& event       = events[count++];
-    event              = Event{};
-    event.sampleOffset = offset;
-    event.type         = EventType::Midi;
-    event.midi         = message;
-    event.portIndex    = port;
+    return EventBlock{merged, n};
 }
 
 // The click, on the aux outputs: a blip at each pulse in this block (before a
