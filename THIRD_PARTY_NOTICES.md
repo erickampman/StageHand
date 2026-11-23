@@ -5,8 +5,8 @@ StageHand is MIT licensed (see the LICENSE file). The app contains the component
 | Component | Version | License | Used for |
 |---|---|---|---|
 | [CLAP](https://github.com/free-audio/clap) | 1.2.10 | MIT | the plugin API headers |
-| [DPF (DISTRHO Plugin Framework), Unlikelyware's fork](https://github.com/erickampman/DPF) | 02449d69 | ISC | the plugin window (its DGL library only) |
-| [pugl, Unlikelyware's fork](https://github.com/erickampman/pugl) | aa9bf1b8 | ISC | windows and events, inside DPF |
+| [DPF (DISTRHO Plugin Framework), Unlikelyware's fork](https://github.com/erickampman/DPF) | 1322d896 | ISC | the plugin window (its DGL library only) |
+| [pugl, Unlikelyware's fork](https://github.com/erickampman/pugl) | 0317439b | ISC | windows and events, inside DPF |
 | [NanoVG, with fontstash](https://github.com/memononen/nanovg) | in DPF | zlib | drawing the user interface, inside DPF |
 | [stb_image and stb_truetype](https://github.com/nothings/stb) | in DPF | Public domain (or MIT) | image and font loading, inside NanoVG |
 | [DejaVu Sans font](https://dejavu-fonts.github.io/) | in DPF | Bitstream Vera / DejaVu (free) | the interface text, embedded by DPF |
