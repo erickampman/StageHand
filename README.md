@@ -11,7 +11,7 @@ loopers.
 |---|---|
 | Kind | App: hosts CLAP instruments, effects and note effects |
 | Platforms | Linux x86-64, macOS 26 or later on Apple Silicon. No Windows. JACK (through PipeWire) on Linux, Core Audio on macOS |
-| Version | 0.9.0 (preview) |
+| Version | 0.9.1 (preview) |
 | License | MIT |
 
 **Downloads:** ready-built apps are in the
@@ -64,7 +64,7 @@ open an app downloaded from the internet: click Open.
 `stagehand` on your `PATH` and StageHand, with its icon, in your desktop's app list:
 
 ```bash
-tar -xzf StageHand-0.9.0-linux-x86_64.tar.gz -C ~/.local --strip-components=1
+tar -xzf StageHand-0.9.1-linux-x86_64.tar.gz -C ~/.local --strip-components=1
 ```
 
 For every user, unpack into `/usr/local` with `sudo` instead. If `~/.local/bin` didn't exist before,

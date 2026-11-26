@@ -5,13 +5,12 @@ All notable changes to StageHand. Versions follow the git tags; the format is
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-11-26
+
 ### Changed
 
 - Help opens the help page in a window of the app's own, not in the web browser. Nothing is
   written to the temp folder, and on Linux no web server runs in the host any more.
-
-### Changed
-
 - All inputs hears software and app MIDI sources too (another app's port, a
   virtual keyboard, the IAC bus), not only hardware: StageHand now opens every
   source at start and on hotplug, except loop-backs like Linux's Midi Through
